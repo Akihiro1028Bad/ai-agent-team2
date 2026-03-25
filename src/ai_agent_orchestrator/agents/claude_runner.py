@@ -191,19 +191,10 @@ class ClaudeAgentRunner:
                 timeout=effective_timeout,
             )
 
-        # Build options
-        # max_turns: plan モードは 3, 実装系は 30, その他は 10
-        if cfg.permission_mode == "plan":
-            max_turns = 3
-        elif phase in _IMPL_PHASES:
-            max_turns = 30
-        else:
-            max_turns = 10
-
+        # Build options (max_turns はSDKデフォルトに委任)
         options = ClaudeCodeOptions(
             cwd=cwd,
             permission_mode=cfg.permission_mode,  # type: ignore[arg-type]
-            max_turns=max_turns,
             hooks=hooks,
         )
         if append_prompt:
