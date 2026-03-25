@@ -64,7 +64,13 @@ class AnalysisExecutor(PhaseExecutor):
             state.session_id = result.session_id
 
         client = await self._get_client(request.repo)
-        await client.create_comment(request.repo, request.issue_number, result.output)
+        comment_body = (
+            result.output.strip()
+            if result.output.strip()
+            else ("AI分析を実行しましたが、出力が空でした。再実行が必要です。")
+        )
+        await client.create_comment(request.repo, request.issue_number, comment_body)
+        await client.replace_phase_label(request.repo, request.issue_number, "phase:plan-review")
         await self._sm.transition(request.issue_number, "plan-review")
         await self._notifier.notify(
             f"Issue #{request.issue_number} の修正方針を投稿しました。thumbsup で承認をお願いします",

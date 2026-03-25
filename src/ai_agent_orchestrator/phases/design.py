@@ -77,6 +77,8 @@ class DesignExecutor(PhaseExecutor):
             state.design_pr_number = pr_number
             state.session_id = result.session_id
 
+        client = await self._get_client(request.repo)
+        await client.replace_phase_label(request.repo, request.issue_number, "phase:design-review")
         await self._sm.transition(request.issue_number, "design-review")
         await self._notifier.notify(
             f"Issue #{request.issue_number} の設計PRを作成しました。レビューをお願いします",

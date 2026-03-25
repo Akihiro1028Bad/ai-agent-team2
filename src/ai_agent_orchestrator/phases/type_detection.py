@@ -93,6 +93,7 @@ class TypeDetectionExecutor(PhaseExecutor):
             "feature-l": "hearing",
         }
         next_phase = next_phase_map.get(issue_type, "hearing")
+        await client.replace_phase_label(request.repo, request.issue_number, f"phase:{next_phase}")
         await self._sm.transition(request.issue_number, next_phase)
 
     @staticmethod

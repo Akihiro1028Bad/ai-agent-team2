@@ -68,6 +68,11 @@ class FakeGitHubClient:
         if issue_number in self.labels:
             self.labels[issue_number] = [la for la in self.labels[issue_number] if la != label]
 
+    async def replace_phase_label(self, owner: str, repo: str, issue_number: int, new_label: str) -> None:
+        if issue_number in self.labels:
+            self.labels[issue_number] = [la for la in self.labels[issue_number] if not la.startswith("phase:")]
+        self.labels.setdefault(issue_number, []).append(new_label)
+
 
 # ──────────────────────────────────────
 # Fake Claude Agent Runner

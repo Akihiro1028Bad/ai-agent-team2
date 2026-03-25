@@ -578,9 +578,12 @@ class Orchestrator:
 
         logger.info("Starting orchestrator...")
 
-        # 1. Load state from persistence
+        # 1. Load state from persistence and re-enqueue pending tasks
         self._state_machine.load_from_persistence()
         logger.info("State loaded from persistence")
+
+        # Re-enqueue tasks for issues that were in-progress when stopped
+        await self._reenqueue_pending_tasks()
 
         self._running = True
 
@@ -677,6 +680,54 @@ class Orchestrator:
         )
 
         logger.info("Orchestrator stopped")
+
+    # ------------------------------------------------------------------
+    async def _reenqueue_pending_tasks(self) -> None:
+        """起動時に未完了フェーズのタスクを再エンキューする.
+
+        前回のセッションで中断されたタスクを再開するため、
+        永続化されたIssue状態から「レビュー待ち」以外のアクティブフェーズを
+        タスクキューに投入する。
+        """
+        # Phases that need active processing (not waiting for human input)
+        active_phases = {
+            Phase("type-detection"),
+            Phase("hearing"),
+            Phase("analysis"),
+            Phase("plan-brief"),
+            Phase("design"),
+            Phase("design-revise"),
+            Phase("planning"),
+            Phase("implement"),
+            Phase("fix"),
+            Phase("ci-fix"),
+            Phase("impl-revise"),
+            Phase("split-proposal"),
+            Phase("split-execute"),
+        }
+
+        for issue_number, state in self._state_machine._states.items():
+            if state.phase in active_phases:
+                # Find the repo config for this issue
+                repo_config = None
+                for repo in self._settings.repositories:
+                    if f"{repo.owner}/{repo.repo}" == state.repo:
+                        repo_config = repo
+                        break
+
+                if repo_config is not None:
+                    await self._task_queue.enqueue(
+                        TaskRequest(
+                            issue_number=issue_number,
+                            repo=repo_config,
+                            phase=state.phase.value,
+                        )
+                    )
+                    logger.info(
+                        "Re-enqueued pending task: issue=#%d phase=%s",
+                        issue_number,
+                        state.phase.value,
+                    )
 
     # ------------------------------------------------------------------
     # Event routing

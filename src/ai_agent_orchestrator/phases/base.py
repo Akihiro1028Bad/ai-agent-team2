@@ -64,6 +64,10 @@ class GitHubClientProtocol:
         """Add a label to an issue."""
         ...  # pragma: no cover
 
+    async def replace_phase_label(self, repo: object, issue_number: int, new_label: str) -> None:
+        """Replace phase:* labels with a new phase label."""
+        ...  # pragma: no cover
+
     async def close_issue(self, repo: object, issue_number: int) -> None:
         """Close an issue."""
         ...  # pragma: no cover

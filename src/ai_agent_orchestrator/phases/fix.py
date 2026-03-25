@@ -84,7 +84,9 @@ class FixExecutor(PhaseExecutor):
             state.pr_number = pr_number
             state.session_id = result.session_id
 
-        # 遷移は行わない。CI結果をPollerが検知してから遷移する。
+        # CI結果待ちラベルを付与 (遷移は行わない)
+        client = await self._get_client(request.repo)
+        await client.replace_phase_label(request.repo, request.issue_number, "phase:ci-wait")
         await self._tracker.track(
             "fix_complete",
             issue_number=request.issue_number,

@@ -68,6 +68,8 @@ class ImplementExecutor(PhaseExecutor):
             state.pr_number = pr_number
             state.session_id = result.session_id
 
+        client = await self._get_client(request.repo)
+        await client.replace_phase_label(request.repo, request.issue_number, "phase:impl-review")
         await self._sm.transition(request.issue_number, "impl-review")
         await self._notifier.notify(
             f"Issue #{request.issue_number} の実装PRを作成しました",

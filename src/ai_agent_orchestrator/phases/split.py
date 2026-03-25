@@ -73,7 +73,12 @@ class SplitProposalExecutor(PhaseExecutor):
             state.session_id = result.session_id
 
         client = await self._get_client(request.repo)
-        await client.create_comment(request.repo, request.issue_number, result.output)
+        comment_body = (
+            result.output.strip()
+            if result.output.strip()
+            else ("分割提案を作成しましたが、出力が空でした。再実行が必要です。")
+        )
+        await client.create_comment(request.repo, request.issue_number, comment_body)
         # 承認待ち (SPLIT_PROPOSAL フェーズのまま)
         await self._notifier.notify(
             f"Issue #{request.issue_number} の分割を提案しました。判断をお願いします",
@@ -130,11 +135,13 @@ class SplitExecuteExecutor(PhaseExecutor):
             result: エージェント実行結果。
         """
         client = await self._get_client(request.repo)
+        output_text = result.output.strip() if result.output.strip() else ("(出力なし)")
         await client.create_comment(
             request.repo,
             request.issue_number,
-            f"分割が完了しました。子Issueが作成されています。\n\n{result.output}",
+            f"分割が完了しました。子Issueが作成されています。\n\n{output_text}",
         )
+        await client.replace_phase_label(request.repo, request.issue_number, "phase:done")
         await self._sm.transition(request.issue_number, "done")
         await self._notifier.notify(
             f"Issue #{request.issue_number} の分割が完了しました",

@@ -63,4 +63,6 @@ class CiFixExecutor(PhaseExecutor):
             state.session_id = result.session_id
 
         await self._sm.increment_ci_retry(request.issue_number)
-        # CI 結果は次回ポーリングで検知
+        # CI結果待ちラベルを付与
+        client = await self._get_client(request.repo)
+        await client.replace_phase_label(request.repo, request.issue_number, "phase:ci-wait")

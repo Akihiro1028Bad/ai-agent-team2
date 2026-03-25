@@ -60,6 +60,9 @@ class DoneExecutor(PhaseExecutor):
         state = self._sm.get_state(request.issue_number)
         client = await self._get_client(request.repo)
 
+        # フェーズラベルを更新
+        await client.replace_phase_label(request.repo, request.issue_number, "phase:done")
+
         # PR マージ
         if state and state.pr_number is not None:
             await client.merge_pull_request(request.repo, state.pr_number)

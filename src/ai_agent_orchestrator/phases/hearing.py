@@ -84,6 +84,7 @@ class HearingExecutor(PhaseExecutor):
             state.session_id = result.session_id
 
         issue_type = self._sm.get_issue_type(request.issue_number)
+        client = await self._get_client(request.repo)
 
         if "READY" in result.output:
             # タイプ別の次フェーズへ遷移
@@ -94,13 +95,19 @@ class HearingExecutor(PhaseExecutor):
                 "feature-l": "split-proposal",
             }
             next_phase = next_phase_map.get(issue_type, "design")
+            await client.replace_phase_label(request.repo, request.issue_number, f"phase:{next_phase}")
             await self._sm.transition(request.issue_number, next_phase)
         elif "NEEDS_SPLIT" in result.output:
+            await client.replace_phase_label(request.repo, request.issue_number, "phase:split-proposal")
             await self._sm.transition(request.issue_number, "split-proposal")
         else:
             # 質問を Issue コメントとして投稿
-            client = await self._get_client(request.repo)
-            await client.create_comment(request.repo, request.issue_number, result.output)
+            comment_body = (
+                result.output.strip()
+                if result.output.strip()
+                else ("ヒアリングを実行しましたが、出力が空でした。再実行が必要です。")
+            )
+            await client.create_comment(request.repo, request.issue_number, comment_body)
             await self._notifier.notify(
                 f"Issue #{request.issue_number} に質問を投稿しました。回答をお願いします",
                 metadata={
