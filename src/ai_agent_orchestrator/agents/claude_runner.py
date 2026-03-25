@@ -266,9 +266,9 @@ class ClaudeAgentRunner:
                     if has_text:
                         logger.info("TextBlock found, proceeding without retry")
                         break
-                    # TextBlock 未到達 -> リトライ
+                    # TextBlock 未到達 -> リトライ(指数バックオフ)
                     if attempt < max_retries - 1:
-                        wait = 5.0 * (attempt + 1)
+                        wait = 30.0 * (attempt + 1)  # 30s, 60s
                         logger.info("No TextBlock yet, retrying in %.0fs...", wait)
                         await asyncio.sleep(wait)
                         messages.clear()
