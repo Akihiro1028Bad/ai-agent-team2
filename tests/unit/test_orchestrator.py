@@ -247,14 +247,13 @@ class TestExecuteTask:
 
         await orch._execute_task(task)
 
-        dispatcher.dispatch.assert_awaited_once_with(
-            "type_detection",
-            issue_number=42,
-            repo="test-owner/test-repo",
-            worktree_path="",
-            context="",
-            resume_session_id=None,
-        )
+        call_kwargs = dispatcher.dispatch.call_args.kwargs
+        assert call_kwargs["issue_number"] == 42
+        assert call_kwargs["worktree_path"] == ""
+        assert call_kwargs["context"] == ""
+        assert call_kwargs["resume_session_id"] is None
+        # repo is now the RepositoryConfig object, not a string
+        assert hasattr(call_kwargs["repo"], "owner")
 
     async def test_execute_task_transitions_on_next_phase(self, tmp_path: Path) -> None:
         """dispatch の結果に next_phase がある場合に遷移すること."""

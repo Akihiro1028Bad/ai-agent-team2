@@ -240,7 +240,7 @@ class _RealPhaseDispatcherAdapter:
         phase: str,
         *,
         issue_number: int,
-        repo: str,
+        repo: object,
         worktree_path: str,
         context: str,
         resume_session_id: str | None = None,
@@ -750,7 +750,7 @@ class Orchestrator:
             result = await self._phase_dispatcher.dispatch(
                 phase,
                 issue_number=issue_number,
-                repo=repo_key,
+                repo=task.repo,
                 worktree_path=worktree_path,
                 context=context,
                 resume_session_id=task.extra.get("resume_session_id"),
