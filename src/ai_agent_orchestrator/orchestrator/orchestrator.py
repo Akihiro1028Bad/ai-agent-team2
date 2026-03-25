@@ -818,10 +818,47 @@ class Orchestrator:
                 },
             )
 
-            # Transition to next phase if specified
+            # Transition to next phase if specified (for NullPhaseDispatcher)
             if result.next_phase is not None:
                 next_phase = Phase(result.next_phase)
                 await self._state_machine.transition(issue_number, next_phase)
+
+            # Auto-enqueue next task if the phase changed to an active phase
+            # (Real executors handle transitions internally, so we check current phase)
+            current_phase = self._state_machine.get_phase(issue_number)
+            active_phases = {
+                Phase("type-detection"),
+                Phase("hearing"),
+                Phase("analysis"),
+                Phase("plan-brief"),
+                Phase("design"),
+                Phase("design-revise"),
+                Phase("planning"),
+                Phase("implement"),
+                Phase("fix"),
+                Phase("ci-fix"),
+                Phase("impl-revise"),
+                Phase("split-proposal"),
+                Phase("split-execute"),
+            }
+            # Compare with current task's phase (handle both hyphen and underscore)
+            try:
+                task_phase = Phase(phase.replace("_", "-"))
+            except ValueError:
+                task_phase = None
+            if current_phase in active_phases and current_phase != task_phase:
+                await self._task_queue.enqueue(
+                    TaskRequest(
+                        issue_number=issue_number,
+                        repo=task.repo,
+                        phase=current_phase.value,
+                    )
+                )
+                logger.info(
+                    "Auto-enqueued next task: issue=#%d phase=%s",
+                    issue_number,
+                    current_phase.value,
+                )
 
         except asyncio.CancelledError:
             raise
