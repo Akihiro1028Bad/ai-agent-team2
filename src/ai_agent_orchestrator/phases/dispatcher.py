@@ -40,7 +40,9 @@ class PhaseDispatcher:
         Raises:
             KeyError: 未登録のフェーズ。
         """
-        phase_key = str(request.phase).replace("-", "_")
+        # request.phase は Phase enum の .value (例: "type-detection") または str
+        raw = request.phase.value if hasattr(request.phase, "value") else str(request.phase)
+        phase_key = raw.replace("-", "_")
         executor = self._executors.get(phase_key)
         if executor is None:
             msg = f"No executor registered for phase: {request.phase}"

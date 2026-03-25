@@ -184,7 +184,9 @@ class GitHubPoller:
         new: list[Issue] = []
         for issue in issues:
             # BUG #2: Filter out PRs (GitHub API returns both issues and PRs)
-            if hasattr(issue, "pull_request") and issue.pull_request is not None:
+            # githubkit uses UNSET sentinel for missing fields; check if it's a real PR object
+            pr_field = getattr(issue, "pull_request", None)
+            if pr_field is not None and type(pr_field).__name__ != "Unset":
                 continue
             # BUG #1: Skip already-seen issues to prevent re-detection
             if self._has_phase_label(issue) or issue.number in self._seen_issue_numbers:
