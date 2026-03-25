@@ -28,7 +28,8 @@ class DesignExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(request.repo, request.issue_number)
+        client = await self._get_client(request.repo)
+        issue = await client.get_issue(request.repo, request.issue_number)
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
@@ -39,7 +40,7 @@ class DesignExecutor(PhaseExecutor):
             getattr(issue, "body", "") or "",
             "design",
         )
-        comments = await self._github.list_comments(request.repo, request.issue_number)
+        comments = await client.list_comments(request.repo, request.issue_number)
         hearing_log = (
             "\n".join(
                 f"[{getattr(c.user, 'login', 'unknown')}]: {c.body}"

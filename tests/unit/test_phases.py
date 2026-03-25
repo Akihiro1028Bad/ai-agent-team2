@@ -30,8 +30,14 @@ def mock_runner() -> AsyncMock:
 
 @pytest.fixture
 def mock_github() -> AsyncMock:
-    """Mock GitHubClient."""
+    """Mock GitHubClient.
+
+    get_client_for_repo を削除して PhaseExecutor._get_client() が
+    AccountManager としてではなく直接クライアントとして返すようにする。
+    """
     gh = AsyncMock()
+    # AccountManager と区別するため get_client_for_repo を削除
+    del gh.get_client_for_repo
     issue = MagicMock()
     issue.title = "テストIssue"
     issue.body = "テスト本文"

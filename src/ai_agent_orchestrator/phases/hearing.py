@@ -29,7 +29,8 @@ class HearingExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(request.repo, request.issue_number)
+        client = await self._get_client(request.repo)
+        issue = await client.get_issue(request.repo, request.issue_number)
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
@@ -42,7 +43,7 @@ class HearingExecutor(PhaseExecutor):
         )
 
         # 過去のコメント (ヒアリング回答) も含める
-        comments = await self._github.list_comments(request.repo, request.issue_number)
+        comments = await client.list_comments(request.repo, request.issue_number)
         hearing_log = (
             "\n".join(
                 f"[{getattr(c.user, 'login', 'unknown')}]: {c.body}"
@@ -98,7 +99,8 @@ class HearingExecutor(PhaseExecutor):
             await self._sm.transition(request.issue_number, "split-proposal")
         else:
             # 質問を Issue コメントとして投稿
-            await self._github.create_comment(request.repo, request.issue_number, result.output)
+            client = await self._get_client(request.repo)
+            await client.create_comment(request.repo, request.issue_number, result.output)
             await self._notifier.notify(
                 f"Issue #{request.issue_number} に質問を投稿しました。回答をお願いします",
                 metadata={

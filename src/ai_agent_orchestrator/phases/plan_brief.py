@@ -29,14 +29,15 @@ class PlanBriefExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(request.repo, request.issue_number)
+        client = await self._get_client(request.repo)
+        issue = await client.get_issue(request.repo, request.issue_number)
         worktree = await self._workspace.create_worktree(request.repo, request.issue_number)
         context = await self._context.build_context(
             str(worktree),
             getattr(issue, "body", "") or "",
             "plan_brief",
         )
-        comments = await self._github.list_comments(request.repo, request.issue_number)
+        comments = await client.list_comments(request.repo, request.issue_number)
         hearing_log = (
             "\n".join(
                 f"[{getattr(c.user, 'login', 'unknown')}]: {c.body}"
@@ -73,7 +74,8 @@ class PlanBriefExecutor(PhaseExecutor):
         if state:
             state.session_id = result.session_id
 
-        await self._github.create_comment(request.repo, request.issue_number, result.output)
+        client = await self._get_client(request.repo)
+        await client.create_comment(request.repo, request.issue_number, result.output)
         await self._sm.transition(request.issue_number, "plan-review")
         await self._notifier.notify(
             f"Issue #{request.issue_number} の実装方針を投稿しました。thumbsup で承認をお願いします",

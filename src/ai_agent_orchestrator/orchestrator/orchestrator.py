@@ -303,7 +303,7 @@ def _build_phase_executors(
 
     common_kwargs: dict[str, object] = {
         "runner": runner,
-        "github": github,
+        "account_manager": github,
         "notifier": notifier,
         "tracker": tracker,
         "workspace": workspace,

@@ -29,7 +29,8 @@ class ImplementExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(request.repo, request.issue_number)
+        client = await self._get_client(request.repo)
+        issue = await client.get_issue(request.repo, request.issue_number)
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,

@@ -32,7 +32,8 @@ class FixExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(request.repo, request.issue_number)
+        client = await self._get_client(request.repo)
+        issue = await client.get_issue(request.repo, request.issue_number)
         worktree = await self._workspace.create_worktree(request.repo, request.issue_number)
         context = await self._context.build_context(
             str(worktree),
@@ -41,7 +42,7 @@ class FixExecutor(PhaseExecutor):
         )
 
         # 方針コメントを取得
-        comments = await self._github.list_comments(request.repo, request.issue_number)
+        comments = await client.list_comments(request.repo, request.issue_number)
         plan_comment = ""
         for c in reversed(comments):
             body = getattr(c, "body", "")

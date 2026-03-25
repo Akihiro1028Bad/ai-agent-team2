@@ -31,7 +31,8 @@ class TypeDetectionExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(request.repo, request.issue_number)
+        client = await self._get_client(request.repo)
+        issue = await client.get_issue(request.repo, request.issue_number)
         worktree = await self._workspace.create_worktree(request.repo, request.issue_number)
         context = await self._context.build_context(
             str(worktree),
@@ -72,10 +73,11 @@ class TypeDetectionExecutor(PhaseExecutor):
         self._sm.set_issue_type(request.issue_number, issue_type)
 
         # GitHub ラベル付与
-        await self._github.add_label(request.repo, request.issue_number, f"type:{issue_type}")
+        client = await self._get_client(request.repo)
+        await client.add_label(request.repo, request.issue_number, f"type:{issue_type}")
 
         # Issue コメント投稿
-        await self._github.create_comment(
+        await client.create_comment(
             request.repo,
             request.issue_number,
             f"このIssueを **type:{issue_type}** として処理します。\n\n"

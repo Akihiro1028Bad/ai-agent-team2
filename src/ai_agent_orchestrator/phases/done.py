@@ -58,13 +58,14 @@ class DoneExecutor(PhaseExecutor):
             result: エージェント実行結果 (使用しない)。
         """
         state = self._sm.get_state(request.issue_number)
+        client = await self._get_client(request.repo)
 
         # PR マージ
         if state and state.pr_number is not None:
-            await self._github.merge_pull_request(request.repo, state.pr_number)
+            await client.merge_pull_request(request.repo, state.pr_number)
 
         # Issue クローズ
-        await self._github.close_issue(request.repo, request.issue_number)
+        await client.close_issue(request.repo, request.issue_number)
 
         # worktree 削除
         await self._workspace.remove_worktree(request.repo, request.issue_number)

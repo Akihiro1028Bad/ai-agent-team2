@@ -65,6 +65,7 @@ _ATTR_TO_PHASE: dict[str, Phase] = {phase.value.replace("-", "_"): phase for pha
 TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
     # TYPE_DETECTION branches
     (Phase.TYPE_DETECTION, Phase.ANALYSIS): "detect_bug",
+    (Phase.TYPE_DETECTION, Phase.SUSPENDED): "type_detection_to_suspended",
     # NOTE: (TYPE_DETECTION, HEARING) is resolved dynamically by _resolve_transition
     # Bug workflow
     (Phase.ANALYSIS, Phase.PLAN_REVIEW): "analysis_to_plan_review",
@@ -166,6 +167,7 @@ class IssueWorkflow(StateMachine):
     detect_feature_s = type_detection.to(hearing, cond="is_feature_s")
     detect_feature_m = type_detection.to(hearing, cond="is_feature_m")
     detect_feature_l = type_detection.to(hearing, cond="is_feature_l")
+    type_detection_to_suspended = type_detection.to(suspended)
 
     # --- Bug workflow ---
     analysis_to_plan_review = analysis.to(plan_review)

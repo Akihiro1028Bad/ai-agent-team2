@@ -152,7 +152,7 @@ class PhaseExecutor(ABC):
     def __init__(
         self,
         runner: ClaudeAgentRunner,
-        github: GitHubClientProtocol,
+        account_manager: GitHubClientProtocol | object,
         notifier: NotifierProtocol,
         tracker: TrackerProtocol,
         workspace: WorkspaceProtocol,
@@ -163,7 +163,9 @@ class PhaseExecutor(ABC):
 
         Args:
             runner: Claude Agent SDK ランナー。
-            github: GitHub API クライアント。
+            account_manager: AccountManager またはGitHub API クライアント。
+                AccountManager の場合は _get_client() でリポジトリに
+                紐づく GitHubClient を動的に解決する。
             notifier: 通知送信 (Slack 等)。
             tracker: イベントログ追跡。
             workspace: ワークスペース (worktree) 管理。
@@ -171,12 +173,33 @@ class PhaseExecutor(ABC):
             state_machine: ステートマシンマネージャ。
         """
         self._runner = runner
-        self._github = github
+        self._account_manager = account_manager
         self._notifier = notifier
         self._tracker = tracker
         self._workspace = workspace
         self._context = context_engine
         self._sm = state_machine
+
+    async def _get_client(self, repo: object) -> GitHubClientProtocol:
+        """リポジトリに対応する GitHubClient を取得する。
+
+        AccountManager が渡されている場合はリポジトリ設定から
+        対応アカウントの GitHubClient を動的に解決する。
+        テスト等で直接 GitHubClient (またはモック) が渡されている場合は
+        そのまま返す。
+
+        Args:
+            repo: リポジトリ設定オブジェクト。
+
+        Returns:
+            GitHubClientProtocol 互換のクライアント。
+        """
+        if hasattr(self._account_manager, "get_client_for_repo"):
+            owner = getattr(repo, "owner", "")
+            repo_name = getattr(repo, "repo", "")
+            result: GitHubClientProtocol = await self._account_manager.get_client_for_repo(owner, repo_name)
+            return result
+        return self._account_manager  # type: ignore[return-value]
 
     async def execute(self, request: TaskRequest) -> None:
         """フェーズを実行する (テンプレートメソッド)。
@@ -285,7 +308,8 @@ class PhaseExecutor(ABC):
     async def _handle_error(self, request: TaskRequest, error: Exception) -> None:
         """エラー処理: SUSPENDED 遷移 + Issue コメント + 通知。"""
         await self._sm.transition(request.issue_number, "suspended")
-        await self._github.create_comment(
+        client = await self._get_client(request.repo)
+        await client.create_comment(
             request.repo,
             request.issue_number,
             f"エラーが発生しました: {error}",
