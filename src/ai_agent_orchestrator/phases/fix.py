@@ -32,12 +32,8 @@ class FixExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(
-            request.repo, request.issue_number
-        )
-        worktree = await self._workspace.create_worktree(
-            request.repo, request.issue_number
-        )
+        issue = await self._github.get_issue(request.repo, request.issue_number)
+        worktree = await self._workspace.create_worktree(request.repo, request.issue_number)
         context = await self._context.build_context(
             str(worktree),
             getattr(issue, "body", "") or "",
@@ -45,9 +41,7 @@ class FixExecutor(PhaseExecutor):
         )
 
         # 方針コメントを取得
-        comments = await self._github.list_comments(
-            request.repo, request.issue_number
-        )
+        comments = await self._github.list_comments(request.repo, request.issue_number)
         plan_comment = ""
         for c in reversed(comments):
             body = getattr(c, "body", "")
@@ -72,9 +66,7 @@ class FixExecutor(PhaseExecutor):
             f"6. PR descriptionに修正方針を再掲"
         )
 
-    async def process_result(
-        self, request: TaskRequest, result: AgentResult
-    ) -> None:
+    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """修正結果を処理。遷移は行わず CI 結果を待つ。
 
         FixExecutor は IMPL_REVIEW への遷移を行わない。
@@ -98,8 +90,7 @@ class FixExecutor(PhaseExecutor):
             note="CI結果待ち",
         )
         await self._notifier.notify(
-            f"Issue #{request.issue_number} の修正PRを作成しました。"
-            f"CI結果待ちです",
+            f"Issue #{request.issue_number} の修正PRを作成しました。CI結果待ちです",
             metadata={
                 "issue": request.issue_number,
                 "pr": pr_number,

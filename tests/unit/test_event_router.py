@@ -146,9 +146,7 @@ class TestEventRouterPlanComment:
         """Bug の方針指摘 -> ANALYSIS へ遷移."""
         mock_sm.get_issue_type.return_value = "bug"
         comment = MagicMock(body="修正してください")
-        event = _make_event(
-            EventType.PLAN_COMMENT_ADDED, comment=comment
-        )
+        event = _make_event(EventType.PLAN_COMMENT_ADDED, comment=comment)
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]
@@ -163,9 +161,7 @@ class TestEventRouterPlanComment:
         """Feature-S の方針指摘 -> PLAN_BRIEF へ遷移."""
         mock_sm.get_issue_type.return_value = "feature-s"
         comment = MagicMock(body="修正してください")
-        event = _make_event(
-            EventType.PLAN_COMMENT_ADDED, comment=comment
-        )
+        event = _make_event(EventType.PLAN_COMMENT_ADDED, comment=comment)
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]
@@ -238,9 +234,7 @@ class TestEventRouterImplPR:
         mock_tq: AsyncMock,
     ) -> None:
         """実装 PR コメント -> IMPL_REVISE へ遷移."""
-        event = _make_event(
-            EventType.IMPL_PR_COMMENTED, extra={"comments": "要修正"}
-        )
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "要修正"})
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]
@@ -301,9 +295,7 @@ class TestEventRouterCIResult:
         mock_tq: AsyncMock,
     ) -> None:
         """CI 成功 -> IMPL_REVIEW に遷移 (エンキューなし)."""
-        event = _make_event(
-            EventType.CI_RESULT, extra={"ci_status": "success"}
-        )
+        event = _make_event(EventType.CI_RESULT, extra={"ci_status": "success"})
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]
@@ -340,9 +332,7 @@ class TestEventRouterSplit:
     ) -> None:
         """分割修正指示 -> HEARING へ遷移."""
         comment = MagicMock(body="こう分割して")
-        event = _make_event(
-            EventType.SPLIT_MODIFIED, comment=comment
-        )
+        event = _make_event(EventType.SPLIT_MODIFIED, comment=comment)
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]
@@ -379,9 +369,7 @@ class TestEventRouterHearing:
         """ヒアリング回答 -> hearing_continue エンキュー (遷移なし)."""
         comment = MagicMock()
         comment.body = "回答です"
-        comment.issue_url = (
-            "https://api.github.com/repos/org/app/issues/1"
-        )
+        comment.issue_url = "https://api.github.com/repos/org/app/issues/1"
         event = PollEvent(
             type=EventType.ISSUE_COMMENT,
             repo=_make_repo(),

@@ -122,9 +122,7 @@ class EventRouter:
     async def _handle_hearing_reply(self, event: PollEvent) -> None:
         """ヒアリング回答: hearing_continue をエンキュー (遷移なし)."""
         assert event.comment is not None
-        issue_number = int(
-            str(event.comment.issue_url).split("/")[-1]
-        )
+        issue_number = int(str(event.comment.issue_url).split("/")[-1])
         await self._tq.enqueue(
             TaskRequest(
                 issue_number=issue_number,
@@ -295,9 +293,7 @@ class EventRouter:
                 phase=Phase.HEARING.value,
                 priority=Priority.NORMAL,
                 extra={
-                    "modification_request": (
-                        event.comment.body if event.comment else ""
-                    ),
+                    "modification_request": (event.comment.body if event.comment else ""),
                 },
             )
         )

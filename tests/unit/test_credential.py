@@ -29,9 +29,7 @@ def account_config() -> AccountConfig:
 
 
 @pytest.mark.asyncio
-async def test_resolve_from_keyring(
-    resolver: CredentialResolver, account_config: AccountConfig
-) -> None:
+async def test_resolve_from_keyring(resolver: CredentialResolver, account_config: AccountConfig) -> None:
     """keyringにトークンが存在する場合、keyringから取得されること."""
     with patch("keyring.get_password", return_value="ghp_from_keyring"):
         token = await resolver.resolve(account_config)
@@ -39,9 +37,7 @@ async def test_resolve_from_keyring(
 
 
 @pytest.mark.asyncio
-async def test_resolve_fallback_to_env(
-    resolver: CredentialResolver, account_config: AccountConfig
-) -> None:
+async def test_resolve_fallback_to_env(resolver: CredentialResolver, account_config: AccountConfig) -> None:
     """keyringが空の場合、環境変数から取得されること."""
     with (
         patch("keyring.get_password", return_value=None),
@@ -52,9 +48,7 @@ async def test_resolve_fallback_to_env(
 
 
 @pytest.mark.asyncio
-async def test_resolve_fallback_to_command(
-    resolver: CredentialResolver, account_config: AccountConfig
-) -> None:
+async def test_resolve_fallback_to_command(resolver: CredentialResolver, account_config: AccountConfig) -> None:
     """keyring・環境変数が空の場合、token_commandから取得されること."""
     with (
         patch("keyring.get_password", return_value=None),
@@ -69,9 +63,10 @@ async def test_resolve_fallback_to_gh_cli(resolver: CredentialResolver) -> None:
     """全て失敗した場合、gh auth tokenにフォールバックすること."""
     config = AccountConfig(name="minimal")  # token_env, token_command 未設定
 
-    with patch("keyring.get_password", return_value=None), patch.object(
-        resolver, "_resolve_command", return_value="ghp_from_gh_cli"
-    ) as mock_cmd:
+    with (
+        patch("keyring.get_password", return_value=None),
+        patch.object(resolver, "_resolve_command", return_value="ghp_from_gh_cli") as mock_cmd,
+    ):
         token = await resolver.resolve(config)
 
     assert token == "ghp_from_gh_cli"
@@ -129,9 +124,7 @@ async def test_store_saves_to_keyring(resolver: CredentialResolver) -> None:
     with patch("keyring.set_password") as mock_set:
         await resolver.store("myaccount", "ghp_new_token")
 
-    mock_set.assert_called_once_with(
-        "ai-agent/myaccount", "github_token", "ghp_new_token"
-    )
+    mock_set.assert_called_once_with("ai-agent/myaccount", "github_token", "ghp_new_token")
 
 
 @pytest.mark.asyncio

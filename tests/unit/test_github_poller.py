@@ -103,9 +103,7 @@ class TestDetectNewIssues:
 
         repo = _make_repo()
         am = _make_account_manager(client)
-        poller = GitHubPoller(
-            account_manager=am, repos=[repo], interval_sec=60
-        )
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
 
         result = await poller._detect_new_issues(client, repo)
         assert len(result) == 1
@@ -114,16 +112,12 @@ class TestDetectNewIssues:
     async def test_detect_new_issue_excludes_phase_labeled(self) -> None:
         """phase:* ラベル付きの Issue は検知されない."""
         client = _make_client()
-        issue = _make_issue(
-            number=42, labels=["ai-agent", "phase:hearing"]
-        )
+        issue = _make_issue(number=42, labels=["ai-agent", "phase:hearing"])
         client.get_issues_with_label = AsyncMock(return_value=[issue])
 
         repo = _make_repo()
         am = _make_account_manager(client)
-        poller = GitHubPoller(
-            account_manager=am, repos=[repo], interval_sec=60
-        )
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
 
         result = await poller._detect_new_issues(client, repo)
         assert len(result) == 0
@@ -143,16 +137,12 @@ class TestDetectHearingReplies:
         issue = _make_issue(number=1, labels=["ai-agent", "phase:hearing"])
         client.get_issues_with_label = AsyncMock(return_value=[issue])
 
-        human_comment = _make_comment(
-            comment_id=10, body="回答です", user_type="User"
-        )
+        human_comment = _make_comment(comment_id=10, body="回答です", user_type="User")
         client.list_comments = AsyncMock(return_value=[human_comment])
 
         repo = _make_repo()
         am = _make_account_manager(client)
-        poller = GitHubPoller(
-            account_manager=am, repos=[repo], interval_sec=60
-        )
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
 
         result = await poller._detect_hearing_replies(client, repo, None)
         assert len(result) == 1
@@ -164,16 +154,12 @@ class TestDetectHearingReplies:
         issue = _make_issue(number=1, labels=["ai-agent", "phase:hearing"])
         client.get_issues_with_label = AsyncMock(return_value=[issue])
 
-        bot_comment = _make_comment(
-            comment_id=10, body="bot response", user_type="Bot"
-        )
+        bot_comment = _make_comment(comment_id=10, body="bot response", user_type="Bot")
         client.list_comments = AsyncMock(return_value=[bot_comment])
 
         repo = _make_repo()
         am = _make_account_manager(client)
-        poller = GitHubPoller(
-            account_manager=am, repos=[repo], interval_sec=60
-        )
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
 
         result = await poller._detect_hearing_replies(client, repo, None)
         assert len(result) == 0
@@ -245,14 +231,10 @@ class TestDetectPlanReactions:
     async def test_detect_thumbsup_reaction(self) -> None:
         """方針コメントへの thumbsup が検知される."""
         client = _make_client()
-        issue = _make_issue(
-            number=1, labels=["ai-agent", "phase:plan-review"]
-        )
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:plan-review"])
         client.get_issues_with_label = AsyncMock(return_value=[issue])
 
-        bot_comment = _make_comment(
-            comment_id=100, body="方針提案", user_type="Bot"
-        )
+        bot_comment = _make_comment(comment_id=100, body="方針提案", user_type="Bot")
         client.list_comments = AsyncMock(return_value=[bot_comment])
 
         thumbsup = _make_reaction(content="+1")
@@ -260,9 +242,7 @@ class TestDetectPlanReactions:
 
         repo = _make_repo()
         am = _make_account_manager(client)
-        poller = GitHubPoller(
-            account_manager=am, repos=[repo], interval_sec=60
-        )
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
 
         result = await poller._detect_plan_reactions(client, repo, None)
         assert len(result) == 1
@@ -270,14 +250,10 @@ class TestDetectPlanReactions:
     async def test_no_reaction_detected_without_thumbsup(self) -> None:
         """thumbsup 以外のリアクションでは検知されない."""
         client = _make_client()
-        issue = _make_issue(
-            number=1, labels=["ai-agent", "phase:plan-review"]
-        )
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:plan-review"])
         client.get_issues_with_label = AsyncMock(return_value=[issue])
 
-        bot_comment = _make_comment(
-            comment_id=100, body="方針提案", user_type="Bot"
-        )
+        bot_comment = _make_comment(comment_id=100, body="方針提案", user_type="Bot")
         client.list_comments = AsyncMock(return_value=[bot_comment])
 
         heart = _make_reaction(content="heart")
@@ -285,9 +261,7 @@ class TestDetectPlanReactions:
 
         repo = _make_repo()
         am = _make_account_manager(client)
-        poller = GitHubPoller(
-            account_manager=am, repos=[repo], interval_sec=60
-        )
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
 
         result = await poller._detect_plan_reactions(client, repo, None)
         assert len(result) == 0
@@ -304,13 +278,9 @@ class TestDetectCIResults:
     async def test_detect_ci_failure(self) -> None:
         """CI 失敗が検知される."""
         client = _make_client()
-        issue = _make_issue(
-            number=1, labels=["ai-agent", "phase:implement"]
-        )
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:implement"])
         # First call (implement) returns issue, second call (ci-fix) returns empty
-        client.get_issues_with_label = AsyncMock(
-            side_effect=[[issue], []]
-        )
+        client.get_issues_with_label = AsyncMock(side_effect=[[issue], []])
 
         pr = MagicMock()
         pr.number = 10
@@ -321,16 +291,12 @@ class TestDetectCIResults:
         client.list_pull_requests = AsyncMock(return_value=[pr])
 
         client.get_check_runs = AsyncMock(
-            return_value=[
-                {"name": "test", "status": "completed", "conclusion": "failure"}
-            ]
+            return_value=[{"name": "test", "status": "completed", "conclusion": "failure"}]
         )
 
         repo = _make_repo()
         am = _make_account_manager(client)
-        poller = GitHubPoller(
-            account_manager=am, repos=[repo], interval_sec=60
-        )
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
 
         result = await poller._detect_ci_results(client, repo)
         assert len(result) == 1
@@ -341,13 +307,9 @@ class TestDetectCIResults:
     async def test_detect_ci_success(self) -> None:
         """CI 成功が検知される."""
         client = _make_client()
-        issue = _make_issue(
-            number=1, labels=["ai-agent", "phase:implement"]
-        )
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:implement"])
         # First call (implement) returns issue, second call (ci-fix) returns empty
-        client.get_issues_with_label = AsyncMock(
-            side_effect=[[issue], []]
-        )
+        client.get_issues_with_label = AsyncMock(side_effect=[[issue], []])
 
         pr = MagicMock()
         pr.number = 10
@@ -358,16 +320,12 @@ class TestDetectCIResults:
         client.list_pull_requests = AsyncMock(return_value=[pr])
 
         client.get_check_runs = AsyncMock(
-            return_value=[
-                {"name": "test", "status": "completed", "conclusion": "success"}
-            ]
+            return_value=[{"name": "test", "status": "completed", "conclusion": "success"}]
         )
 
         repo = _make_repo()
         am = _make_account_manager(client)
-        poller = GitHubPoller(
-            account_manager=am, repos=[repo], interval_sec=60
-        )
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
 
         result = await poller._detect_ci_results(client, repo)
         assert len(result) == 1
@@ -392,35 +350,25 @@ class TestPollRepo:
         # new_issues(1) + hearing_replies(1) + hearing_timeouts(1) +
         # plan_reactions(1) + plan_comments(1) + pr_events(2) +
         # ci_results(2) + split_events(1) = 10 calls
-        client.get_issues_with_label = AsyncMock(
-            side_effect=[[issue], [], [], [], [], [], [], [], [], []]
-        )
+        client.get_issues_with_label = AsyncMock(side_effect=[[issue], [], [], [], [], [], [], [], [], []])
 
         repo = _make_repo()
         am = _make_account_manager(client)
-        poller = GitHubPoller(
-            account_manager=am, repos=[repo], interval_sec=60
-        )
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
 
         events = await poller._poll_repo(repo)
-        new_issue_events = [
-            e for e in events if e.type == EventType.NEW_ISSUE
-        ]
+        new_issue_events = [e for e in events if e.type == EventType.NEW_ISSUE]
         assert len(new_issue_events) == 1
         assert new_issue_events[0].issue.number == 42
 
     async def test_poll_error_is_caught_in_start(self) -> None:
         """ポーリング中のエラーが start で処理される."""
         client = _make_client()
-        client.get_issues_with_label = AsyncMock(
-            side_effect=RuntimeError("API error")
-        )
+        client.get_issues_with_label = AsyncMock(side_effect=RuntimeError("API error"))
 
         repo = _make_repo()
         am = _make_account_manager(client)
-        poller = GitHubPoller(
-            account_manager=am, repos=[repo], interval_sec=60
-        )
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
 
         # _poll_repo should raise, which is caught in start()
         with pytest.raises(RuntimeError, match="API error"):

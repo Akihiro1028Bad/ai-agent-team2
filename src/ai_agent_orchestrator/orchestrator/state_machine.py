@@ -52,14 +52,10 @@ class InvalidTransitionError(Exception):
 # ---------------------------------------------------------------------------
 
 # Phase enum value (e.g. "type-detection") -> State attribute name (e.g. "type_detection")
-_PHASE_TO_ATTR: dict[str, str] = {
-    phase.value: phase.value.replace("-", "_") for phase in Phase
-}
+_PHASE_TO_ATTR: dict[str, str] = {phase.value: phase.value.replace("-", "_") for phase in Phase}
 
 # State attribute name (e.g. "type_detection") -> Phase enum
-_ATTR_TO_PHASE: dict[str, Phase] = {
-    phase.value.replace("-", "_"): phase for phase in Phase
-}
+_ATTR_TO_PHASE: dict[str, Phase] = {phase.value.replace("-", "_"): phase for phase in Phase}
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +66,6 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
     # TYPE_DETECTION branches
     (Phase.TYPE_DETECTION, Phase.ANALYSIS): "detect_bug",
     # NOTE: (TYPE_DETECTION, HEARING) is resolved dynamically by _resolve_transition
-
     # Bug workflow
     (Phase.ANALYSIS, Phase.PLAN_REVIEW): "analysis_to_plan_review",
     (Phase.ANALYSIS, Phase.SUSPENDED): "analysis_to_suspended",
@@ -81,18 +76,15 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
     (Phase.FIX, Phase.CI_FIX): "fix_to_ci_fix",
     (Phase.FIX, Phase.IMPL_REVIEW): "fix_to_impl_review",
     (Phase.FIX, Phase.SUSPENDED): "fix_to_suspended",
-
     # Feature-S workflow
     (Phase.PLAN_BRIEF, Phase.PLAN_REVIEW): "plan_brief_to_plan_review",
     (Phase.PLAN_BRIEF, Phase.SUSPENDED): "plan_brief_to_suspended",
-
     # HEARING branches
     (Phase.HEARING, Phase.DESIGN): "hearing_to_design",
     (Phase.HEARING, Phase.PLAN_BRIEF): "hearing_to_plan_brief",
     (Phase.HEARING, Phase.SPLIT_PROPOSAL): "hearing_to_split_proposal",
     (Phase.HEARING, Phase.ANALYSIS): "hearing_to_analysis",
     (Phase.HEARING, Phase.SUSPENDED): "hearing_to_suspended",
-
     # Feature-M workflow
     (Phase.DESIGN, Phase.DESIGN_REVIEW): "design_to_design_review",
     (Phase.DESIGN, Phase.SUSPENDED): "design_to_suspended",
@@ -103,7 +95,6 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
     (Phase.DESIGN_REVISE, Phase.SUSPENDED): "design_revise_to_suspended",
     (Phase.PLANNING, Phase.IMPLEMENT): "planning_to_implement",
     (Phase.PLANNING, Phase.SUSPENDED): "planning_to_suspended",
-
     # Feature-L workflow
     (Phase.SPLIT_PROPOSAL, Phase.SPLIT_EXECUTE): "split_proposal_to_split_execute",
     (Phase.SPLIT_PROPOSAL, Phase.HEARING): "split_proposal_to_hearing",
@@ -111,7 +102,6 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
     (Phase.SPLIT_EXECUTE, Phase.DONE): "split_execute_to_done",
     (Phase.SPLIT_EXECUTE, Phase.BLOCKED): "split_execute_to_blocked",
     (Phase.SPLIT_EXECUTE, Phase.SUSPENDED): "split_execute_to_suspended",
-
     # Common: implement / review
     (Phase.IMPLEMENT, Phase.CI_FIX): "implement_to_ci_fix",
     (Phase.IMPLEMENT, Phase.IMPL_REVIEW): "implement_to_impl_review",
@@ -124,12 +114,10 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
     (Phase.IMPL_REVIEW, Phase.SUSPENDED): "impl_review_to_suspended",
     (Phase.IMPL_REVISE, Phase.IMPL_REVIEW): "impl_revise_to_impl_review",
     (Phase.IMPL_REVISE, Phase.SUSPENDED): "impl_revise_to_suspended",
-
     # BLOCKED
     (Phase.BLOCKED, Phase.HEARING): "blocked_to_hearing",
     (Phase.BLOCKED, Phase.ANALYSIS): "blocked_to_analysis",
     (Phase.BLOCKED, Phase.IMPLEMENT): "blocked_to_implement",
-
     # SUSPENDED -> resume
     (Phase.SUSPENDED, Phase.TYPE_DETECTION): "resume_to_type_detection",
     (Phase.SUSPENDED, Phase.HEARING): "resume_to_hearing",
@@ -393,8 +381,7 @@ class StateMachineManager:
             raise
         except TransitionNotAllowed as e:
             raise InvalidTransitionError(
-                f"Cannot transition Issue #{issue_number} "
-                f"from {old_phase} to {target}: {e}"
+                f"Cannot transition Issue #{issue_number} from {old_phase} to {target}: {e}"
             ) from e
 
         state.phase = target
@@ -444,10 +431,7 @@ class StateMachineManager:
             }
             name = type_map.get(issue_type)
             if name is None:
-                msg = (
-                    f"No transition from TYPE_DETECTION to HEARING "
-                    f"for issue_type={issue_type!r}"
-                )
+                msg = f"No transition from TYPE_DETECTION to HEARING for issue_type={issue_type!r}"
                 raise InvalidTransitionError(msg)
             return name
 
@@ -498,10 +482,7 @@ class StateMachineManager:
         """
         valid_types = {"bug", "feature-s", "feature-m", "feature-l"}
         if issue_type not in valid_types:
-            msg = (
-                f"Invalid issue type: {issue_type}. "
-                f"Must be one of {valid_types}"
-            )
+            msg = f"Invalid issue type: {issue_type}. Must be one of {valid_types}"
             raise ValueError(msg)
         self._states[issue_number].issue_type = issue_type
         self._workflows[issue_number].issue_type = issue_type

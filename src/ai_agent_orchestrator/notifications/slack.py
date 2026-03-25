@@ -54,9 +54,7 @@ class SlackNotifier:
             metadata: 付加情報。repo, issue, pr, pr_url, phase, error,
                 notification_type を認識する。
         """
-        payload = self._build_payload(
-            message, channel=channel, level=level, metadata=metadata
-        )
+        payload = self._build_payload(message, channel=channel, level=level, metadata=metadata)
         await self.send(payload)
 
     async def send(
@@ -72,9 +70,7 @@ class SlackNotifier:
             送信成功時は True、失敗時は False。
         """
         try:
-            response = await self._client.post(
-                self._webhook_url, json=payload
-            )
+            response = await self._client.post(self._webhook_url, json=payload)
             if response.status_code == 200:
                 return True
             logger.warning(
@@ -177,9 +173,7 @@ class SlackNotifier:
 
         if repo and issue is not None:
             issue_url = f"https://github.com/{repo}/issues/{issue}"
-            parts.append(
-                f":page_facing_up: <{issue_url}|Issue #{issue}>"
-            )
+            parts.append(f":page_facing_up: <{issue_url}|Issue #{issue}>")
         elif issue is not None:
             parts.append(f":page_facing_up: Issue #{issue}")
 

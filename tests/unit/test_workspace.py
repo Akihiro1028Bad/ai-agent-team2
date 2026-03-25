@@ -122,11 +122,7 @@ async def test_create_worktree_creates_new(
         assert result == expected_path
 
         # git worktree add コマンドの確認 (args[0]="git", args[1]=subcommand)
-        worktree_call = [
-            c
-            for c in mock_exec_patch.call_args_list
-            if len(c[0]) > 1 and c[0][1] == "worktree"
-        ]
+        worktree_call = [c for c in mock_exec_patch.call_args_list if len(c[0]) > 1 and c[0][1] == "worktree"]
         assert len(worktree_call) > 0
         args = worktree_call[0][0]
         assert "worktree" in args
@@ -156,9 +152,7 @@ async def test_create_worktree_returns_existing(
 
         assert result == worktree_path
         # fetch は呼ばれるが worktree add は呼ばれない
-        worktree_calls = [
-            c for c in mock_exec.call_args_list if "worktree" in str(c) and "add" in str(c)
-        ]
+        worktree_calls = [c for c in mock_exec.call_args_list if "worktree" in str(c) and "add" in str(c)]
         assert len(worktree_calls) == 0
 
 
@@ -186,9 +180,7 @@ async def test_create_worktree_raises_on_failure(
         else:
             # worktree add (or branch check) -- fail on worktree add
             mock_proc.returncode = 128
-            mock_proc.communicate = AsyncMock(
-                return_value=(b"", b"fatal: branch already exists")
-            )
+            mock_proc.communicate = AsyncMock(return_value=(b"", b"fatal: branch already exists"))
         return mock_proc
 
     with patch("asyncio.create_subprocess_exec", side_effect=mock_exec):
@@ -319,13 +311,9 @@ async def test_create_worktree_custom_prefix(
     mock_proc.communicate = AsyncMock(return_value=(b"", b""))
 
     with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
-        await workspace.create_worktree(
-            repo_config, issue_number=42, branch_prefix="design"
-        )
+        await workspace.create_worktree(repo_config, issue_number=42, branch_prefix="design")
 
-        worktree_call = [
-            c for c in mock_exec.call_args_list if len(c[0]) > 1 and c[0][1] == "worktree"
-        ]
+        worktree_call = [c for c in mock_exec.call_args_list if len(c[0]) > 1 and c[0][1] == "worktree"]
         assert len(worktree_call) > 0
         args_str = " ".join(str(a) for a in worktree_call[0][0])
         assert "design/issue-42" in args_str

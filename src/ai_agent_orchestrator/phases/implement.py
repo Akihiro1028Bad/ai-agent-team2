@@ -29,9 +29,7 @@ class ImplementExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(
-            request.repo, request.issue_number
-        )
+        issue = await self._github.get_issue(request.repo, request.issue_number)
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
@@ -56,9 +54,7 @@ class ImplementExecutor(PhaseExecutor):
             f"6. PR descriptionに変更概要を含める"
         )
 
-    async def process_result(
-        self, request: TaskRequest, result: AgentResult
-    ) -> None:
+    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """PR 作成結果を処理 -> IMPL_REVIEW 遷移。
 
         Args:

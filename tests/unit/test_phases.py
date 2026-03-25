@@ -493,9 +493,7 @@ class TestDesignReviseExecutor:
         mock_sm: AsyncMock,
     ) -> None:
         """セッション継続で実行される。"""
-        mock_sm.get_state.return_value = MagicMock(
-            session_id="prev-session"
-        )
+        mock_sm.get_state.return_value = MagicMock(session_id="prev-session")
         from ai_agent_orchestrator.phases.design_revise import (
             DesignReviseExecutor,
         )
@@ -509,9 +507,7 @@ class TestDesignReviseExecutor:
             mock_context,
             mock_sm,
         )
-        request = _make_request(
-            phase="design-revise", extra={"comments": "要修正"}
-        )
+        request = _make_request(phase="design-revise", extra={"comments": "要修正"})
         await executor.execute(request)
 
         mock_runner.run.assert_called_once()
@@ -711,9 +707,7 @@ class TestImplReviseExecutor:
         mock_sm: AsyncMock,
     ) -> None:
         """セッション継続で実行され IMPL_REVIEW に遷移する。"""
-        mock_sm.get_state.return_value = MagicMock(
-            session_id="prev-impl-session"
-        )
+        mock_sm.get_state.return_value = MagicMock(session_id="prev-impl-session")
         from ai_agent_orchestrator.phases.impl_revise import (
             ImplReviseExecutor,
         )
@@ -727,9 +721,7 @@ class TestImplReviseExecutor:
             mock_context,
             mock_sm,
         )
-        request = _make_request(
-            phase="impl-revise", extra={"comments": "変数名修正"}
-        )
+        request = _make_request(phase="impl-revise", extra={"comments": "変数名修正"})
         await executor.execute(request)
 
         mock_runner.run.assert_called_once()
@@ -1003,9 +995,7 @@ class TestPhaseDispatcher:
         from ai_agent_orchestrator.phases.dispatcher import PhaseDispatcher
 
         mock_executor = AsyncMock()
-        dispatcher = PhaseDispatcher(
-            executors={"ci_fix": mock_executor}
-        )
+        dispatcher = PhaseDispatcher(executors={"ci_fix": mock_executor})
 
         request = _make_request(phase="ci-fix")
         await dispatcher.execute(request)

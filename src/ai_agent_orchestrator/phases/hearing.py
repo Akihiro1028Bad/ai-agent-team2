@@ -29,9 +29,7 @@ class HearingExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(
-            request.repo, request.issue_number
-        )
+        issue = await self._github.get_issue(request.repo, request.issue_number)
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
@@ -44,9 +42,7 @@ class HearingExecutor(PhaseExecutor):
         )
 
         # 過去のコメント (ヒアリング回答) も含める
-        comments = await self._github.list_comments(
-            request.repo, request.issue_number
-        )
+        comments = await self._github.list_comments(request.repo, request.issue_number)
         hearing_log = (
             "\n".join(
                 f"[{getattr(c.user, 'login', 'unknown')}]: {c.body}"
@@ -66,17 +62,15 @@ class HearingExecutor(PhaseExecutor):
             f"## 指示\n"
             f"1. Issueの内容を分析し、実装に必要な情報が十分か判断\n"
             f"2. 不明点がある場合は具体的な質問をリストアップ\n"
-            f"3. 情報が十分な場合は \"READY\" と出力\n"
-            f"4. Issueが大きすぎて分割すべき場合は \"NEEDS_SPLIT\" と出力\n\n"
+            f'3. 情報が十分な場合は "READY" と出力\n'
+            f'4. Issueが大きすぎて分割すべき場合は "NEEDS_SPLIT" と出力\n\n'
             f"出力形式:\n"
             f"- 質問がある場合: Issueコメントとして投稿する質問テキスト\n"
-            f"- 準備完了: \"READY\"\n"
-            f"- 分割推奨: \"NEEDS_SPLIT\""
+            f'- 準備完了: "READY"\n'
+            f'- 分割推奨: "NEEDS_SPLIT"'
         )
 
-    async def process_result(
-        self, request: TaskRequest, result: AgentResult
-    ) -> None:
+    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """ヒアリング結果を処理: 質問投稿 or 次フェーズ遷移。
 
         Args:
@@ -101,17 +95,12 @@ class HearingExecutor(PhaseExecutor):
             next_phase = next_phase_map.get(issue_type, "design")
             await self._sm.transition(request.issue_number, next_phase)
         elif "NEEDS_SPLIT" in result.output:
-            await self._sm.transition(
-                request.issue_number, "split-proposal"
-            )
+            await self._sm.transition(request.issue_number, "split-proposal")
         else:
             # 質問を Issue コメントとして投稿
-            await self._github.create_comment(
-                request.repo, request.issue_number, result.output
-            )
+            await self._github.create_comment(request.repo, request.issue_number, result.output)
             await self._notifier.notify(
-                f"Issue #{request.issue_number} に質問を投稿しました。"
-                f"回答をお願いします",
+                f"Issue #{request.issue_number} に質問を投稿しました。回答をお願いします",
                 metadata={
                     "issue": request.issue_number,
                 },

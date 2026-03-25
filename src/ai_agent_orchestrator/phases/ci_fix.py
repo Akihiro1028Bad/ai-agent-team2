@@ -49,9 +49,7 @@ class CiFixExecutor(PhaseExecutor):
             f"4. git commit して Push"
         )
 
-    async def process_result(
-        self, request: TaskRequest, result: AgentResult
-    ) -> None:
+    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """CI 修正結果を処理。リトライカウンタをインクリメント。
 
         遷移は行わない。CI 結果は次回ポーリングで検知される。

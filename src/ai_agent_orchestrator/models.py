@@ -242,42 +242,22 @@ VALID_TRANSITIONS: dict[Phase, list[Phase]] = {
 # ---------------------------------------------------------------------------
 
 PHASE_CONFIG: dict[str, PhaseConfig] = {
-    "type_detection": PhaseConfig(
-        max_budget_usd=0.3, timeout_sec=120, permission_mode="plan"
-    ),
-    "hearing": PhaseConfig(
-        max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"
-    ),
-    "analysis": PhaseConfig(
-        max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"
-    ),
-    "plan_brief": PhaseConfig(
-        max_budget_usd=1.0, timeout_sec=300, permission_mode="plan"
-    ),
-    "design": PhaseConfig(
-        max_budget_usd=3.0, timeout_sec=1800, permission_mode="plan"
-    ),
+    "type_detection": PhaseConfig(max_budget_usd=0.3, timeout_sec=120, permission_mode="plan"),
+    "hearing": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
+    "analysis": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"),
+    "plan_brief": PhaseConfig(max_budget_usd=1.0, timeout_sec=300, permission_mode="plan"),
+    "design": PhaseConfig(max_budget_usd=3.0, timeout_sec=1800, permission_mode="plan"),
     "design_revise": PhaseConfig(
         max_budget_usd=2.0,
         timeout_sec=1200,
         permission_mode="bypassPermissions",
         resume=True,
     ),
-    "planning": PhaseConfig(
-        max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"
-    ),
-    "split_proposal": PhaseConfig(
-        max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"
-    ),
-    "implement": PhaseConfig(
-        max_budget_usd=10.0, timeout_sec=3600, permission_mode="bypassPermissions"
-    ),
-    "fix": PhaseConfig(
-        max_budget_usd=5.0, timeout_sec=1800, permission_mode="bypassPermissions"
-    ),
-    "ci_fix": PhaseConfig(
-        max_budget_usd=3.0, timeout_sec=1200, permission_mode="bypassPermissions"
-    ),
+    "planning": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
+    "split_proposal": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"),
+    "implement": PhaseConfig(max_budget_usd=10.0, timeout_sec=3600, permission_mode="bypassPermissions"),
+    "fix": PhaseConfig(max_budget_usd=5.0, timeout_sec=1800, permission_mode="bypassPermissions"),
+    "ci_fix": PhaseConfig(max_budget_usd=3.0, timeout_sec=1200, permission_mode="bypassPermissions"),
     "impl_revise": PhaseConfig(
         max_budget_usd=5.0,
         timeout_sec=1800,

@@ -284,7 +284,7 @@ class WorkspaceManager:
         paths: list[Path] = []
         for line in stdout.splitlines():
             if line.startswith("worktree "):
-                wt_path = Path(line[len("worktree "):].strip())
+                wt_path = Path(line[len("worktree ") :].strip())
                 # Exclude the main repo directory itself
                 if wt_path != repo_dir:
                     paths.append(wt_path)

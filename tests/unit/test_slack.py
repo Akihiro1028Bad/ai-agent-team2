@@ -25,9 +25,7 @@ def notifier() -> SlackNotifier:
 @respx.mock
 async def test_notify_sends_info_message(notifier: SlackNotifier) -> None:
     """info レベルのメッセージが Webhook に正しく送信されることを検証する."""
-    route = respx.post(WEBHOOK_URL).mock(
-        return_value=httpx.Response(200, text="ok")
-    )
+    route = respx.post(WEBHOOK_URL).mock(return_value=httpx.Response(200, text="ok"))
 
     await notifier.notify(
         "Issue #42 の実装 PR を作成しました",
@@ -49,9 +47,7 @@ async def test_notify_sends_info_message(notifier: SlackNotifier) -> None:
 @respx.mock
 async def test_notify_error_level_uses_x_emoji(notifier: SlackNotifier) -> None:
     """error レベルで :x: 絵文字が使われることを検証する."""
-    route = respx.post(WEBHOOK_URL).mock(
-        return_value=httpx.Response(200, text="ok")
-    )
+    route = respx.post(WEBHOOK_URL).mock(return_value=httpx.Response(200, text="ok"))
 
     await notifier.notify("エラーが発生しました", level="error")
 
@@ -68,9 +64,7 @@ async def test_notify_critical_level_uses_rotating_light_emoji(
     notifier: SlackNotifier,
 ) -> None:
     """critical レベルで :rotating_light: 絵文字が使われることを検証する."""
-    route = respx.post(WEBHOOK_URL).mock(
-        return_value=httpx.Response(200, text="ok")
-    )
+    route = respx.post(WEBHOOK_URL).mock(return_value=httpx.Response(200, text="ok"))
 
     await notifier.notify("認証が切れました", level="critical")
 
@@ -85,9 +79,7 @@ async def test_notify_critical_level_uses_rotating_light_emoji(
 @respx.mock
 async def test_notify_includes_metadata_context(notifier: SlackNotifier) -> None:
     """metadata の repo, issue, pr がコンテキストブロックに含まれることを検証する."""
-    route = respx.post(WEBHOOK_URL).mock(
-        return_value=httpx.Response(200, text="ok")
-    )
+    route = respx.post(WEBHOOK_URL).mock(return_value=httpx.Response(200, text="ok"))
 
     await notifier.notify(
         "PR 作成しました",
@@ -115,9 +107,7 @@ async def test_notify_does_not_raise_on_webhook_failure(
     notifier: SlackNotifier,
 ) -> None:
     """Webhook が 500 を返しても例外が発生しないことを検証する (best-effort)."""
-    respx.post(WEBHOOK_URL).mock(
-        return_value=httpx.Response(500, text="internal error")
-    )
+    respx.post(WEBHOOK_URL).mock(return_value=httpx.Response(500, text="internal error"))
 
     # 例外が発生しないことを確認
     await notifier.notify("テストメッセージ")
@@ -129,9 +119,7 @@ async def test_notify_does_not_raise_on_webhook_failure(
 @respx.mock
 async def test_notify_uses_specified_channel(notifier: SlackNotifier) -> None:
     """channel 引数で指定したチャンネルがペイロードに含まれることを検証する."""
-    route = respx.post(WEBHOOK_URL).mock(
-        return_value=httpx.Response(200, text="ok")
-    )
+    route = respx.post(WEBHOOK_URL).mock(return_value=httpx.Response(200, text="ok"))
 
     await notifier.notify("テスト", channel="#alerts")
 
@@ -147,9 +135,7 @@ async def test_notify_uses_default_channel_when_none(
     notifier: SlackNotifier,
 ) -> None:
     """channel が None の場合にデフォルトチャンネルが使われることを検証する."""
-    route = respx.post(WEBHOOK_URL).mock(
-        return_value=httpx.Response(200, text="ok")
-    )
+    route = respx.post(WEBHOOK_URL).mock(return_value=httpx.Response(200, text="ok"))
 
     await notifier.notify("テスト")
 
@@ -163,9 +149,7 @@ async def test_notify_uses_default_channel_when_none(
 @respx.mock
 async def test_send_returns_true_on_success(notifier: SlackNotifier) -> None:
     """send() が 200 レスポンスで True を返すことを検証する."""
-    respx.post(WEBHOOK_URL).mock(
-        return_value=httpx.Response(200, text="ok")
-    )
+    respx.post(WEBHOOK_URL).mock(return_value=httpx.Response(200, text="ok"))
 
     result = await notifier.send({"text": "テスト"})
 
@@ -175,9 +159,7 @@ async def test_send_returns_true_on_success(notifier: SlackNotifier) -> None:
 @respx.mock
 async def test_send_returns_false_on_failure(notifier: SlackNotifier) -> None:
     """send() が 500 レスポンスで False を返すことを検証する."""
-    respx.post(WEBHOOK_URL).mock(
-        return_value=httpx.Response(500, text="error")
-    )
+    respx.post(WEBHOOK_URL).mock(return_value=httpx.Response(500, text="error"))
 
     result = await notifier.send({"text": "テスト"})
 
@@ -229,9 +211,7 @@ async def test_notify_without_metadata_has_no_context_block(
     notifier: SlackNotifier,
 ) -> None:
     """metadata なしの場合、コンテキストブロックが含まれないことを検証する."""
-    route = respx.post(WEBHOOK_URL).mock(
-        return_value=httpx.Response(200, text="ok")
-    )
+    route = respx.post(WEBHOOK_URL).mock(return_value=httpx.Response(200, text="ok"))
 
     await notifier.notify("シンプルなメッセージ")
 
@@ -246,9 +226,7 @@ async def test_notify_without_metadata_has_no_context_block(
 async def test_no_channel_key_when_both_none() -> None:
     """default_channel も channel も None の場合、payload に channel が無い."""
     n = SlackNotifier(webhook_url=WEBHOOK_URL)
-    route = respx.post(WEBHOOK_URL).mock(
-        return_value=httpx.Response(200, text="ok")
-    )
+    route = respx.post(WEBHOOK_URL).mock(return_value=httpx.Response(200, text="ok"))
 
     await n.notify("テスト")
 

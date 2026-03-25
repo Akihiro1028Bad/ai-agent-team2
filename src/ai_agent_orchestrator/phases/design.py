@@ -28,9 +28,7 @@ class DesignExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(
-            request.repo, request.issue_number
-        )
+        issue = await self._github.get_issue(request.repo, request.issue_number)
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
@@ -41,9 +39,7 @@ class DesignExecutor(PhaseExecutor):
             getattr(issue, "body", "") or "",
             "design",
         )
-        comments = await self._github.list_comments(
-            request.repo, request.issue_number
-        )
+        comments = await self._github.list_comments(request.repo, request.issue_number)
         hearing_log = (
             "\n".join(
                 f"[{getattr(c.user, 'login', 'unknown')}]: {c.body}"
@@ -67,9 +63,7 @@ class DesignExecutor(PhaseExecutor):
             f"4. PRのURLを出力"
         )
 
-    async def process_result(
-        self, request: TaskRequest, result: AgentResult
-    ) -> None:
+    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """設計 PR 作成結果を処理 -> DESIGN_REVIEW 遷移。
 
         Args:
@@ -84,8 +78,7 @@ class DesignExecutor(PhaseExecutor):
 
         await self._sm.transition(request.issue_number, "design-review")
         await self._notifier.notify(
-            f"Issue #{request.issue_number} の設計PRを作成しました。"
-            f"レビューをお願いします",
+            f"Issue #{request.issue_number} の設計PRを作成しました。レビューをお願いします",
             metadata={
                 "issue": request.issue_number,
                 "pr": pr_number,

@@ -116,9 +116,7 @@ class GitHubClient:
             "per_page": 100,
         }
         if since is not None:
-            kwargs["since"] = datetime.fromisoformat(since).replace(
-                tzinfo=UTC
-            )
+            kwargs["since"] = datetime.fromisoformat(since).replace(tzinfo=UTC)
 
         response = await self._github.rest.issues.async_list_comments(**kwargs)
         return list(response.parsed_data)
@@ -377,16 +375,10 @@ class GitHubClient:
         return [
             {
                 "id": review.id,
-                "user": (
-                    {"login": review.user.login} if review.user else None
-                ),
+                "user": ({"login": review.user.login} if review.user else None),
                 "state": review.state,
                 "body": review.body,
-                "submitted_at": (
-                    review.submitted_at.isoformat()
-                    if review.submitted_at
-                    else None
-                ),
+                "submitted_at": (review.submitted_at.isoformat() if review.submitted_at else None),
             }
             for review in reviews_list
         ]
@@ -417,9 +409,7 @@ class GitHubClient:
         return [
             {
                 "id": comment.id,
-                "user": (
-                    {"login": comment.user.login} if comment.user else None
-                ),
+                "user": ({"login": comment.user.login} if comment.user else None),
                 "body": comment.body,
                 "path": comment.path,
                 "line": comment.line,
@@ -594,11 +584,7 @@ class AccountManager:
             ConfigError: 該当リポジトリが config に存在しない場合.
         """
         repo_config = next(
-            (
-                rc
-                for rc in self._repo_configs
-                if rc.owner == owner and rc.repo == repo
-            ),
+            (rc for rc in self._repo_configs if rc.owner == owner and rc.repo == repo),
             None,
         )
         if repo_config is None:
@@ -628,9 +614,7 @@ class AccountManager:
         # 1. Explicit account
         if repo_config.account:
             if repo_config.account not in self._accounts:
-                raise ConfigError(
-                    f"Account '{repo_config.account}' not found in accounts"
-                )
+                raise ConfigError(f"Account '{repo_config.account}' not found in accounts")
             return self._accounts[repo_config.account]
 
         # 2. Default account
@@ -644,8 +628,7 @@ class AccountManager:
 
         # 4. Cannot resolve
         raise ConfigError(
-            "Cannot resolve account: no explicit account, no default, "
-            f"and {len(self._accounts)} accounts configured"
+            f"Cannot resolve account: no explicit account, no default, and {len(self._accounts)} accounts configured"
         )
 
     async def verify_all(self) -> dict[str, bool]:

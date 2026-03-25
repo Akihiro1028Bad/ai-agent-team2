@@ -61,17 +61,13 @@ class SubAgentDefinition:
 CODE_ANALYZER = SubAgentDefinition(
     name="code-analyzer",
     description="既存コードベースの構造分析とリポマップ生成",
-    instructions=(
-        "リポジトリのファイル構造、主要モジュール、依存関係を分析して要約する。"
-    ),
+    instructions=("リポジトリのファイル構造、主要モジュール、依存関係を分析して要約する。"),
 )
 
 TEST_WRITER = SubAgentDefinition(
     name="test-writer",
     description="テストコード作成の専門エージェント",
-    instructions=(
-        "既存テストのパターンに従い、ユニットテストと統合テストを作成する。"
-    ),
+    instructions=("既存テストのパターンに従い、ユニットテストと統合テストを作成する。"),
 )
 
 _IMPL_PHASES = frozenset({"implement", "fix", "ci_fix", "impl_revise"})
@@ -84,42 +80,22 @@ _SUBAGENTS: list[SubAgentDefinition] = [CODE_ANALYZER, TEST_WRITER]
 # ---------------------------------------------------------------------------
 
 PHASE_CONFIG: dict[str, PhaseConfig] = {
-    "type_detection": PhaseConfig(
-        max_budget_usd=0.3, timeout_sec=120, permission_mode="plan"
-    ),
-    "hearing": PhaseConfig(
-        max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"
-    ),
-    "analysis": PhaseConfig(
-        max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"
-    ),
-    "plan_brief": PhaseConfig(
-        max_budget_usd=1.0, timeout_sec=300, permission_mode="plan"
-    ),
-    "design": PhaseConfig(
-        max_budget_usd=3.0, timeout_sec=1800, permission_mode="plan"
-    ),
+    "type_detection": PhaseConfig(max_budget_usd=0.3, timeout_sec=120, permission_mode="plan"),
+    "hearing": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
+    "analysis": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"),
+    "plan_brief": PhaseConfig(max_budget_usd=1.0, timeout_sec=300, permission_mode="plan"),
+    "design": PhaseConfig(max_budget_usd=3.0, timeout_sec=1800, permission_mode="plan"),
     "design_revise": PhaseConfig(
         max_budget_usd=2.0,
         timeout_sec=1200,
         permission_mode="bypassPermissions",
         resume=True,
     ),
-    "planning": PhaseConfig(
-        max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"
-    ),
-    "split_proposal": PhaseConfig(
-        max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"
-    ),
-    "implement": PhaseConfig(
-        max_budget_usd=10.0, timeout_sec=3600, permission_mode="bypassPermissions"
-    ),
-    "fix": PhaseConfig(
-        max_budget_usd=5.0, timeout_sec=1800, permission_mode="bypassPermissions"
-    ),
-    "ci_fix": PhaseConfig(
-        max_budget_usd=3.0, timeout_sec=1200, permission_mode="bypassPermissions"
-    ),
+    "planning": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
+    "split_proposal": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"),
+    "implement": PhaseConfig(max_budget_usd=10.0, timeout_sec=3600, permission_mode="bypassPermissions"),
+    "fix": PhaseConfig(max_budget_usd=5.0, timeout_sec=1800, permission_mode="bypassPermissions"),
+    "ci_fix": PhaseConfig(max_budget_usd=3.0, timeout_sec=1200, permission_mode="bypassPermissions"),
     "impl_revise": PhaseConfig(
         max_budget_usd=5.0,
         timeout_sec=1800,
@@ -128,9 +104,7 @@ PHASE_CONFIG: dict[str, PhaseConfig] = {
     ),
 }
 
-_DEFAULT_PHASE_CONFIG = PhaseConfig(
-    max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"
-)
+_DEFAULT_PHASE_CONFIG = PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan")
 
 
 # ---------------------------------------------------------------------------
@@ -143,9 +117,7 @@ class MaxTurnsExceededError(ClaudeSDKError):
 
     def __init__(self, session_id: str | None = None) -> None:
         self.session_id = session_id
-        super().__init__(
-            f"Max turns exceeded (session_id={session_id})"
-        )
+        super().__init__(f"Max turns exceeded (session_id={session_id})")
 
 
 # ---------------------------------------------------------------------------
@@ -265,9 +237,7 @@ class ClaudeAgentRunner:
         """query() を実行してメッセージを収集し AgentResult を返す."""
         start = time.monotonic()
 
-        messages: list[Message] = [
-            msg async for msg in query(prompt=prompt, options=options)
-        ]
+        messages: list[Message] = [msg async for msg in query(prompt=prompt, options=options)]
 
         elapsed = time.monotonic() - start
 
@@ -364,9 +334,7 @@ class ClaudeAgentRunner:
                     if isinstance(block, TextBlock):
                         result_text += block.text
                     elif isinstance(block, ToolUseBlock):
-                        tool_uses.append(
-                            {"tool": block.name, "input": block.input}
-                        )
+                        tool_uses.append({"tool": block.name, "input": block.input})
 
         # Use SDK-reported duration if available, fall back to wall clock
         final_duration = duration_ms / 1000.0 if duration_ms > 0 else elapsed

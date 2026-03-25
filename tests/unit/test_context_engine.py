@@ -26,9 +26,7 @@ def repo(tmp_path: Path) -> Path:
     src.mkdir(parents=True)
     (src / "__init__.py").write_text("")
     (src / "main.py").write_text("def main() -> None:\n    print('hello')\n")
-    (src / "utils.py").write_text(
-        "def validate_email(addr: str) -> bool:\n    return '@' in addr\n"
-    )
+    (src / "utils.py").write_text("def validate_email(addr: str) -> bool:\n    return '@' in addr\n")
 
     # tests ディレクトリ
     tests = tmp_path / "tests"
@@ -100,9 +98,7 @@ async def test_build_context_ci_fix_phase(engine: ContextEngine, repo: Path) -> 
     assert "## 実装計画" in result
 
 
-async def test_build_context_sections_separated_by_divider(
-    engine: ContextEngine, repo: Path
-) -> None:
+async def test_build_context_sections_separated_by_divider(engine: ContextEngine, repo: Path) -> None:
     """各セクションは --- で区切られる."""
     result = await engine.build_context(str(repo), "Some issue", "hearing")
     assert "\n\n---\n\n" in result

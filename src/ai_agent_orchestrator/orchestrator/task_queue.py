@@ -108,13 +108,9 @@ class TaskQueue:
         self._max_total = max_total
         self._max_per_repo = max_per_repo
         self._seq = 0  # FIFO 保証用シーケンスカウンタ
-        self._queue: asyncio.PriorityQueue[tuple[int, int, TaskRequest]] = (
-            asyncio.PriorityQueue()
-        )
+        self._queue: asyncio.PriorityQueue[tuple[int, int, TaskRequest]] = asyncio.PriorityQueue()
         self._global_sem = asyncio.Semaphore(max_total)
-        self._repo_sems: dict[str, asyncio.Semaphore] = defaultdict(
-            lambda: asyncio.Semaphore(max_per_repo)
-        )
+        self._repo_sems: dict[str, asyncio.Semaphore] = defaultdict(lambda: asyncio.Semaphore(max_per_repo))
         self._active_tasks: dict[int, asyncio.Task[None]] = {}
         self._queued_issues: set[int] = set()  # 重複排除用
 

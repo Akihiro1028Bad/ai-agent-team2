@@ -17,44 +17,48 @@ _DESIGN_DOC_PHASES = frozenset({"planning", "implement", "ci_fix"})
 _IMPL_PLAN_PHASES = frozenset({"implement", "ci_fix"})
 
 # ディレクトリツリーで除外するパターン
-_IGNORE_DIRS = frozenset({
-    ".git",
-    "__pycache__",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    "node_modules",
-    ".venv",
-    "venv",
-    ".tox",
-    ".eggs",
-    "*.egg-info",
-    "dist",
-    "build",
-    ".claude",
-})
+_IGNORE_DIRS = frozenset(
+    {
+        ".git",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "node_modules",
+        ".venv",
+        "venv",
+        ".tox",
+        ".eggs",
+        "*.egg-info",
+        "dist",
+        "build",
+        ".claude",
+    }
+)
 
 # grep 対象の拡張子
-_SOURCE_EXTENSIONS = frozenset({
-    ".py",
-    ".ts",
-    ".tsx",
-    ".js",
-    ".jsx",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".json",
-    ".md",
-    ".rst",
-    ".sql",
-    ".sh",
-    ".go",
-    ".rs",
-    ".java",
-    ".kt",
-    ".rb",
-})
+_SOURCE_EXTENSIONS = frozenset(
+    {
+        ".py",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".json",
+        ".md",
+        ".rst",
+        ".sql",
+        ".sh",
+        ".go",
+        ".rs",
+        ".java",
+        ".kt",
+        ".rb",
+    }
+)
 
 
 class ContextEngine:
@@ -123,9 +127,7 @@ class ContextEngine:
         """
         return await self._read_file_if_exists(Path(repo_path) / "CLAUDE.md")
 
-    async def _read_design_doc(
-        self, repo_path: str, issue_number: int | None = None
-    ) -> str | None:
+    async def _read_design_doc(self, repo_path: str, issue_number: int | None = None) -> str | None:
         """設計書を読み込む.
 
         docs/design.md または docs/design-*.md を探す。
@@ -158,9 +160,7 @@ class ContextEngine:
 
         return None
 
-    async def _read_impl_plan(
-        self, repo_path: str, issue_number: int | None = None
-    ) -> str | None:
+    async def _read_impl_plan(self, repo_path: str, issue_number: int | None = None) -> str | None:
         """実装計画を読み込む.
 
         Args:
@@ -183,9 +183,7 @@ class ContextEngine:
         plan_path = docs_dir / "impl-plan.md"
         return await self._read_file_if_exists(plan_path)
 
-    async def _get_repo_structure(
-        self, repo_path: str, max_depth: int = 3
-    ) -> str:
+    async def _get_repo_structure(self, repo_path: str, max_depth: int = 3) -> str:
         """リポジトリのディレクトリツリーを生成.
 
         Args:
@@ -200,9 +198,7 @@ class ContextEngine:
             return "(directory not found)"
 
         lines: list[str] = []
-        await asyncio.to_thread(
-            self._walk_tree, root, root, lines, max_depth, 0
-        )
+        await asyncio.to_thread(self._walk_tree, root, root, lines, max_depth, 0)
         return "\n".join(lines) if lines else "(empty)"
 
     def _walk_tree(
@@ -246,9 +242,7 @@ class ContextEngine:
             else:
                 lines.append(f"{indent}{relative}")
 
-    async def _find_related_files(
-        self, repo_path: str, keywords: list[str]
-    ) -> list[str]:
+    async def _find_related_files(self, repo_path: str, keywords: list[str]) -> list[str]:
         """キーワードに基づいて関連ファイルを検索.
 
         Args:
@@ -266,9 +260,7 @@ class ContextEngine:
             return []
 
         found: dict[str, int] = {}  # path -> hit count
-        await asyncio.to_thread(
-            self._grep_files, root, keywords, found
-        )
+        await asyncio.to_thread(self._grep_files, root, keywords, found)
 
         # ヒット数の多い順にソートし、上位20件を返す
         sorted_files = sorted(found.items(), key=lambda x: x[1], reverse=True)
@@ -358,24 +350,90 @@ class ContextEngine:
         """
         try:
             if path.is_file():
-                return await asyncio.to_thread(
-                    path.read_text, encoding="utf-8"
-                )
+                return await asyncio.to_thread(path.read_text, encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             logger.warning("Failed to read %s: %s", path, exc)
         return None
 
 
 # 検索キーワードから除外する一般的な単語
-_STOP_WORDS = frozenset({
-    "the", "and", "for", "that", "this", "with", "from", "not", "but",
-    "are", "was", "were", "been", "have", "has", "had", "will", "can",
-    "should", "would", "could", "may", "might", "shall", "does", "did",
-    "also", "into", "when", "where", "which", "what", "how", "who",
-    "all", "each", "every", "both", "few", "more", "most", "some",
-    "any", "other", "than", "then", "now", "just", "only", "very",
-    "use", "using", "used", "new", "old", "add", "get", "set",
-    "def", "class", "import", "return", "none", "true", "false",
-    "str", "int", "bool", "list", "dict", "tuple", "float",
-    "self", "cls", "args", "kwargs",
-})
+_STOP_WORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "that",
+        "this",
+        "with",
+        "from",
+        "not",
+        "but",
+        "are",
+        "was",
+        "were",
+        "been",
+        "have",
+        "has",
+        "had",
+        "will",
+        "can",
+        "should",
+        "would",
+        "could",
+        "may",
+        "might",
+        "shall",
+        "does",
+        "did",
+        "also",
+        "into",
+        "when",
+        "where",
+        "which",
+        "what",
+        "how",
+        "who",
+        "all",
+        "each",
+        "every",
+        "both",
+        "few",
+        "more",
+        "most",
+        "some",
+        "any",
+        "other",
+        "than",
+        "then",
+        "now",
+        "just",
+        "only",
+        "very",
+        "use",
+        "using",
+        "used",
+        "new",
+        "old",
+        "add",
+        "get",
+        "set",
+        "def",
+        "class",
+        "import",
+        "return",
+        "none",
+        "true",
+        "false",
+        "str",
+        "int",
+        "bool",
+        "list",
+        "dict",
+        "tuple",
+        "float",
+        "self",
+        "cls",
+        "args",
+        "kwargs",
+    }
+)

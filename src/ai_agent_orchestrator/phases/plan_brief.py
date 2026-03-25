@@ -29,20 +29,14 @@ class PlanBriefExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(
-            request.repo, request.issue_number
-        )
-        worktree = await self._workspace.create_worktree(
-            request.repo, request.issue_number
-        )
+        issue = await self._github.get_issue(request.repo, request.issue_number)
+        worktree = await self._workspace.create_worktree(request.repo, request.issue_number)
         context = await self._context.build_context(
             str(worktree),
             getattr(issue, "body", "") or "",
             "plan_brief",
         )
-        comments = await self._github.list_comments(
-            request.repo, request.issue_number
-        )
+        comments = await self._github.list_comments(request.repo, request.issue_number)
         hearing_log = (
             "\n".join(
                 f"[{getattr(c.user, 'login', 'unknown')}]: {c.body}"
@@ -55,9 +49,7 @@ class PlanBriefExecutor(PhaseExecutor):
 
         extra = getattr(request, "extra", {}) or {}
         feedback = extra.get("feedback", "")
-        feedback_section = (
-            f"\n## 前回の方針に対する指摘\n{feedback}" if feedback else ""
-        )
+        feedback_section = f"\n## 前回の方針に対する指摘\n{feedback}" if feedback else ""
 
         return (
             f"以下のIssueの簡易実装方針を作成してください。\n\n"
@@ -70,9 +62,7 @@ class PlanBriefExecutor(PhaseExecutor):
             f"実装方針を出力してください。"
         )
 
-    async def process_result(
-        self, request: TaskRequest, result: AgentResult
-    ) -> None:
+    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """方針をコメント投稿 -> PLAN_REVIEW 遷移。
 
         Args:
@@ -83,12 +73,9 @@ class PlanBriefExecutor(PhaseExecutor):
         if state:
             state.session_id = result.session_id
 
-        await self._github.create_comment(
-            request.repo, request.issue_number, result.output
-        )
+        await self._github.create_comment(request.repo, request.issue_number, result.output)
         await self._sm.transition(request.issue_number, "plan-review")
         await self._notifier.notify(
-            f"Issue #{request.issue_number} の実装方針を投稿しました。"
-            f"thumbsup で承認をお願いします",
+            f"Issue #{request.issue_number} の実装方針を投稿しました。thumbsup で承認をお願いします",
             metadata={"issue": request.issue_number},
         )

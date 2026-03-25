@@ -347,9 +347,9 @@ async def test_create_comment_posts_body(
     repo_config: RepositoryConfig,
 ) -> None:
     """TC-GH-02: Issue コメントが正しい本文で投稿されることを検証する."""
-    route = respx.post(
-        "https://api.github.com/repos/test-org/test-repo/issues/42/comments"
-    ).mock(return_value=httpx.Response(201, json=_comment(100, body="test body")))
+    route = respx.post("https://api.github.com/repos/test-org/test-repo/issues/42/comments").mock(
+        return_value=httpx.Response(201, json=_comment(100, body="test body"))
+    )
 
     comment = await client.create_comment(repo_config, 42, "test body")
 
@@ -374,9 +374,9 @@ async def test_replace_phase_label_removes_old_and_adds_new(
     remove_route = respx.delete(
         "https://api.github.com/repos/test-org/test-repo/issues/42/labels/phase%3Ahearing"
     ).mock(return_value=httpx.Response(200, json=[]))
-    add_route = respx.post(
-        "https://api.github.com/repos/test-org/test-repo/issues/42/labels"
-    ).mock(return_value=httpx.Response(200, json=[_label("phase:design")]))
+    add_route = respx.post("https://api.github.com/repos/test-org/test-repo/issues/42/labels").mock(
+        return_value=httpx.Response(200, json=[_label("phase:design")])
+    )
 
     await client.replace_phase_label(repo_config, 42, "phase:design")
 
@@ -390,9 +390,9 @@ async def test_create_pull_request_with_correct_params(
     repo_config: RepositoryConfig,
 ) -> None:
     """TC-GH-04: PR が正しいパラメータで作成されることを検証する."""
-    route = respx.post(
-        "https://api.github.com/repos/test-org/test-repo/pulls"
-    ).mock(return_value=httpx.Response(201, json=_pr_json(10, title="feat: #42")))
+    route = respx.post("https://api.github.com/repos/test-org/test-repo/pulls").mock(
+        return_value=httpx.Response(201, json=_pr_json(10, title="feat: #42"))
+    )
 
     pr = await client.create_pull_request(
         repo_config,
@@ -411,12 +411,8 @@ async def test_merge_pull_request_squash(
     repo_config: RepositoryConfig,
 ) -> None:
     """TC-GH-05: PR が squash マージされることを検証する."""
-    route = respx.put(
-        "https://api.github.com/repos/test-org/test-repo/pulls/10/merge"
-    ).mock(
-        return_value=httpx.Response(
-            200, json={"merged": True, "sha": "abc123", "message": "merged"}
-        )
+    route = respx.put("https://api.github.com/repos/test-org/test-repo/pulls/10/merge").mock(
+        return_value=httpx.Response(200, json={"merged": True, "sha": "abc123", "message": "merged"})
     )
 
     await client.merge_pull_request(repo_config, 10, merge_method="squash")
@@ -431,9 +427,7 @@ async def test_get_reactions_returns_thumbsup(
     repo_config: RepositoryConfig,
 ) -> None:
     """TC-GH-06: リアクション一覧を取得し thumbsup を検出できること."""
-    respx.get(
-        "https://api.github.com/repos/test-org/test-repo/issues/comments/100/reactions"
-    ).mock(
+    respx.get("https://api.github.com/repos/test-org/test-repo/issues/comments/100/reactions").mock(
         return_value=httpx.Response(
             200,
             json=[
@@ -468,9 +462,9 @@ async def test_remove_label_ignores_not_found(
     repo_config: RepositoryConfig,
 ) -> None:
     """TC-GH-07: 存在しないラベルの削除が例外を発生させないこと."""
-    respx.delete(
-        "https://api.github.com/repos/test-org/test-repo/issues/42/labels/nonexistent"
-    ).mock(return_value=httpx.Response(404, json={"message": "Not found"}))
+    respx.delete("https://api.github.com/repos/test-org/test-repo/issues/42/labels/nonexistent").mock(
+        return_value=httpx.Response(404, json={"message": "Not found"})
+    )
 
     await client.remove_label(repo_config, 42, "nonexistent")
 
@@ -484,9 +478,7 @@ async def test_create_label_updates_existing(
     respx.post("https://api.github.com/repos/test-org/test-repo/labels").mock(
         return_value=httpx.Response(422, json={"errors": [{"code": "already_exists"}]})
     )
-    patch_route = respx.patch(
-        "https://api.github.com/repos/test-org/test-repo/labels/phase%3Ahearing"
-    ).mock(
+    patch_route = respx.patch("https://api.github.com/repos/test-org/test-repo/labels/phase%3Ahearing").mock(
         return_value=httpx.Response(200, json=_label("phase:hearing", "0e8a16"))
     )
 
@@ -499,9 +491,7 @@ async def test_create_label_updates_existing(
 @respx.mock
 async def test_get_pr_reviews_returns_reviews(client: GitHubClient) -> None:
     """TC-GH-09: PR のレビュー一覧を取得できること."""
-    respx.get(
-        "https://api.github.com/repos/test-org/test-repo/pulls/10/reviews"
-    ).mock(
+    respx.get("https://api.github.com/repos/test-org/test-repo/pulls/10/reviews").mock(
         return_value=httpx.Response(
             200,
             json=[
@@ -545,9 +535,7 @@ async def test_get_pr_reviews_returns_reviews(client: GitHubClient) -> None:
 @respx.mock
 async def test_get_pr_comments_returns_comments(client: GitHubClient) -> None:
     """TC-GH-10: PR のレビューコメント一覧を取得できること."""
-    respx.get(
-        "https://api.github.com/repos/test-org/test-repo/pulls/10/comments"
-    ).mock(
+    respx.get("https://api.github.com/repos/test-org/test-repo/pulls/10/comments").mock(
         return_value=httpx.Response(
             200,
             json=[
@@ -593,9 +581,9 @@ async def test_close_issue(
     repo_config: RepositoryConfig,
 ) -> None:
     """Issue のクローズが正しく呼ばれることを検証する."""
-    route = respx.patch(
-        "https://api.github.com/repos/test-org/test-repo/issues/42"
-    ).mock(return_value=httpx.Response(200, json=_issue(42, state="closed")))
+    route = respx.patch("https://api.github.com/repos/test-org/test-repo/issues/42").mock(
+        return_value=httpx.Response(200, json=_issue(42, state="closed"))
+    )
 
     await client.close_issue(repo_config, 42)
 
@@ -628,9 +616,7 @@ async def test_get_check_runs(
     repo_config: RepositoryConfig,
 ) -> None:
     """CI/CD チェック結果の取得を検証する."""
-    respx.get(
-        "https://api.github.com/repos/test-org/test-repo/commits/abc123/check-runs"
-    ).mock(
+    respx.get("https://api.github.com/repos/test-org/test-repo/commits/abc123/check-runs").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -691,9 +677,9 @@ async def test_list_comments(
     repo_config: RepositoryConfig,
 ) -> None:
     """Issue コメント一覧の取得を検証する."""
-    respx.get(
-        "https://api.github.com/repos/test-org/test-repo/issues/42/comments"
-    ).mock(return_value=httpx.Response(200, json=[_comment(1, body="Hello")]))
+    respx.get("https://api.github.com/repos/test-org/test-repo/issues/42/comments").mock(
+        return_value=httpx.Response(200, json=[_comment(1, body="Hello")])
+    )
 
     comments = await client.list_comments(repo_config, 42)
 
@@ -707,9 +693,9 @@ async def test_add_label(
     repo_config: RepositoryConfig,
 ) -> None:
     """ラベル追加が正しく呼ばれることを検証する."""
-    route = respx.post(
-        "https://api.github.com/repos/test-org/test-repo/issues/42/labels"
-    ).mock(return_value=httpx.Response(200, json=[_label("bug")]))
+    route = respx.post("https://api.github.com/repos/test-org/test-repo/issues/42/labels").mock(
+        return_value=httpx.Response(200, json=[_label("bug")])
+    )
 
     await client.add_label(repo_config, 42, "bug")
 

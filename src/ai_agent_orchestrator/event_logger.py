@@ -29,9 +29,16 @@ class EventLogger:
         TOKEN_PATTERN: トークン文字列にマッチする正規表現。
     """
 
-    SENSITIVE_KEYS: frozenset[str] = frozenset({
-        "token", "password", "secret", "authorization", "cookie", "credential",
-    })
+    SENSITIVE_KEYS: frozenset[str] = frozenset(
+        {
+            "token",
+            "password",
+            "secret",
+            "authorization",
+            "cookie",
+            "credential",
+        }
+    )
 
     TOKEN_PATTERN: re.Pattern[str] = re.compile(
         r"(ghp_[A-Za-z0-9]{36}|gho_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{82})"
@@ -89,11 +96,7 @@ class EventLogger:
     ) -> None:
         """フェーズログをファイルに書き出す."""
         ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
-        log_file = (
-            self._log_dir
-            / f"issue-{issue_number}"
-            / f"{ts}_{phase}.log"
-        )
+        log_file = self._log_dir / f"issue-{issue_number}" / f"{ts}_{phase}.log"
         log_file.parent.mkdir(parents=True, exist_ok=True)
 
         # 文字列内のトークンパターンをマスク
@@ -115,19 +118,19 @@ class EventLogger:
                 sanitized[key] = self._sanitize_for_log(value)
             elif isinstance(value, str):
                 masked = self.TOKEN_PATTERN.sub("***REDACTED***", value)
-                masked = self.URL_TOKEN_PATTERN.sub(
-                    r"\1\2=***REDACTED***", masked
-                )
+                masked = self.URL_TOKEN_PATTERN.sub(r"\1\2=***REDACTED***", masked)
                 sanitized[key] = masked
             elif isinstance(value, list):
                 sanitized[key] = [
-                    self._sanitize_for_log(item) if isinstance(item, dict)
+                    self._sanitize_for_log(item)
+                    if isinstance(item, dict)
                     else (
                         self.URL_TOKEN_PATTERN.sub(
                             r"\1\2=***REDACTED***",
                             self.TOKEN_PATTERN.sub("***REDACTED***", item),
                         )
-                        if isinstance(item, str) else item
+                        if isinstance(item, str)
+                        else item
                     )
                     for item in value
                 ]

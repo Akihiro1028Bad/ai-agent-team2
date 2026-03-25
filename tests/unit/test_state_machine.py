@@ -345,9 +345,7 @@ class TestInvalidTransitions:
             sm.set_issue_type(42, "invalid-type")
 
     @pytest.mark.asyncio
-    async def test_type_detection_to_hearing_without_type_raises(
-        self, sm: StateMachineManager
-    ) -> None:
+    async def test_type_detection_to_hearing_without_type_raises(self, sm: StateMachineManager) -> None:
         """issue_type 未設定で TYPE_DETECTION -> HEARING は失敗."""
         sm.register_issue(43, "owner/repo")
         # issue_type not set (empty string)
@@ -364,9 +362,7 @@ class TestPersistence:
     """StatePersistence との連携をテスト."""
 
     @pytest.mark.asyncio
-    async def test_auto_save_on_transition(
-        self, sm: StateMachineManager, mock_persistence: MagicMock
-    ) -> None:
+    async def test_auto_save_on_transition(self, sm: StateMachineManager, mock_persistence: MagicMock) -> None:
         """遷移ごとに persistence.save() が呼ばれる."""
         sm.register_issue(50, "owner/repo")
         sm.set_issue_type(50, "bug")
@@ -375,17 +371,13 @@ class TestPersistence:
         await sm.transition(50, Phase.ANALYSIS)
         assert mock_persistence.save.call_count > initial_call_count
 
-    def test_auto_save_on_register(
-        self, sm: StateMachineManager, mock_persistence: MagicMock
-    ) -> None:
+    def test_auto_save_on_register(self, sm: StateMachineManager, mock_persistence: MagicMock) -> None:
         """register_issue() で persistence.save() が呼ばれる."""
         initial = mock_persistence.save.call_count
         sm.register_issue(51, "owner/repo")
         assert mock_persistence.save.call_count > initial
 
-    def test_load_from_persistence(
-        self, mock_persistence: MagicMock, mock_tracker: AsyncMock
-    ) -> None:
+    def test_load_from_persistence(self, mock_persistence: MagicMock, mock_tracker: AsyncMock) -> None:
         """起動時に永続化データから状態を復元できる."""
         mock_persistence.load.return_value = {
             1: IssueState(
@@ -404,9 +396,7 @@ class TestPersistence:
         assert manager.get_issue_type(1) == "feature-m"
 
     @pytest.mark.asyncio
-    async def test_load_and_continue_workflow(
-        self, mock_persistence: MagicMock, mock_tracker: AsyncMock
-    ) -> None:
+    async def test_load_and_continue_workflow(self, mock_persistence: MagicMock, mock_tracker: AsyncMock) -> None:
         """復元後に遷移を継続できる."""
         mock_persistence.load.return_value = {
             1: IssueState(
@@ -426,9 +416,7 @@ class TestPersistence:
         await manager.transition(1, Phase.DESIGN_REVIEW)
         assert manager.get_phase(1) == Phase.DESIGN_REVIEW
 
-    def test_load_multiple_issues(
-        self, mock_persistence: MagicMock, mock_tracker: AsyncMock
-    ) -> None:
+    def test_load_multiple_issues(self, mock_persistence: MagicMock, mock_tracker: AsyncMock) -> None:
         """複数 Issue を復元できる."""
         mock_persistence.load.return_value = {
             1: IssueState(
@@ -464,9 +452,7 @@ class TestSuspendedResume:
     """SUSPENDED 状態からの復帰をテスト."""
 
     @pytest.mark.asyncio
-    async def test_resume_from_suspended_to_hearing(
-        self, sm: StateMachineManager
-    ) -> None:
+    async def test_resume_from_suspended_to_hearing(self, sm: StateMachineManager) -> None:
         """SUSPENDED -> HEARING に復帰できる."""
         sm.register_issue(60, "owner/repo")
         sm.set_issue_type(60, "feature-m")
@@ -478,9 +464,7 @@ class TestSuspendedResume:
         assert sm.get_phase(60) == Phase.HEARING
 
     @pytest.mark.asyncio
-    async def test_resume_from_suspended_to_analysis(
-        self, sm: StateMachineManager
-    ) -> None:
+    async def test_resume_from_suspended_to_analysis(self, sm: StateMachineManager) -> None:
         """SUSPENDED -> ANALYSIS に復帰できる."""
         sm.register_issue(61, "owner/repo")
         sm.set_issue_type(61, "bug")
@@ -491,9 +475,7 @@ class TestSuspendedResume:
         assert sm.get_phase(61) == Phase.ANALYSIS
 
     @pytest.mark.asyncio
-    async def test_resume_from_suspended_to_implement(
-        self, sm: StateMachineManager
-    ) -> None:
+    async def test_resume_from_suspended_to_implement(self, sm: StateMachineManager) -> None:
         """SUSPENDED -> IMPLEMENT に復帰できる."""
         sm.register_issue(62, "owner/repo")
         sm.set_issue_type(62, "feature-m")
@@ -556,9 +538,7 @@ class TestStateAccessors:
         assert state.issue_number == 80
         assert state.repo == "owner/repo"
 
-    def test_get_state_unregistered_returns_none(
-        self, sm: StateMachineManager
-    ) -> None:
+    def test_get_state_unregistered_returns_none(self, sm: StateMachineManager) -> None:
         """未登録 Issue の get_state() は None."""
         assert sm.get_state(999) is None
 
@@ -591,9 +571,7 @@ class TestTrackerIntegration:
     """Tracker の呼び出しをテスト."""
 
     @pytest.mark.asyncio
-    async def test_tracker_called_on_transition(
-        self, sm: StateMachineManager, mock_tracker: AsyncMock
-    ) -> None:
+    async def test_tracker_called_on_transition(self, sm: StateMachineManager, mock_tracker: AsyncMock) -> None:
         """遷移時に tracker.track() が呼ばれる."""
         sm.register_issue(90, "owner/repo")
         sm.set_issue_type(90, "bug")

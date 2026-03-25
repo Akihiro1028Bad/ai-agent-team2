@@ -153,27 +153,17 @@ class TestConcurrencyLimits:
         execution_log: list[tuple[str, str, int]] = []
 
         async def mock_execute(request: TaskRequest) -> None:
-            execution_log.append(
-                ("start", request.repo_key, request.issue_number)
-            )
+            execution_log.append(("start", request.repo_key, request.issue_number))
             await asyncio.sleep(0.05)
-            execution_log.append(
-                ("end", request.repo_key, request.issue_number)
-            )
+            execution_log.append(("end", request.repo_key, request.issue_number))
 
         executor = AsyncMock()
         executor.execute = mock_execute
 
         # repo-a に 2 タスク、repo-b に 1 タスク
-        await tq.enqueue(
-            TaskRequest(issue_number=1, repo=repo_a, phase="hearing")
-        )
-        await tq.enqueue(
-            TaskRequest(issue_number=2, repo=repo_a, phase="design")
-        )
-        await tq.enqueue(
-            TaskRequest(issue_number=3, repo=repo_b, phase="hearing")
-        )
+        await tq.enqueue(TaskRequest(issue_number=1, repo=repo_a, phase="hearing"))
+        await tq.enqueue(TaskRequest(issue_number=2, repo=repo_a, phase="design"))
+        await tq.enqueue(TaskRequest(issue_number=3, repo=repo_b, phase="hearing"))
 
         workers = [asyncio.create_task(tq.worker_loop(executor)) for _ in range(3)]
 
@@ -183,24 +173,14 @@ class TestConcurrencyLimits:
         await asyncio.gather(*workers, return_exceptions=True)
 
         # repo-a の start が 2 つ同時にならないことを検証
-        repo_a_starts = [
-            (i, e)
-            for i, e in enumerate(execution_log)
-            if e[0] == "start" and e[1] == "org/repo-a"
-        ]
+        repo_a_starts = [(i, e) for i, e in enumerate(execution_log) if e[0] == "start" and e[1] == "org/repo-a"]
         if len(repo_a_starts) >= 2:
             second_start_idx = repo_a_starts[1][0]
-            first_end_idx = next(
-                i
-                for i, e in enumerate(execution_log)
-                if e[0] == "end" and e[1] == "org/repo-a"
-            )
+            first_end_idx = next(i for i, e in enumerate(execution_log) if e[0] == "end" and e[1] == "org/repo-a")
             assert first_end_idx < second_start_idx
 
         # repo-b は repo-a のブロックとは独立に実行される
-        repo_b_events = [
-            e for e in execution_log if e[1] == "org/repo-b"
-        ]
+        repo_b_events = [e for e in execution_log if e[1] == "org/repo-b"]
         assert len(repo_b_events) >= 1
 
 
@@ -228,12 +208,8 @@ class TestErrorHandling:
 
         repo_a = _make_repo("org", "repo-a")
         repo_b = _make_repo("org", "repo-b")
-        await tq.enqueue(
-            TaskRequest(issue_number=1, repo=repo_a, phase="hearing")
-        )
-        await tq.enqueue(
-            TaskRequest(issue_number=2, repo=repo_b, phase="hearing")
-        )
+        await tq.enqueue(TaskRequest(issue_number=1, repo=repo_a, phase="hearing"))
+        await tq.enqueue(TaskRequest(issue_number=2, repo=repo_b, phase="hearing"))
 
         worker = asyncio.create_task(tq.worker_loop(executor))
         await asyncio.sleep(0.5)
@@ -253,9 +229,7 @@ class TestErrorHandling:
         executor.execute = mock_execute
 
         repo = _make_repo()
-        await tq.enqueue(
-            TaskRequest(issue_number=1, repo=repo, phase="hearing")
-        )
+        await tq.enqueue(TaskRequest(issue_number=1, repo=repo, phase="hearing"))
 
         worker = asyncio.create_task(tq.worker_loop(executor))
         await asyncio.sleep(0.3)
@@ -282,9 +256,7 @@ class TestDuplicateHandling:
         dummy_task = asyncio.create_task(asyncio.sleep(10))
         tq._active_tasks[1] = dummy_task
 
-        await tq.enqueue(
-            TaskRequest(issue_number=1, repo=repo, phase="hearing")
-        )
+        await tq.enqueue(TaskRequest(issue_number=1, repo=repo, phase="hearing"))
         assert tq.queued_count == 0  # キューに入らない
 
         dummy_task.cancel()
@@ -295,9 +267,7 @@ class TestDuplicateHandling:
         tq = TaskQueue(max_total=2, max_per_repo=1)
         repo = _make_repo()
 
-        await tq.enqueue(
-            TaskRequest(issue_number=42, repo=repo, phase="hearing")
-        )
+        await tq.enqueue(TaskRequest(issue_number=42, repo=repo, phase="hearing"))
         assert 42 in tq._queued_issues
 
         _ = await tq.dequeue()
@@ -317,12 +287,8 @@ class TestGetStatus:
         tq = TaskQueue(max_total=3, max_per_repo=2)
         repo = _make_repo()
 
-        await tq.enqueue(
-            TaskRequest(issue_number=1, repo=repo, phase="hearing")
-        )
-        await tq.enqueue(
-            TaskRequest(issue_number=2, repo=repo, phase="design")
-        )
+        await tq.enqueue(TaskRequest(issue_number=1, repo=repo, phase="hearing"))
+        await tq.enqueue(TaskRequest(issue_number=2, repo=repo, phase="design"))
 
         status = tq.get_status()
         assert status["active"] == 0

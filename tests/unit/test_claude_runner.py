@@ -48,9 +48,7 @@ def _make_text_block(text: str = "output text") -> Any:
     return TextBlock(text=text)
 
 
-def _make_tool_use_block(
-    name: str = "Bash", input_data: dict[str, Any] | None = None
-) -> Any:
+def _make_tool_use_block(name: str = "Bash", input_data: dict[str, Any] | None = None) -> Any:
     from claude_code_sdk.types import ToolUseBlock
 
     return ToolUseBlock(id="tu-1", name=name, input=input_data or {})
@@ -101,9 +99,7 @@ def _make_fake_query(
     If captured_kwargs is provided, each call appends kwargs to it.
     """
 
-    async def fake_query(
-        *, prompt: str, options: Any = None, transport: Any = None
-    ) -> Any:
+    async def fake_query(*, prompt: str, options: Any = None, transport: Any = None) -> Any:
         if captured_kwargs is not None:
             captured_kwargs.append({"prompt": prompt, "options": options})
         for msg in messages:
@@ -188,9 +184,7 @@ async def test_run_raises_timeout_error(
 ) -> None:
     """タイムアウト時に asyncio.TimeoutError が送出される."""
 
-    async def slow_query(
-        *, prompt: str, options: Any = None, transport: Any = None
-    ) -> Any:
+    async def slow_query(*, prompt: str, options: Any = None, transport: Any = None) -> Any:
         await asyncio.sleep(10)
         yield _make_result_message()  # pragma: no cover
 

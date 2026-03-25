@@ -80,9 +80,7 @@ class CredentialResolver:
                 },
             )
             if resp.status_code != 200:
-                raise CredentialError(
-                    f"トークン検証に失敗しました (status={resp.status_code})"
-                )
+                raise CredentialError(f"トークン検証に失敗しました (status={resp.status_code})")
             result: dict[str, Any] = resp.json()
             # スコープ情報をヘッダから取得
             scopes = resp.headers.get("x-oauth-scopes", "")
@@ -93,22 +91,16 @@ class CredentialResolver:
         """keyringからトークンを削除."""
         service = f"{self.KEYRING_SERVICE_PREFIX}/{account_name}"
         with contextlib.suppress(keyring.errors.PasswordDeleteError):
-            await asyncio.to_thread(
-                keyring.delete_password, service, "github_token"
-            )
+            await asyncio.to_thread(keyring.delete_password, service, "github_token")
 
     async def _resolve_keyring(self, account_name: str) -> str | None:
         """OS keychainからトークンを取得."""
         service = f"{self.KEYRING_SERVICE_PREFIX}/{account_name}"
         try:
-            token: str | None = await asyncio.to_thread(
-                keyring.get_password, service, "github_token"
-            )
+            token: str | None = await asyncio.to_thread(keyring.get_password, service, "github_token")
             return token
         except keyring.errors.KeyringError:
-            logger.warning(
-                "keyring へのアクセスに失敗しました (service=%s)", service
-            )
+            logger.warning("keyring へのアクセスに失敗しました (service=%s)", service)
             return None
 
     def _resolve_env(self, env_var: str) -> str | None:
@@ -138,7 +130,6 @@ class CredentialResolver:
         token = await self._resolve_command("gh auth token")
         if not token:
             raise CredentialError(
-                "トークンを解決できません。"
-                "keyring, 環境変数, token_command, gh CLI のいずれかを設定してください"
+                "トークンを解決できません。keyring, 環境変数, token_command, gh CLI のいずれかを設定してください"
             )
         return token

@@ -31,12 +31,8 @@ class TypeDetectionExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(
-            request.repo, request.issue_number
-        )
-        worktree = await self._workspace.create_worktree(
-            request.repo, request.issue_number
-        )
+        issue = await self._github.get_issue(request.repo, request.issue_number)
+        worktree = await self._workspace.create_worktree(request.repo, request.issue_number)
         context = await self._context.build_context(
             str(worktree),
             getattr(issue, "body", "") or "",
@@ -53,13 +49,11 @@ class TypeDetectionExecutor(PhaseExecutor):
             f"- feature-s: 1-3ファイル変更で済む小規模な機能追加・変更\n"
             f"- feature-m: 4-10ファイルの変更が必要な中規模の機能追加\n"
             f"- feature-l: 10ファイル以上の変更が見込まれる大規模な機能追加・刷新\n\n"
-            f'## 出力形式 (JSON)\n'
+            f"## 出力形式 (JSON)\n"
             f'{{"type": "bug|feature-s|feature-m|feature-l", "reason": "判定理由"}}'
         )
 
-    async def process_result(
-        self, request: TaskRequest, result: AgentResult
-    ) -> None:
+    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """判定結果を処理: ラベル付与 -> コメント投稿 -> 次フェーズ遷移。
 
         Args:
@@ -78,9 +72,7 @@ class TypeDetectionExecutor(PhaseExecutor):
         self._sm.set_issue_type(request.issue_number, issue_type)
 
         # GitHub ラベル付与
-        await self._github.add_label(
-            request.repo, request.issue_number, f"type:{issue_type}"
-        )
+        await self._github.add_label(request.repo, request.issue_number, f"type:{issue_type}")
 
         # Issue コメント投稿
         await self._github.create_comment(

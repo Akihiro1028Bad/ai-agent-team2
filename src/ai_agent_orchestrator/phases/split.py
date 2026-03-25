@@ -29,20 +29,14 @@ class SplitProposalExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(
-            request.repo, request.issue_number
-        )
-        worktree = await self._workspace.create_worktree(
-            request.repo, request.issue_number
-        )
+        issue = await self._github.get_issue(request.repo, request.issue_number)
+        worktree = await self._workspace.create_worktree(request.repo, request.issue_number)
         context = await self._context.build_context(
             str(worktree),
             getattr(issue, "body", "") or "",
             "split_proposal",
         )
-        comments = await self._github.list_comments(
-            request.repo, request.issue_number
-        )
+        comments = await self._github.list_comments(request.repo, request.issue_number)
         hearing_log = (
             "\n".join(
                 f"[{getattr(c.user, 'login', 'unknown')}]: {c.body}"
@@ -66,9 +60,7 @@ class SplitProposalExecutor(PhaseExecutor):
             f"4. 実装順序を決定"
         )
 
-    async def process_result(
-        self, request: TaskRequest, result: AgentResult
-    ) -> None:
+    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """分割提案をコメント投稿。承認待ち。
 
         Args:
@@ -79,13 +71,10 @@ class SplitProposalExecutor(PhaseExecutor):
         if state:
             state.session_id = result.session_id
 
-        await self._github.create_comment(
-            request.repo, request.issue_number, result.output
-        )
+        await self._github.create_comment(request.repo, request.issue_number, result.output)
         # 承認待ち (SPLIT_PROPOSAL フェーズのまま)
         await self._notifier.notify(
-            f"Issue #{request.issue_number} の分割を提案しました。"
-            f"判断をお願いします",
+            f"Issue #{request.issue_number} の分割を提案しました。判断をお願いします",
             metadata={"issue": request.issue_number},
         )
 
@@ -105,12 +94,8 @@ class SplitExecuteExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(
-            request.repo, request.issue_number
-        )
-        comments = await self._github.list_comments(
-            request.repo, request.issue_number
-        )
+        issue = await self._github.get_issue(request.repo, request.issue_number)
+        comments = await self._github.list_comments(request.repo, request.issue_number)
 
         # 分割提案コメントを取得
         split_proposal = ""
@@ -134,9 +119,7 @@ class SplitExecuteExecutor(PhaseExecutor):
             f"4. 作成した子Issue番号のリストを出力"
         )
 
-    async def process_result(
-        self, request: TaskRequest, result: AgentResult
-    ) -> None:
+    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """分割完了 -> DONE 遷移。
 
         Args:
@@ -146,8 +129,7 @@ class SplitExecuteExecutor(PhaseExecutor):
         await self._github.create_comment(
             request.repo,
             request.issue_number,
-            f"分割が完了しました。子Issueが作成されています。\n\n"
-            f"{result.output}",
+            f"分割が完了しました。子Issueが作成されています。\n\n{result.output}",
         )
         await self._sm.transition(request.issue_number, "done")
         await self._notifier.notify(

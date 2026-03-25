@@ -48,39 +48,27 @@ class CommentData(Protocol):
 class GitHubClientProtocol:
     """Minimal GitHub client protocol used by phase executors."""
 
-    async def get_issue(
-        self, repo: object, issue_number: int
-    ) -> IssueData:
+    async def get_issue(self, repo: object, issue_number: int) -> IssueData:
         """Get an issue."""
         raise NotImplementedError  # pragma: no cover
 
-    async def create_comment(
-        self, repo: object, issue_number: int, body: str
-    ) -> object:
+    async def create_comment(self, repo: object, issue_number: int, body: str) -> object:
         """Create a comment on an issue."""
         ...  # pragma: no cover
 
-    async def list_comments(
-        self, repo: object, issue_number: int, since: str | None = None
-    ) -> list[CommentData]:
+    async def list_comments(self, repo: object, issue_number: int, since: str | None = None) -> list[CommentData]:
         """List comments on an issue."""
         return []  # pragma: no cover
 
-    async def add_label(
-        self, repo: object, issue_number: int, label: str
-    ) -> None:
+    async def add_label(self, repo: object, issue_number: int, label: str) -> None:
         """Add a label to an issue."""
         ...  # pragma: no cover
 
-    async def close_issue(
-        self, repo: object, issue_number: int
-    ) -> None:
+    async def close_issue(self, repo: object, issue_number: int) -> None:
         """Close an issue."""
         ...  # pragma: no cover
 
-    async def merge_pull_request(
-        self, repo: object, pr_number: int, merge_method: str = "squash"
-    ) -> None:
+    async def merge_pull_request(self, repo: object, pr_number: int, merge_method: str = "squash") -> None:
         """Merge a pull request."""
         ...  # pragma: no cover
 
@@ -144,9 +132,7 @@ class WorkspaceProtocol:
         """Create or get a worktree path."""
         return ""  # pragma: no cover
 
-    async def remove_worktree(
-        self, repo: object, issue_number: int
-    ) -> None:
+    async def remove_worktree(self, repo: object, issue_number: int) -> None:
         """Remove a worktree."""
         ...  # pragma: no cover
 
@@ -242,9 +228,7 @@ class PhaseExecutor(ABC):
         """
         ...
 
-    async def run_agent(
-        self, request: TaskRequest, prompt: str
-    ) -> AgentResult:
+    async def run_agent(self, request: TaskRequest, prompt: str) -> AgentResult:
         """エージェントを実行する。
 
         サブクラスでオーバーライド可能 (セッション継続が必要な場合等)。
@@ -267,9 +251,7 @@ class PhaseExecutor(ABC):
         )
 
     @abstractmethod
-    async def process_result(
-        self, request: TaskRequest, result: AgentResult
-    ) -> None:
+    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """実行結果を処理する。
 
         Issue コメント投稿、PR 作成確認、状態遷移等のフェーズ固有ロジック。
@@ -292,8 +274,7 @@ class PhaseExecutor(ABC):
 
         await self._sm.transition(request.issue_number, "suspended")
         await self._notifier.notify(
-            f"Issue #{request.issue_number} がタイムアウトしました "
-            f"(phase: {request.phase})",
+            f"Issue #{request.issue_number} がタイムアウトしました (phase: {request.phase})",
             level="error",
             metadata={
                 "issue": request.issue_number,
@@ -301,9 +282,7 @@ class PhaseExecutor(ABC):
             },
         )
 
-    async def _handle_error(
-        self, request: TaskRequest, error: Exception
-    ) -> None:
+    async def _handle_error(self, request: TaskRequest, error: Exception) -> None:
         """エラー処理: SUSPENDED 遷移 + Issue コメント + 通知。"""
         await self._sm.transition(request.issue_number, "suspended")
         await self._github.create_comment(
@@ -312,8 +291,7 @@ class PhaseExecutor(ABC):
             f"エラーが発生しました: {error}",
         )
         await self._notifier.notify(
-            f"Issue #{request.issue_number} でエラー: {error} "
-            f"(phase: {request.phase})",
+            f"Issue #{request.issue_number} でエラー: {error} (phase: {request.phase})",
             level="error",
             metadata={
                 "issue": request.issue_number,

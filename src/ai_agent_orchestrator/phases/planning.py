@@ -29,9 +29,7 @@ class PlanningExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        issue = await self._github.get_issue(
-            request.repo, request.issue_number
-        )
+        issue = await self._github.get_issue(request.repo, request.issue_number)
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
@@ -57,9 +55,7 @@ class PlanningExecutor(PhaseExecutor):
             f"7. git commit して Push"
         )
 
-    async def process_result(
-        self, request: TaskRequest, result: AgentResult
-    ) -> None:
+    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """実装計画作成結果を処理 -> IMPLEMENT 遷移。
 
         Args:

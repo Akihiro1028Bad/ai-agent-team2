@@ -93,9 +93,7 @@ class TestOrchestratorInit:
         assert orch.settings is tmp_settings
         assert not orch.is_running
 
-    def test_init_creates_task_queue_with_concurrency(
-        self, tmp_settings: AppSettings
-    ) -> None:
+    def test_init_creates_task_queue_with_concurrency(self, tmp_settings: AppSettings) -> None:
         """concurrency 設定が TaskQueue に反映されること."""
         orch = Orchestrator(tmp_settings)
         status = orch.task_queue.get_status()
@@ -116,15 +114,11 @@ class TestOrchestratorInit:
         orch = Orchestrator(settings)
         assert isinstance(orch._notifier, SlackNotifier)
 
-    def test_init_with_null_notifier(
-        self, orchestrator: Orchestrator
-    ) -> None:
+    def test_init_with_null_notifier(self, orchestrator: Orchestrator) -> None:
         """NullNotifier が使われること."""
         assert isinstance(orchestrator._notifier, NullNotifier)
 
-    def test_init_with_injected_dependencies(
-        self, tmp_settings: AppSettings
-    ) -> None:
+    def test_init_with_injected_dependencies(self, tmp_settings: AppSettings) -> None:
         """依存性注入でカスタムコンポーネントを使えること."""
         mock_notifier = NullNotifier()
         mock_poller = NullPoller()
@@ -152,9 +146,7 @@ class TestOrchestratorInit:
 class TestOrchestratorLifecycle:
     """start() / stop() のライフサイクルテスト."""
 
-    async def test_start_sets_running(
-        self, orchestrator: Orchestrator
-    ) -> None:
+    async def test_start_sets_running(self, orchestrator: Orchestrator) -> None:
         """start() 後に is_running が True になること."""
         await orchestrator.start()
         try:
@@ -162,22 +154,16 @@ class TestOrchestratorLifecycle:
         finally:
             await orchestrator.stop()
 
-    async def test_stop_clears_running(
-        self, orchestrator: Orchestrator
-    ) -> None:
+    async def test_stop_clears_running(self, orchestrator: Orchestrator) -> None:
         """stop() 後に is_running が False になること."""
         await orchestrator.start()
         await orchestrator.stop()
         assert not orchestrator.is_running
 
-    async def test_start_loads_persistence(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_start_loads_persistence(self, tmp_path: Path) -> None:
         """start() で永続化ストレージから状態を復元すること."""
         settings = _make_settings(tmp_path)
-        persistence = StatePersistence(
-            state_file=tmp_path / "workspaces" / "state.json"
-        )
+        persistence = StatePersistence(state_file=tmp_path / "workspaces" / "state.json")
         orch = Orchestrator(
             settings,
             persistence=persistence,
@@ -192,9 +178,7 @@ class TestOrchestratorLifecycle:
         finally:
             await orch.stop()
 
-    async def test_double_start_is_noop(
-        self, orchestrator: Orchestrator
-    ) -> None:
+    async def test_double_start_is_noop(self, orchestrator: Orchestrator) -> None:
         """二重起動は無視されること."""
         await orchestrator.start()
         try:
@@ -203,16 +187,12 @@ class TestOrchestratorLifecycle:
         finally:
             await orchestrator.stop()
 
-    async def test_stop_without_start_is_noop(
-        self, orchestrator: Orchestrator
-    ) -> None:
+    async def test_stop_without_start_is_noop(self, orchestrator: Orchestrator) -> None:
         """start() 前の stop() は無視されること."""
         await orchestrator.stop()  # should not raise
         assert not orchestrator.is_running
 
-    async def test_start_creates_worker_tasks(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_start_creates_worker_tasks(self, tmp_path: Path) -> None:
         """start() でワーカータスクが concurrency.max_total 個作られること."""
         settings = _make_settings(tmp_path)
         settings.concurrency.max_total = 2
@@ -227,9 +207,7 @@ class TestOrchestratorLifecycle:
         finally:
             await orch.stop()
 
-    async def test_stop_cancels_tasks(
-        self, orchestrator: Orchestrator
-    ) -> None:
+    async def test_stop_cancels_tasks(self, orchestrator: Orchestrator) -> None:
         """stop() で全タスクがキャンセルされること."""
         await orchestrator.start()
         assert orchestrator._health_task is not None
@@ -246,9 +224,7 @@ class TestOrchestratorLifecycle:
 class TestExecuteTask:
     """_execute_task のテスト."""
 
-    async def test_execute_task_dispatches_to_phase_dispatcher(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_execute_task_dispatches_to_phase_dispatcher(self, tmp_path: Path) -> None:
         """_execute_task がフェーズディスパッチャに委譲すること."""
         settings = _make_settings(tmp_path)
         dispatcher = AsyncMock()
@@ -280,9 +256,7 @@ class TestExecuteTask:
             resume_session_id=None,
         )
 
-    async def test_execute_task_transitions_on_next_phase(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_execute_task_transitions_on_next_phase(self, tmp_path: Path) -> None:
         """dispatch の結果に next_phase がある場合に遷移すること."""
         settings = _make_settings(tmp_path)
 
@@ -313,16 +287,12 @@ class TestExecuteTask:
 
         assert orch.state_machine.get_phase(42) == Phase.ANALYSIS
 
-    async def test_execute_task_handles_error_and_suspends(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_execute_task_handles_error_and_suspends(self, tmp_path: Path) -> None:
         """dispatch でエラーが発生した場合に SUSPENDED に遷移すること."""
         settings = _make_settings(tmp_path)
 
         dispatcher = AsyncMock()
-        dispatcher.dispatch = AsyncMock(
-            side_effect=RuntimeError("unexpected error")
-        )
+        dispatcher.dispatch = AsyncMock(side_effect=RuntimeError("unexpected error"))
 
         notifier = AsyncMock()
         notifier.notify = AsyncMock()
@@ -350,9 +320,7 @@ class TestExecuteTask:
         assert orch.state_machine.get_phase(42) == Phase.SUSPENDED
         notifier.notify.assert_awaited()
 
-    async def test_execute_task_builds_context(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_execute_task_builds_context(self, tmp_path: Path) -> None:
         """worktree_path が指定されている場合にコンテキストを構築すること."""
         settings = _make_settings(tmp_path)
 
@@ -361,9 +329,7 @@ class TestExecuteTask:
         worktree.mkdir()
 
         context_engine = AsyncMock()
-        context_engine.build_context = AsyncMock(
-            return_value="## Context\ntest context"
-        )
+        context_engine.build_context = AsyncMock(return_value="## Context\ntest context")
 
         phase_result = _NullPhaseResult()
         dispatcher = AsyncMock()
@@ -410,40 +376,22 @@ class TestErrorClassification:
     """_classify_error のテスト."""
 
     def test_timeout_error(self) -> None:
-        assert (
-            Orchestrator._classify_error(TimeoutError("connection timeout"))
-            == ErrorCategory.TRANSIENT
-        )
+        assert Orchestrator._classify_error(TimeoutError("connection timeout")) == ErrorCategory.TRANSIENT
 
     def test_rate_limit_error(self) -> None:
-        assert (
-            Orchestrator._classify_error(Exception("rate limit exceeded"))
-            == ErrorCategory.TRANSIENT
-        )
+        assert Orchestrator._classify_error(Exception("rate limit exceeded")) == ErrorCategory.TRANSIENT
 
     def test_auth_error(self) -> None:
-        assert (
-            Orchestrator._classify_error(Exception("401 Unauthorized"))
-            == ErrorCategory.AUTH
-        )
+        assert Orchestrator._classify_error(Exception("401 Unauthorized")) == ErrorCategory.AUTH
 
     def test_git_conflict_error(self) -> None:
-        assert (
-            Orchestrator._classify_error(Exception("merge conflict"))
-            == ErrorCategory.GIT_CONFLICT
-        )
+        assert Orchestrator._classify_error(Exception("merge conflict")) == ErrorCategory.GIT_CONFLICT
 
     def test_ci_failure_error(self) -> None:
-        assert (
-            Orchestrator._classify_error(Exception("CI check failed"))
-            == ErrorCategory.CI_FAILURE
-        )
+        assert Orchestrator._classify_error(Exception("CI check failed")) == ErrorCategory.CI_FAILURE
 
     def test_unknown_error_is_output_invalid(self) -> None:
-        assert (
-            Orchestrator._classify_error(Exception("something weird"))
-            == ErrorCategory.OUTPUT_INVALID
-        )
+        assert Orchestrator._classify_error(Exception("something weird")) == ErrorCategory.OUTPUT_INVALID
 
 
 # ---------------------------------------------------------------------------
@@ -454,15 +402,11 @@ class TestErrorClassification:
 class TestHealthCheck:
     """health_check のテスト."""
 
-    async def test_health_check_returns_results(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_health_check_returns_results(self, tmp_path: Path) -> None:
         """health_check がアカウント検証結果を返すこと."""
         settings = _make_settings(tmp_path)
         account_mgr = AsyncMock()
-        account_mgr.verify_all = AsyncMock(
-            return_value={"default": True}
-        )
+        account_mgr.verify_all = AsyncMock(return_value={"default": True})
 
         orch = Orchestrator(
             settings,
@@ -473,15 +417,11 @@ class TestHealthCheck:
         results = await orch.health_check()
         assert results == {"github/default": True}
 
-    async def test_health_check_handles_failure(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_health_check_handles_failure(self, tmp_path: Path) -> None:
         """health_check が例外時に False を返すこと."""
         settings = _make_settings(tmp_path)
         account_mgr = AsyncMock()
-        account_mgr.verify_all = AsyncMock(
-            side_effect=Exception("network error")
-        )
+        account_mgr.verify_all = AsyncMock(side_effect=Exception("network error"))
 
         orch = Orchestrator(
             settings,
@@ -538,9 +478,7 @@ class TestNullComponents:
 class TestOrchestratorTaskExecutor:
     """_OrchestratorTaskExecutor のテスト."""
 
-    async def test_delegates_to_orchestrator(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_delegates_to_orchestrator(self, tmp_path: Path) -> None:
         """execute が orchestrator._execute_task に委譲すること."""
         settings = _make_settings(tmp_path)
         orch = Orchestrator(settings, notifier=NullNotifier())

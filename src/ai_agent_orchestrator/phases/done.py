@@ -32,9 +32,7 @@ class DoneExecutor(PhaseExecutor):
         """
         return ""
 
-    async def run_agent(
-        self, request: TaskRequest, prompt: str
-    ) -> AgentResult:
+    async def run_agent(self, request: TaskRequest, prompt: str) -> AgentResult:
         """エージェント実行は不要。ダミーの AgentResult を返す。
 
         Args:
@@ -52,9 +50,7 @@ class DoneExecutor(PhaseExecutor):
             duration_sec=0.0,
         )
 
-    async def process_result(
-        self, request: TaskRequest, result: AgentResult
-    ) -> None:
+    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """PR マージ、Issue クローズ、worktree 削除を実行する。
 
         Args:
@@ -65,19 +61,13 @@ class DoneExecutor(PhaseExecutor):
 
         # PR マージ
         if state and state.pr_number is not None:
-            await self._github.merge_pull_request(
-                request.repo, state.pr_number
-            )
+            await self._github.merge_pull_request(request.repo, state.pr_number)
 
         # Issue クローズ
-        await self._github.close_issue(
-            request.repo, request.issue_number
-        )
+        await self._github.close_issue(request.repo, request.issue_number)
 
         # worktree 削除
-        await self._workspace.remove_worktree(
-            request.repo, request.issue_number
-        )
+        await self._workspace.remove_worktree(request.repo, request.issue_number)
 
         await self._notifier.notify(
             f"Issue #{request.issue_number} 完了しました",

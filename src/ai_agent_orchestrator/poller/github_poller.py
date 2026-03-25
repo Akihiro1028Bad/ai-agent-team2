@@ -115,52 +115,28 @@ class GitHubPoller:
         since = self._last_poll.get(repo_key)
         self._last_poll[repo_key] = datetime.now(UTC)
 
-        client = await self._account_manager.get_client_for_repo(
-            repo.owner, repo.repo
-        )
+        client = await self._account_manager.get_client_for_repo(repo.owner, repo.repo)
 
         # 1. 新規 Issue 検知
         new_issues = await self._detect_new_issues(client, repo)
-        events.extend(
-            PollEvent(type=EventType.NEW_ISSUE, repo=repo, issue=issue)
-            for issue in new_issues
-        )
+        events.extend(PollEvent(type=EventType.NEW_ISSUE, repo=repo, issue=issue) for issue in new_issues)
 
         # 2. ヒアリング回答検知
-        hearing_replies = await self._detect_hearing_replies(
-            client, repo, since
-        )
+        hearing_replies = await self._detect_hearing_replies(client, repo, since)
         events.extend(
-            PollEvent(
-                type=EventType.ISSUE_COMMENT, repo=repo, comment=comment
-            )
-            for comment in hearing_replies
+            PollEvent(type=EventType.ISSUE_COMMENT, repo=repo, comment=comment) for comment in hearing_replies
         )
 
         # 3. ヒアリングタイムアウト検知
         timeout_issues = await self._detect_hearing_timeouts(client, repo)
-        events.extend(
-            PollEvent(
-                type=EventType.HEARING_TIMEOUT, repo=repo, issue=issue
-            )
-            for issue in timeout_issues
-        )
+        events.extend(PollEvent(type=EventType.HEARING_TIMEOUT, repo=repo, issue=issue) for issue in timeout_issues)
 
         # 4. 方針リアクション検知 (thumbsup)
-        plan_reactions = await self._detect_plan_reactions(
-            client, repo, since
-        )
-        events.extend(
-            PollEvent(
-                type=EventType.PLAN_REACTION_ADDED, repo=repo, issue=issue
-            )
-            for issue in plan_reactions
-        )
+        plan_reactions = await self._detect_plan_reactions(client, repo, since)
+        events.extend(PollEvent(type=EventType.PLAN_REACTION_ADDED, repo=repo, issue=issue) for issue in plan_reactions)
 
         # 5. 方針指摘コメント検知
-        plan_comments = await self._detect_plan_comments(
-            client, repo, since
-        )
+        plan_comments = await self._detect_plan_comments(client, repo, since)
         events.extend(
             PollEvent(
                 type=EventType.PLAN_COMMENT_ADDED,
@@ -179,9 +155,7 @@ class GitHubPoller:
         events.extend(ci_events)
 
         # 8. 分割承認/修正検知
-        split_events = await self._detect_split_events(
-            client, repo, since
-        )
+        split_events = await self._detect_split_events(client, repo, since)
         events.extend(split_events)
 
         return events
@@ -200,11 +174,7 @@ class GitHubPoller:
         条件: ai-agent ラベルあり AND phase:* ラベルなし AND state=open.
         """
         issues = await client.get_issues_with_label(repo, repo.label)
-        return [
-            issue
-            for issue in issues
-            if not self._has_phase_label(issue)
-        ]
+        return [issue for issue in issues if not self._has_phase_label(issue)]
 
     async def _detect_hearing_replies(
         self,
@@ -217,20 +187,12 @@ class GitHubPoller:
         条件: phase:hearing ラベル付き Issue に since 以降の人間コメント
         (bot コメントは除外).
         """
-        issues = await client.get_issues_with_label(
-            repo, f"{repo.label},phase:hearing"
-        )
+        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing")
         replies: list[IssueComment] = []
         for issue in issues:
             since_str = since.isoformat() if since else None
-            comments = await client.list_comments(
-                repo, issue.number, since=since_str
-            )
-            replies.extend(
-                comment
-                for comment in comments
-                if comment.user and comment.user.type != "Bot"
-            )
+            comments = await client.list_comments(repo, issue.number, since=since_str)
+            replies.extend(comment for comment in comments if comment.user and comment.user.type != "Bot")
         return replies
 
     async def _detect_hearing_timeouts(
@@ -243,17 +205,9 @@ class GitHubPoller:
         条件: phase:hearing ラベル付き Issue で
               最後のコメントから hearing_timeout_hours 以上経過.
         """
-        issues = await client.get_issues_with_label(
-            repo, f"{repo.label},phase:hearing"
-        )
-        threshold = datetime.now(UTC) - timedelta(
-            hours=self._hearing_timeout_hours
-        )
-        return [
-            issue
-            for issue in issues
-            if issue.updated_at and issue.updated_at < threshold
-        ]
+        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing")
+        threshold = datetime.now(UTC) - timedelta(hours=self._hearing_timeout_hours)
+        return [issue for issue in issues if issue.updated_at and issue.updated_at < threshold]
 
     async def _detect_plan_reactions(
         self,
@@ -265,18 +219,14 @@ class GitHubPoller:
 
         条件: phase:plan-review ラベル付き Issue のコメントに +1 リアクション.
         """
-        issues = await client.get_issues_with_label(
-            repo, f"{repo.label},phase:plan-review"
-        )
+        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:plan-review")
         approved_issues: list[Issue] = []
         for issue in issues:
             comments = await client.list_comments(repo, issue.number)
             for comment in comments:
                 if comment.user and comment.user.type == "Bot":
                     reactions = await client.get_reactions(repo, comment.id)
-                    has_thumbsup = any(
-                        r.content == "+1" for r in reactions
-                    )
+                    has_thumbsup = any(r.content == "+1" for r in reactions)
                     if has_thumbsup:
                         approved_issues.append(issue)
                         break
@@ -292,20 +242,12 @@ class GitHubPoller:
 
         条件: phase:plan-review ラベル付き Issue に since 以降の人間コメント.
         """
-        issues = await client.get_issues_with_label(
-            repo, f"{repo.label},phase:plan-review"
-        )
+        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:plan-review")
         feedback: list[IssueComment] = []
         for issue in issues:
             since_str = since.isoformat() if since else None
-            comments = await client.list_comments(
-                repo, issue.number, since=since_str
-            )
-            feedback.extend(
-                comment
-                for comment in comments
-                if comment.user and comment.user.type != "Bot"
-            )
+            comments = await client.list_comments(repo, issue.number, since=since_str)
+            feedback.extend(comment for comment in comments if comment.user and comment.user.type != "Bot")
         return feedback
 
     async def _detect_pr_events(
@@ -333,13 +275,9 @@ class GitHubPoller:
             ),
         ]
         for label_suffix, approved_type, commented_type in label_configs:
-            issues = await client.get_issues_with_label(
-                repo, f"{repo.label},phase:{label_suffix}"
-            )
+            issues = await client.get_issues_with_label(repo, f"{repo.label},phase:{label_suffix}")
             for issue in issues:
-                pr_reviews = await self._get_pr_reviews(
-                    client, repo, issue
-                )
+                pr_reviews = await self._get_pr_reviews(client, repo, issue)
                 for review_event in pr_reviews:
                     if review_event == "approved":
                         events.append(
@@ -372,17 +310,11 @@ class GitHubPoller:
         """
         events: list[PollEvent] = []
         for label_suffix in ("implement", "ci-fix"):
-            issues = await client.get_issues_with_label(
-                repo, f"{repo.label},phase:{label_suffix}"
-            )
+            issues = await client.get_issues_with_label(repo, f"{repo.label},phase:{label_suffix}")
             for issue in issues:
-                ci_status = await self._check_ci_status(
-                    client, repo, issue
-                )
+                ci_status = await self._check_ci_status(client, repo, issue)
                 if ci_status == "failure":
-                    ci_logs = await self._get_ci_logs(
-                        client, repo, issue
-                    )
+                    ci_logs = await self._get_ci_logs(client, repo, issue)
                     events.append(
                         PollEvent(
                             type=EventType.CI_RESULT,
@@ -416,17 +348,13 @@ class GitHubPoller:
         phase:split-proposal ラベル付き Issue の thumbsup リアクションまたはコメントを検知。
         """
         events: list[PollEvent] = []
-        issues = await client.get_issues_with_label(
-            repo, f"{repo.label},phase:split-proposal"
-        )
+        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:split-proposal")
         for issue in issues:
             comments = await client.list_comments(repo, issue.number)
             for comment in comments:
                 if comment.user and comment.user.type == "Bot":
                     reactions = await client.get_reactions(repo, comment.id)
-                    has_thumbsup = any(
-                        r.content == "+1" for r in reactions
-                    )
+                    has_thumbsup = any(r.content == "+1" for r in reactions)
                     if has_thumbsup:
                         events.append(
                             PollEvent(
@@ -439,11 +367,7 @@ class GitHubPoller:
 
             # 人間のコメント (修正指示) を確認
             human_comments = [
-                c
-                for c in comments
-                if c.user
-                and c.user.type != "Bot"
-                and (since is None or c.created_at > since)
+                c for c in comments if c.user and c.user.type != "Bot" and (since is None or c.created_at > since)
             ]
             if human_comments:
                 events.append(
@@ -493,16 +417,12 @@ class GitHubPoller:
             pr_body = getattr(pr, "body", "") or ""
             pr_title = getattr(pr, "title", "") or ""
             if issue_ref in pr_body or issue_ref in pr_title:
-                reviews = await client.get_pr_reviews(
-                    repo.owner, repo.repo, pr.number
-                )
+                reviews = await client.get_pr_reviews(repo.owner, repo.repo, pr.number)
                 for review in reviews:
                     state = review.get("state", "")
                     if state == "APPROVED":
                         results.append("approved")
-                    elif state == "CHANGES_REQUESTED" or (
-                        state == "COMMENTED" and review.get("body")
-                    ):
+                    elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and review.get("body")):
                         results.append("commented")
         return results
 
@@ -529,12 +449,8 @@ class GitHubPoller:
                     checks = await client.get_check_runs(repo, ref)
                     if not checks:
                         return None
-                    all_success = all(
-                        c.get("conclusion") == "success" for c in checks
-                    )
-                    any_failure = any(
-                        c.get("conclusion") == "failure" for c in checks
-                    )
+                    all_success = all(c.get("conclusion") == "success" for c in checks)
+                    any_failure = any(c.get("conclusion") == "failure" for c in checks)
                     if any_failure:
                         return "failure"
                     if all_success:

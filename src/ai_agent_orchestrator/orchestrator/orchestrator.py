@@ -188,9 +188,7 @@ class NullPhaseDispatcher:
         resume_session_id: str | None = None,
     ) -> _NullPhaseResult:
         """Return a no-op result."""
-        logger.info(
-            "[NullPhaseDispatcher] phase=%s issue=#%d", phase, issue_number
-        )
+        logger.info("[NullPhaseDispatcher] phase=%s issue=#%d", phase, issue_number)
         return _NullPhaseResult()
 
 
@@ -357,17 +355,13 @@ class Orchestrator:
             self._notifier = NullNotifier()
 
         # Phase dispatcher (placeholder until phases module is implemented)
-        self._phase_dispatcher: PhaseDispatcher = (
-            phase_dispatcher or NullPhaseDispatcher()
-        )
+        self._phase_dispatcher: PhaseDispatcher = phase_dispatcher or NullPhaseDispatcher()
 
         # Poller (placeholder until poller module is implemented)
         self._poller: Poller = poller or NullPoller()
 
         # Event router (placeholder until event_router module is implemented)
-        self._event_router: EventRouterProtocol = (
-            event_router or NullEventRouter()
-        )
+        self._event_router: EventRouterProtocol = event_router or NullEventRouter()
 
         # Task executor adapter
         self._executor = _OrchestratorTaskExecutor(self)
@@ -432,19 +426,13 @@ class Orchestrator:
         self._running = True
 
         # 2. Start health checker
-        self._health_task = asyncio.create_task(
-            self._health_check_loop(), name="health-checker"
-        )
+        self._health_task = asyncio.create_task(self._health_check_loop(), name="health-checker")
 
         # 3. Start poller
-        self._poller_task = asyncio.create_task(
-            self._poller.start(self._event_queue), name="poller"
-        )
+        self._poller_task = asyncio.create_task(self._poller.start(self._event_queue), name="poller")
 
         # 4. Start event routing
-        self._route_task = asyncio.create_task(
-            self._route_events(), name="event-router"
-        )
+        self._route_task = asyncio.create_task(self._route_events(), name="event-router")
 
         # 5. Start worker loops
         for i in range(self._settings.concurrency.max_total):
@@ -460,9 +448,7 @@ class Orchestrator:
             phase="system",
             data={
                 "max_total": self._settings.concurrency.max_total,
-                "repos": [
-                    f"{r.owner}/{r.repo}" for r in self._settings.repositories
-                ],
+                "repos": [f"{r.owner}/{r.repo}" for r in self._settings.repositories],
             },
         )
 
@@ -470,9 +456,7 @@ class Orchestrator:
             "Orchestrator started",
             level="info",
             metadata={
-                "repos": [
-                    f"{r.owner}/{r.repo}" for r in self._settings.repositories
-                ],
+                "repos": [f"{r.owner}/{r.repo}" for r in self._settings.repositories],
             },
         )
 
@@ -672,10 +656,7 @@ class Orchestrator:
         state = self._state_machine.get_state(issue_number)
         retry_count = state.retry_count if state else 0
 
-        if (
-            category == ErrorCategory.TRANSIENT
-            and retry_count < self._settings.retry.max_attempts
-        ):
+        if category == ErrorCategory.TRANSIENT and retry_count < self._settings.retry.max_attempts:
             # Retry after backoff
             if state is not None:
                 state.retry_count += 1
@@ -698,9 +679,7 @@ class Orchestrator:
         else:
             # Suspend the issue
             try:
-                await self._state_machine.transition(
-                    issue_number, Phase.SUSPENDED
-                )
+                await self._state_machine.transition(issue_number, Phase.SUSPENDED)
             except Exception as transition_err:
                 logger.error(
                     "Failed to suspend issue #%d: %s",
@@ -749,10 +728,7 @@ class Orchestrator:
             return ErrorCategory.TRANSIENT
 
         # Auth errors
-        if any(
-            kw in error_msg
-            for kw in ["auth", "credential", "token", "401", "403"]
-        ):
+        if any(kw in error_msg for kw in ["auth", "credential", "token", "401", "403"]):
             return ErrorCategory.AUTH
 
         # Git conflict
@@ -812,9 +788,7 @@ class Orchestrator:
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                logger.error(
-                    "Health check loop error: %s", exc, exc_info=True
-                )
+                logger.error("Health check loop error: %s", exc, exc_info=True)
 
     # ------------------------------------------------------------------
     # Status
@@ -829,7 +803,5 @@ class Orchestrator:
         return {
             "running": self._running,
             "task_queue": self._task_queue.get_status(),
-            "repositories": [
-                f"{r.owner}/{r.repo}" for r in self._settings.repositories
-            ],
+            "repositories": [f"{r.owner}/{r.repo}" for r in self._settings.repositories],
         }

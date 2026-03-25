@@ -33,9 +33,7 @@ class ImplReviseExecutor(PhaseExecutor):
         comments = extra.get("comments", "")
         return f"以下のレビュー指摘に対応してください:\n{comments}"
 
-    async def run_agent(
-        self, request: TaskRequest, prompt: str
-    ) -> AgentResult:
+    async def run_agent(self, request: TaskRequest, prompt: str) -> AgentResult:
         """セッション継続で実行する。
 
         Args:
@@ -55,14 +53,10 @@ class ImplReviseExecutor(PhaseExecutor):
             prompt=prompt,
             cwd=str(worktree),
             phase="impl_revise",
-            resume_session_id=(
-                state.session_id if state else None
-            ),
+            resume_session_id=(state.session_id if state else None),
         )
 
-    async def process_result(
-        self, request: TaskRequest, result: AgentResult
-    ) -> None:
+    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """修正結果を処理 -> IMPL_REVIEW に再遷移。
 
         Args:
