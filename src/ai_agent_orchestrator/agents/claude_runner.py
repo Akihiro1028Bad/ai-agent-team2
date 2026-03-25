@@ -317,31 +317,36 @@ class ClaudeAgentRunner:
         subagents: list[SubAgentDefinition],
         phase: str,
     ) -> AgentResult:
-        """query() の返却メッセージ群を AgentResult に変換する."""
-        result_text = ""
+        """query() の返却メッセージ群を AgentResult に変換する.
+
+        出力テキストは AssistantMessage の TextBlock から取得する。
+        ResultMessage.result は重複するため無視し、メタデータ(session_id,
+        cost, duration)のみ ResultMessage から取得する。
+        rate_limit_event 等で ResultMessage が欠落した場合に備え、
+        session_id は AssistantMessage からも fallback で取得する。
+        """
+        assistant_text = ""
         session_id: str | None = None
         cost: float = 0.0
         tool_uses: list[dict[str, Any]] = []
         duration_ms: int = 0
 
         for msg in messages:
-            # ResultMessage carries session_id, cost, duration
+            # ResultMessage: メタデータのみ取得(テキストは重複するので無視)
             if isinstance(msg, ResultMessage):
                 session_id = msg.session_id
                 if msg.total_cost_usd is not None:
                     cost += msg.total_cost_usd
                 duration_ms = msg.duration_ms
-                if msg.result:
-                    result_text += msg.result
                 # Check max_turns
                 if msg.is_error and msg.subtype == "max_turns":
                     raise MaxTurnsExceededError(session_id=session_id)
 
-            # AssistantMessage carries text blocks and tool use blocks
+            # AssistantMessage: テキストとツール使用を取得
             if isinstance(msg, AssistantMessage):
                 for block in msg.content:
                     if isinstance(block, TextBlock):
-                        result_text += block.text
+                        assistant_text += block.text
                     elif isinstance(block, ToolUseBlock):
                         tool_uses.append({"tool": block.name, "input": block.input})
 
@@ -350,7 +355,7 @@ class ClaudeAgentRunner:
 
         return AgentResult(
             session_id=session_id or "",
-            output=result_text,
+            output=assistant_text,
             tool_uses=tool_uses,
             cost_usd=cost,
             duration_sec=final_duration,

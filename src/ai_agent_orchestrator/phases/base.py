@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.agents.claude_runner import ClaudeAgentRunner
@@ -330,6 +331,43 @@ class PhaseExecutor(ABC):
     # ------------------------------------------------------------------
     # Utility helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_json(text: str) -> dict[str, Any] | None:
+        """AI出力からJSONを抽出する。
+
+        以下の順序で試行:
+        1. ```json ... ``` ブロック内のJSON
+        2. { ... } の最外マッチ
+        3. 全体をjson.loadsで直接パース
+
+        Args:
+            text: AI の出力テキスト。
+
+        Returns:
+            パースされた辞書。失敗時は None。
+        """
+        # Try ```json block first
+        json_block = re.search(r"```json\s*\n?(.*?)\n?```", text, re.DOTALL)
+        if json_block:
+            try:
+                return json.loads(json_block.group(1).strip())  # type: ignore[no-any-return]
+            except json.JSONDecodeError:
+                pass
+
+        # Try finding { ... } pattern
+        brace_match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text)
+        if brace_match:
+            try:
+                return json.loads(brace_match.group())  # type: ignore[no-any-return]
+            except json.JSONDecodeError:
+                pass
+
+        # Try direct parse
+        try:
+            return json.loads(text.strip())  # type: ignore[no-any-return]
+        except json.JSONDecodeError:
+            return None
 
     @staticmethod
     def _extract_pr_number(output: str) -> int | None:

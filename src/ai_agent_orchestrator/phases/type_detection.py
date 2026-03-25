@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -61,11 +60,11 @@ class TypeDetectionExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
-        try:
-            parsed = json.loads(result.output.strip())
+        parsed = self._extract_json(result.output)
+        if parsed and "type" in parsed:
             issue_type: str = parsed["type"]
-            reason: str = parsed["reason"]
-        except (json.JSONDecodeError, KeyError):
+            reason: str = parsed.get("reason", "AIが判定")
+        else:
             issue_type = self._fallback_detection(result.output)
             reason = "AI出力のパースに失敗、フォールバック判定"
 
