@@ -1,0 +1,87 @@
+[
+  {
+    "name": "テストIssue作成",
+    "status": "PASS",
+    "detail": "Issue #3"
+  },
+  {
+    "name": "ヒアリング実行",
+    "status": "PASS",
+    "detail": "session_id=eca093a3-4947-4f15-a479-68bab0f56347, cost=$0.0247\nresponse_len=1013"
+  },
+  {
+    "name": "質問をIssueコメントに投稿",
+    "status": "PASS",
+    "detail": "comment_id=4115973526"
+  },
+  {
+    "name": "人間の回答をシミュレート",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "設計書ファイル作成",
+    "status": "PASS",
+    "detail": "path=/var/folders/6c/_jyfy3tn3mj4fbxsbqkbhtg40000gn/T/ai-agent-wf-jxcyl__d/worktrees/issue-3/docs/designs/issue-3.md"
+  },
+  {
+    "name": "設計書テンプレート準拠",
+    "status": "PASS",
+    "detail": "content_len=3620"
+  },
+  {
+    "name": "git commit",
+    "status": "PASS",
+    "detail": "a6e7a95 docs: Issue #3 ユーザープロフィール画面の設計書を追加\n4911133 Initial commit"
+  },
+  {
+    "name": "設計PR作成",
+    "status": "PASS",
+    "detail": "PR #4"
+  },
+  {
+    "name": "A2全体",
+    "status": "PASS",
+    "detail": "cost=$0.1372, session_id=9d7204bb-cfdd-47ef-8715-64692d2996f5"
+  },
+  {
+    "name": "実装計画作成",
+    "status": "PASS",
+    "detail": "path=/var/folders/6c/_jyfy3tn3mj4fbxsbqkbhtg40000gn/T/ai-agent-wf-jxcyl__d/worktrees/issue-3/docs/designs/issue-3-plan.md"
+  },
+  {
+    "name": "コードファイル作成",
+    "status": "PASS",
+    "detail": "files=['src/types', 'src/components', 'src/api', 'src/types/user.ts', 'src/components/UserProfile.tsx', 'src/api/user.ts']"
+  },
+  {
+    "name": "テストファイル作成",
+    "status": "PASS",
+    "detail": "files=['tests/UserProfile.test.tsx']"
+  },
+  {
+    "name": "git push (実装)",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "A3全体",
+    "status": "PASS",
+    "detail": "cost=$0.4919, session_id=3a3c0aee-d27a-4d0e-a464-121a9c8745f5"
+  },
+  {
+    "name": "セッション継続 (resume)",
+    "status": "PASS",
+    "detail": "response_len=701, cost=$0.3426"
+  },
+  {
+    "name": "修正コミット",
+    "status": "PASS",
+    "detail": "29e5977 fix: レビュー指摘対応 - ローディング表示とエラーハンドリングを強化\n7f05429 feat: Issue #3 ユーザープロフィール画面を追加\na6e7a95 docs: Issue #3 ユーザープロフィール画面の設計書を追加\n4911133 Initial commit"
+  },
+  {
+    "name": "CI失敗分析 + 修正",
+    "status": "PASS",
+    "detail": "cost=$0.4633"
+  }
+]

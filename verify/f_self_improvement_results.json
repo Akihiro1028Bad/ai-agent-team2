@@ -1,0 +1,67 @@
+[
+  {
+    "name": "エピソード記憶ファイル作成",
+    "status": "PASS",
+    "detail": "files=5"
+  },
+  {
+    "name": "events.jsonl 記録",
+    "status": "PASS",
+    "detail": "events=15"
+  },
+  {
+    "name": "events.jsonl JSON形式",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "パターン抽出",
+    "status": "PASS",
+    "detail": "cost=$0.0533, patterns_found=7\nhas_action=True"
+  },
+  {
+    "name": "patterns.yaml 保存",
+    "status": "PASS",
+    "detail": "size=2316 bytes"
+  },
+  {
+    "name": "類似Issue検出 (#5が最上位)",
+    "status": "PASS",
+    "detail": "cost=$0.0575\nfound_#5=True, ranking=True, learning=True"
+  },
+  {
+    "name": "過去の学びの活用提案",
+    "status": "PASS",
+    "detail": "nullチェック漏れのパターンを新Issueに適用提案"
+  },
+  {
+    "name": "Skill検出",
+    "status": "PASS",
+    "detail": "cost=$0.0741, skills=11\ntrigger=True, variables=True, prompt=True"
+  },
+  {
+    "name": "Skill YAML保存",
+    "status": "PASS",
+    "detail": "path=/var/folders/6c/_jyfy3tn3mj4fbxsbqkbhtg40000gn/T/ai-agent-self-imp-74x88b15/skills/detected_skills.yaml"
+  },
+  {
+    "name": "Skillマッチ: ユーザー登録時の電話番号バリデーション追加...",
+    "status": "PASS",
+    "detail": "expected=MATCH, actual=MATCH, cost=$0.0384"
+  },
+  {
+    "name": "Skillマッチ: ダッシュボードのグラフをD3.jsで描画したい...",
+    "status": "PASS",
+    "detail": "expected=NO_MATCH, actual=NO_MATCH, cost=$0.0415"
+  },
+  {
+    "name": "メトリクス集計",
+    "status": "PASS",
+    "detail": "✅ Issue数が正しい\n✅ 総コストが正の値\n✅ 平均コストが計算されている\n✅ タイプ分布がある\n✅ フェーズ別コストがある\n✅ フィードバックが収集されている"
+  },
+  {
+    "name": "改善提案生成",
+    "status": "PASS",
+    "detail": "cost=$0.0778, proposals=0, score=5/5\n✅ 提案が3個以上\n✅ コスト最適化の提案あり\n✅ プロンプト改善の提案あり\n✅ 具体的なアクションあり\n✅ メトリクスに基づいている"
+  }
+]

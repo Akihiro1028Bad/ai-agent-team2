@@ -1,0 +1,112 @@
+[
+  {
+    "name": "タイプ判定 [bug]",
+    "status": "PASS",
+    "detail": "判定=bug, 期待=bug, cost=$0.0112\nresponse: TYPE: bug\nREASON: ログインボタン押下時に500エラーが発生するという明確な不具合であり、既存機能の修正が必要なバグ案件です。"
+  },
+  {
+    "name": "タイプ判定 [feature-s]",
+    "status": "PASS",
+    "detail": "判定=feature-s, 期待=feature-s, cost=$0.0070\nresponse: TYPE: feature-s\nREASON: 登録フォームへのメールアドレス形式チェックとエラーメッセージ表示の追加は、バリデーションロジックとUI表示の修正のみで完結する小規模な機能追加である。"
+  },
+  {
+    "name": "タイプ判定 [feature-m]",
+    "status": "PASS",
+    "detail": "判定=feature-m, 期待=feature-m, cost=$0.0071\nresponse: TYPE: feature-m\nREASON: ダッシュボード画面・統計情報・アクティビティ・通知・サイドバーナビゲーションと複数コンポーネントにまたがる新規画面作成であり、設計が必要な中規模機能に該当する。"
+  },
+  {
+    "name": "Bug Issue作成",
+    "status": "PASS",
+    "detail": "Issue #5"
+  },
+  {
+    "name": "Bug ANALYSIS (方針作成)",
+    "status": "PASS",
+    "detail": "cost=$0.0299\n原因記載=True, 修正記載=True, テスト記載=True, 承認案内=True"
+  },
+  {
+    "name": "Bug 方針コメント投稿",
+    "status": "PASS",
+    "detail": "comment_id=4116445874"
+  },
+  {
+    "name": "👍 リアクション追加",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "👍 リアクション検知",
+    "status": "PASS",
+    "detail": "reactions=['+1']"
+  },
+  {
+    "name": "Bug FIX (コード修正)",
+    "status": "PASS",
+    "detail": "cost=$0.2979, files=7"
+  },
+  {
+    "name": "Bug PR作成",
+    "status": "PASS",
+    "detail": "PR #6"
+  },
+  {
+    "name": "Feature-S Issue作成",
+    "status": "PASS",
+    "detail": "Issue #7"
+  },
+  {
+    "name": "Feature-S HEARING",
+    "status": "PASS",
+    "detail": "cost=$0.0170, ready=True, questions=False"
+  },
+  {
+    "name": "Feature-S PLAN_BRIEF (方針作成)",
+    "status": "PASS",
+    "detail": "cost=$0.0174, approval_prompt=True"
+  },
+  {
+    "name": "Feature-S 方針コメント投稿",
+    "status": "PASS",
+    "detail": "comment_id=4116462736"
+  },
+  {
+    "name": "Feature-S 👍 承認",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "Feature-S IMPLEMENT",
+    "status": "PASS",
+    "detail": "cost=$0.4147, files=4"
+  },
+  {
+    "name": "Feature-S PR作成",
+    "status": "PASS",
+    "detail": "PR #8"
+  },
+  {
+    "name": "指摘コメント投稿 (シミュレート)",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "方針修正版作成",
+    "status": "PASS",
+    "detail": "cost=$0.2328\nvalidators反映=True, Error型反映=True"
+  },
+  {
+    "name": "修正版コメント投稿",
+    "status": "PASS",
+    "detail": "comment_id=4116491193"
+  },
+  {
+    "name": "PR description に方針再掲",
+    "status": "PASS",
+    "detail": "PR #8, body_len=563"
+  },
+  {
+    "name": "Bug PR description に方針再掲",
+    "status": "PASS",
+    "detail": "PR #6, body_len=563"
+  }
+]

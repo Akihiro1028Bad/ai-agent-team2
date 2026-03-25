@@ -1,0 +1,37 @@
+[
+  {
+    "name": "B1-1: Bug分析品質",
+    "status": "FAIL",
+    "detail": "cost=$0.1643\n✅ 原因にファイルパス含む\n✅ 修正対象ファイルが具体的\n✅ nullチェック言及\n✅ テスト方針がある\n❌ 承認案内(👍)がある\n✅ 表形式(テーブル)がある"
+  },
+  {
+    "name": "B1-2: Feature-S方針品質",
+    "status": "FAIL",
+    "detail": "cost=$0.0960\n✅ 変更ファイルが具体的\n✅ 変更内容が明確\n✅ 変更ファイル数が適正(1-3)\n✅ テスト方針がある\n❌ 承認案内(👍)がある"
+  },
+  {
+    "name": "B1-3: Feature-M設計書品質",
+    "status": "FAIL",
+    "detail": "cost=$0.1338, score=5/8\n❌ 概要セクション\n✅ 影響範囲テーブル\n✅ 実装方針が具体的\n❌ API変更の記載\n❌ テスト方針\n✅ 見積もり\n✅ デバウンス言及\n✅ 既存コンポーネント活用"
+  },
+  {
+    "name": "B2-1: リポマップ生成",
+    "status": "PASS",
+    "detail": "cost=$0.0810, score=6/6\n✅ ファイル一覧含む\n✅ 型定義を検出\n✅ API関数を検出\n✅ コンポーネントを検出\n✅ hookを検出\n✅ 依存関係を検出"
+  },
+  {
+    "name": "B2-2: 関連ファイル検索",
+    "status": "PASS",
+    "detail": "cost=$0.0949, score=4/4\n✅ UserCard.tsx を検出\n✅ user.ts (型) を検出\n✅ avatarUrl に言及\n✅ 関連度順"
+  },
+  {
+    "name": "B2-3: CLAUDE.md規約準拠",
+    "status": "PASS",
+    "detail": "cost=$0.0645, score=3/3\n✅ 関数コンポーネント\n✅ TypeScript型あり\n✅ hooks使用"
+  },
+  {
+    "name": "B3: Issue分割品質",
+    "status": "PASS",
+    "detail": "cost=$0.2171, 分割数=8, score=8/9\n✅ 3個以上に分割\n❌ 7個以下に分割（過度に細かくない）\n✅ 全てにタイトルあり\n✅ 全てにbodyあり\n✅ 依存関係が設定されている\n✅ 優先順序がある\n✅ estimated_filesがある\n✅ 最初のIssueは依存なし\n✅ 循環依存なし"
+  }
+]

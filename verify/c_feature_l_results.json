@@ -1,0 +1,192 @@
+[
+  {
+    "name": "大規模Issue作成",
+    "status": "PASS",
+    "detail": "Issue #9"
+  },
+  {
+    "name": "タイプ判定 → feature-l",
+    "status": "PASS",
+    "detail": "判定=feature-l, cost=$0.0300\nTYPE: feature-l\nREASON: 認証基盤の全面刷新・複数プロバイダー連携・DB設計変更・フロントエンド改修・RBAC導入・既存ユーザー移行など、多岐にわたる大規模な変更が必要であり、機能分割して段階的に実装すべき規模のため。"
+  },
+  {
+    "name": "type:feature-l ラベル付与",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "分割提案生成",
+    "status": "PASS",
+    "detail": "子Issue数=11, 依存関係あり=True, 優先順あり=True\ncost=$0.2897"
+  },
+  {
+    "name": "分割提案コメント投稿",
+    "status": "PASS",
+    "detail": "comment_id=4118200982"
+  },
+  {
+    "name": "needs-split ラベル付与",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "👍 分割承認",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "👍 検知",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "子Issue #10 作成",
+    "status": "PASS",
+    "detail": "title=ユーザー・セッションDBスキーマ設計変更, labels=['ai-agent', 'type:feature-m']"
+  },
+  {
+    "name": "子Issue #11 作成",
+    "status": "PASS",
+    "detail": "title=JWT発行・検証ロジックの実装, labels=['ai-agent', 'type:feature-m', 'depends-on:#10']"
+  },
+  {
+    "name": "子Issue #12 作成",
+    "status": "PASS",
+    "detail": "title=リフレッシュトークン管理の実装, labels=['ai-agent', 'type:feature-m', 'depends-on:#10', 'depends-on:#11']"
+  },
+  {
+    "name": "子Issue #13 作成",
+    "status": "PASS",
+    "detail": "title=JWT認証ミドルウェアの実装と既存APIエンドポイントへの適用, labels=['ai-agent', 'type:feature-m', 'depends-on:#11']"
+  },
+  {
+    "name": "子Issue #14 作成",
+    "status": "PASS",
+    "detail": "title=OAuth2.0プロバイダー連携（Google・GitHub）の実装, labels=['ai-agent', 'type:feature-m', 'depends-on:#10', 'depends-on:#11']"
+  },
+  {
+    "name": "子Issue #15 作成",
+    "status": "PASS",
+    "detail": "title=既存ユーザーの段階的移行スクリプトと移行期間中の互換レイヤー, labels=['ai-agent', 'type:feature-m', 'depends-on:#10', 'depends-on:#14']"
+  },
+  {
+    "name": "子Issue #16 作成",
+    "status": "PASS",
+    "detail": "title=フロントエンドのログインフロー刷新（ソーシャルログインボタン追加）, labels=['ai-agent', 'type:feature-m', 'depends-on:#12', 'depends-on:#15']"
+  },
+  {
+    "name": "子Issue #17 作成",
+    "status": "PASS",
+    "detail": "title=RBAC（ロールベースアクセス制御）の導入, labels=['ai-agent', 'type:feature-m', 'depends-on:#14']"
+  },
+  {
+    "name": "子Issue #18 作成",
+    "status": "PASS",
+    "detail": "title=管理者ダッシュボードのアクセス制御実装, labels=['ai-agent', 'type:feature-m', 'depends-on:#17']"
+  },
+  {
+    "name": "子Issue #19 作成",
+    "status": "PASS",
+    "detail": "title=APIレート制限の実装, labels=['ai-agent', 'type:feature-m', 'depends-on:#14']"
+  },
+  {
+    "name": "子Issue #20 作成",
+    "status": "PASS",
+    "detail": "title=セキュリティ監査ログの追加, labels=['ai-agent', 'type:feature-m', 'depends-on:#14', 'depends-on:#19']"
+  },
+  {
+    "name": "子Issue作成(全体)",
+    "status": "PASS",
+    "detail": "作成数=11, issues=[10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]"
+  },
+  {
+    "name": "子Issue #10 ラベル",
+    "status": "PASS",
+    "detail": "labels=['ai-agent', 'type:feature-m']"
+  },
+  {
+    "name": "子Issue #11 ラベル",
+    "status": "PASS",
+    "detail": "labels=['ai-agent', 'type:feature-m', 'depends-on:#10']"
+  },
+  {
+    "name": "子Issue #12 ラベル",
+    "status": "PASS",
+    "detail": "labels=['ai-agent', 'type:feature-m', 'depends-on:#10', 'depends-on:#11']"
+  },
+  {
+    "name": "子Issue #13 ラベル",
+    "status": "PASS",
+    "detail": "labels=['ai-agent', 'type:feature-m', 'depends-on:#11']"
+  },
+  {
+    "name": "子Issue #14 ラベル",
+    "status": "PASS",
+    "detail": "labels=['ai-agent', 'type:feature-m', 'depends-on:#10', 'depends-on:#11']"
+  },
+  {
+    "name": "子Issue #15 ラベル",
+    "status": "PASS",
+    "detail": "labels=['ai-agent', 'type:feature-m', 'depends-on:#10', 'depends-on:#14']"
+  },
+  {
+    "name": "子Issue #16 ラベル",
+    "status": "PASS",
+    "detail": "labels=['ai-agent', 'type:feature-m', 'depends-on:#12', 'depends-on:#15']"
+  },
+  {
+    "name": "子Issue #17 ラベル",
+    "status": "PASS",
+    "detail": "labels=['ai-agent', 'type:feature-m', 'depends-on:#14']"
+  },
+  {
+    "name": "子Issue #18 ラベル",
+    "status": "PASS",
+    "detail": "labels=['ai-agent', 'type:feature-m', 'depends-on:#17']"
+  },
+  {
+    "name": "子Issue #19 ラベル",
+    "status": "PASS",
+    "detail": "labels=['ai-agent', 'type:feature-m', 'depends-on:#14']"
+  },
+  {
+    "name": "子Issue #20 ラベル",
+    "status": "PASS",
+    "detail": "labels=['ai-agent', 'type:feature-m', 'depends-on:#14', 'depends-on:#19']"
+  },
+  {
+    "name": "全子Issueに ai-agent ラベル",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "依存ラベル(depends-on)が存在",
+    "status": "PASS",
+    "detail": "依存関係のある子Issueに depends-on ラベルが付いている"
+  },
+  {
+    "name": "親Issue完了コメント",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "親Issueクローズ",
+    "status": "PASS",
+    "detail": "state=closed"
+  },
+  {
+    "name": "needs-split ラベル除去",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "依存先がオープン → 待機判定",
+    "status": "PASS",
+    "detail": "Issue #11 は #10 に依存, dep_state=open"
+  },
+  {
+    "name": "依存先クローズ → 待機解除",
+    "status": "PASS",
+    "detail": "#10 closed → #11 処理可能"
+  }
+]

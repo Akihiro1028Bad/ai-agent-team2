@@ -1,0 +1,82 @@
+[
+  {
+    "name": "SDK接続 (query)",
+    "status": "PASS",
+    "detail": "session_id=60b9ab8a-61c4-470d-9c67-d205302e5873, response_len=15, cost=$0.0135"
+  },
+  {
+    "name": "session_id取得",
+    "status": "PASS",
+    "detail": "session_id=60b9ab8a-61c4-470d-9c67-d205302e5873"
+  },
+  {
+    "name": "セッション継続 (resume)",
+    "status": "PASS",
+    "detail": "response_len=75"
+  },
+  {
+    "name": "リポジトリ取得",
+    "status": "PASS",
+    "detail": "repo=Akihiro1028Bad/ai-agent-team2-test"
+  },
+  {
+    "name": "ラベル作成",
+    "status": "PASS",
+    "detail": "label=test:verify-architecture"
+  },
+  {
+    "name": "Issue作成",
+    "status": "PASS",
+    "detail": "issue_number=1"
+  },
+  {
+    "name": "Issueコメント投稿",
+    "status": "PASS",
+    "detail": "comment_id=4115942764"
+  },
+  {
+    "name": "ラベル追加",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "Issueクローズ",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "git clone",
+    "status": "PASS",
+    "detail": "/var/folders/6c/_jyfy3tn3mj4fbxsbqkbhtg40000gn/T/ai-agent-verify-cls5ac6l/repo"
+  },
+  {
+    "name": "デフォルトブランチ検出",
+    "status": "PASS",
+    "detail": "branch=main"
+  },
+  {
+    "name": "worktree作成",
+    "status": "PASS",
+    "detail": "path=/var/folders/6c/_jyfy3tn3mj4fbxsbqkbhtg40000gn/T/ai-agent-verify-cls5ac6l/worktrees/issue-999"
+  },
+  {
+    "name": "worktree内ファイル操作",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "worktree削除",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "name": "httpx GET",
+    "status": "PASS",
+    "detail": "status=200"
+  },
+  {
+    "name": "httpx POST (Slack形式)",
+    "status": "PASS",
+    "detail": "status=200"
+  }
+]

@@ -1,0 +1,12 @@
+[project]
+name = "verify-architecture"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "claude-agent-sdk>=0.1.50",
+    "githubkit>=0.14",
+    "httpx>=0.28",
+]
+
+[tool.uv]
+python-preference = "managed"
