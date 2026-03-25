@@ -46,9 +46,7 @@ class FixExecutor(PhaseExecutor):
         plan_comment = ""
         for c in reversed(comments):
             body = getattr(c, "body", "")
-            user = getattr(c, "user", None)
-            user_type = getattr(user, "type", "") if user else ""
-            if user_type == "Bot" and "修正方針" in body:
+            if "修正方針" in body:
                 plan_comment = body
                 break
 
@@ -90,7 +88,8 @@ class FixExecutor(PhaseExecutor):
         await self._tracker.track(
             "fix_complete",
             issue_number=request.issue_number,
-            note="CI結果待ち",
+            phase="fix",
+            data={"note": "CI結果待ち"},
         )
         await self._notifier.notify(
             f"Issue #{request.issue_number} の修正PRを作成しました。CI結果待ちです",

@@ -147,9 +147,10 @@ class GitHubPoller:
             PollEvent(
                 type=EventType.PLAN_COMMENT_ADDED,
                 repo=repo,
+                issue=issue,
                 comment=comment,
             )
-            for comment in plan_comments
+            for issue, comment in plan_comments
         )
 
         # 6. PR レビューイベント検知
@@ -251,13 +252,21 @@ class GitHubPoller:
         """方針承認リアクション (thumbsup) を検知する.
 
         条件: phase:plan-review ラベル付き Issue のコメントに +1 リアクション.
+        Bot コメントまたは方針コメント (## 修正方針, ## 方針 等) を対象とする。
+        PAT 経由で投稿された場合 user.type が "User" になるため、
+        コメント内容も併せてチェックする。
         """
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:plan-review")
         approved_issues: list[Issue] = []
+        # 方針コメントを識別するパターン (Markdown 見出し)
+        plan_markers = ("## 修正方針", "## 方針", "## Analysis", "## Plan", "## 分析結果")
         for issue in issues:
             comments = await client.list_comments(repo, issue.number)
             for comment in comments:
-                if comment.user and comment.user.type == "Bot":
+                body = comment.body or ""
+                is_bot = comment.user and comment.user.type == "Bot"
+                is_plan_comment = any(body.startswith(marker) for marker in plan_markers)
+                if is_bot or is_plan_comment:
                     # BUG #3: Skip already-processed reactions
                     reaction_key = (issue.number, comment.id)
                     if reaction_key in self._seen_reactions:
@@ -275,15 +284,21 @@ class GitHubPoller:
         client: GitHubClient,
         repo: RepositoryConfig,
         since: datetime | None,
-    ) -> list[IssueComment]:
+    ) -> list[tuple[Issue, IssueComment]]:
         """方針への指摘コメントを検知する.
 
         条件: phase:plan-review ラベル付き Issue に since 以降の人間コメント.
+        初回ポーリング (since=None) では検知しない (過去の全コメントを誤検知するため)。
+
+        Returns:
+            (Issue, IssueComment) タプルのリスト.
         """
+        if since is None:
+            return []
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:plan-review")
-        feedback: list[IssueComment] = []
+        feedback: list[tuple[Issue, IssueComment]] = []
         for issue in issues:
-            since_str = since.isoformat() if since else None
+            since_str = since.isoformat()
             comments = await client.list_comments(repo, issue.number, since=since_str)
             for comment in comments:
                 if comment.user and comment.user.type != "Bot":
@@ -291,7 +306,7 @@ class GitHubPoller:
                     event_key = f"plan_comment:{issue.number}:{comment.id}"
                     if event_key not in self._seen_events:
                         self._seen_events.add(event_key)
-                        feedback.append(comment)
+                        feedback.append((issue, comment))
         return feedback
 
     async def _detect_pr_events(

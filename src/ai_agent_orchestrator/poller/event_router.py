@@ -7,6 +7,7 @@ Issue タイプに応じたルーティング (Bug -> ANALYSIS, Feature-S -> PLA
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -98,6 +99,54 @@ class EventRouter:
                 logger.warning("Unknown event type: %s", event.type)
 
     # ------------------------------------------------------------------
+    # Recovery helper
+    # ------------------------------------------------------------------
+
+    async def _ensure_registered(self, event: PollEvent) -> None:
+        """Issue が未登録の場合、ラベルからタイプ・フェーズを推定して自動登録する.
+
+        オーケストレーター再起動後に state.json が消失した場合のリカバリ。
+        """
+        assert event.issue is not None
+        try:
+            self._sm.get_phase(event.issue.number)
+            return  # 登録済み
+        except KeyError:
+            pass
+
+        repo_key = f"{event.repo.owner}/{event.repo.repo}"
+        labels = [(lbl.name if hasattr(lbl, "name") else str(lbl)) for lbl in (event.issue.labels or [])]
+
+        # タイプをラベルから推定
+        issue_type = "bug"  # デフォルト
+        for lbl in labels:
+            if lbl.startswith("type:"):
+                issue_type = lbl.replace("type:", "")
+                break
+
+        # フェーズをラベルから推定
+        current_phase = Phase.PLAN_REVIEW  # デフォルト(plan_reaction の呼び出し元)
+        for lbl in labels:
+            if lbl.startswith("phase:"):
+                phase_str = lbl.replace("phase:", "")
+                with contextlib.suppress(ValueError):
+                    current_phase = Phase(phase_str)
+                break
+
+        logger.info(
+            "Auto-registering Issue #%d (recovered): type=%s, phase=%s",
+            event.issue.number,
+            issue_type,
+            current_phase.value,
+        )
+        self._sm.register_issue(
+            issue_number=event.issue.number,
+            repo=repo_key,
+            initial_phase=current_phase,
+        )
+        self._sm.set_issue_type(event.issue.number, issue_type)
+
+    # ------------------------------------------------------------------
     # Internal handlers
     # ------------------------------------------------------------------
 
@@ -151,6 +200,8 @@ class EventRouter:
         Feature-S -> IMPLEMENT へ遷移
         """
         assert event.issue is not None
+        # 未登録の場合は自動登録(再起動後のリカバリ)
+        await self._ensure_registered(event)
         issue_type = self._sm.get_issue_type(event.issue.number)
         next_phase = Phase.FIX if issue_type == "bug" else Phase.IMPLEMENT
 
