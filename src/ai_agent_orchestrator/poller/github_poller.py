@@ -51,6 +51,12 @@ class GitHubPoller:
         self._hearing_timeout_hours = hearing_timeout_hours
         self._last_poll: dict[str, datetime] = {}
         self._running = False
+        # BUG #1: Track seen issue numbers to avoid re-detecting as "new"
+        self._seen_issue_numbers: set[int] = set()
+        # BUG #3: Track seen reactions (issue_number, comment_id)
+        self._seen_reactions: set[tuple[int, int]] = set()
+        # BUG #4: General event deduplication
+        self._seen_events: set[str] = set()
 
     async def start(self, event_queue: asyncio.Queue[PollEvent]) -> None:
         """ポーリングループを開始する.
@@ -172,9 +178,20 @@ class GitHubPoller:
         """新規 Issue を検知する.
 
         条件: ai-agent ラベルあり AND phase:* ラベルなし AND state=open.
+        PR は除外し、既に検知済みの Issue も除外する (重複検知防止).
         """
         issues = await client.get_issues_with_label(repo, repo.label)
-        return [issue for issue in issues if not self._has_phase_label(issue)]
+        new: list[Issue] = []
+        for issue in issues:
+            # BUG #2: Filter out PRs (GitHub API returns both issues and PRs)
+            if hasattr(issue, "pull_request") and issue.pull_request is not None:
+                continue
+            # BUG #1: Skip already-seen issues to prevent re-detection
+            if self._has_phase_label(issue) or issue.number in self._seen_issue_numbers:
+                continue
+            self._seen_issue_numbers.add(issue.number)
+            new.append(issue)
+        return new
 
     async def _detect_hearing_replies(
         self,
@@ -192,7 +209,13 @@ class GitHubPoller:
         for issue in issues:
             since_str = since.isoformat() if since else None
             comments = await client.list_comments(repo, issue.number, since=since_str)
-            replies.extend(comment for comment in comments if comment.user and comment.user.type != "Bot")
+            for comment in comments:
+                if comment.user and comment.user.type != "Bot":
+                    # BUG #4: Deduplicate hearing reply events
+                    event_key = f"hearing_reply:{issue.number}:{comment.id}"
+                    if event_key not in self._seen_events:
+                        self._seen_events.add(event_key)
+                        replies.append(comment)
         return replies
 
     async def _detect_hearing_timeouts(
@@ -207,7 +230,15 @@ class GitHubPoller:
         """
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing")
         threshold = datetime.now(UTC) - timedelta(hours=self._hearing_timeout_hours)
-        return [issue for issue in issues if issue.updated_at and issue.updated_at < threshold]
+        timed_out: list[Issue] = []
+        for issue in issues:
+            if issue.updated_at and issue.updated_at < threshold:
+                # BUG #4: Deduplicate timeout events
+                event_key = f"hearing_timeout:{issue.number}"
+                if event_key not in self._seen_events:
+                    self._seen_events.add(event_key)
+                    timed_out.append(issue)
+        return timed_out
 
     async def _detect_plan_reactions(
         self,
@@ -225,9 +256,14 @@ class GitHubPoller:
             comments = await client.list_comments(repo, issue.number)
             for comment in comments:
                 if comment.user and comment.user.type == "Bot":
+                    # BUG #3: Skip already-processed reactions
+                    reaction_key = (issue.number, comment.id)
+                    if reaction_key in self._seen_reactions:
+                        continue
                     reactions = await client.get_reactions(repo, comment.id)
                     has_thumbsup = any(r.content == "+1" for r in reactions)
                     if has_thumbsup:
+                        self._seen_reactions.add(reaction_key)
                         approved_issues.append(issue)
                         break
         return approved_issues
@@ -247,7 +283,13 @@ class GitHubPoller:
         for issue in issues:
             since_str = since.isoformat() if since else None
             comments = await client.list_comments(repo, issue.number, since=since_str)
-            feedback.extend(comment for comment in comments if comment.user and comment.user.type != "Bot")
+            for comment in comments:
+                if comment.user and comment.user.type != "Bot":
+                    # BUG #4: Deduplicate plan comment events
+                    event_key = f"plan_comment:{issue.number}:{comment.id}"
+                    if event_key not in self._seen_events:
+                        self._seen_events.add(event_key)
+                        feedback.append(comment)
         return feedback
 
     async def _detect_pr_events(
@@ -279,6 +321,12 @@ class GitHubPoller:
             for issue in issues:
                 pr_reviews = await self._get_pr_reviews(client, repo, issue)
                 for review_event in pr_reviews:
+                    event_type = approved_type if review_event == "approved" else commented_type
+                    # BUG #4: Deduplicate PR review events
+                    event_key = f"pr_review:{event_type}:{issue.number}"
+                    if event_key in self._seen_events:
+                        continue
+                    self._seen_events.add(event_key)
                     if review_event == "approved":
                         events.append(
                             PollEvent(
@@ -313,6 +361,13 @@ class GitHubPoller:
             issues = await client.get_issues_with_label(repo, f"{repo.label},phase:{label_suffix}")
             for issue in issues:
                 ci_status = await self._check_ci_status(client, repo, issue)
+                if ci_status is None:
+                    continue
+                # BUG #4: Deduplicate CI result events
+                event_key = f"ci_result:{issue.number}:{ci_status}"
+                if event_key in self._seen_events:
+                    continue
+                self._seen_events.add(event_key)
                 if ci_status == "failure":
                     ci_logs = await self._get_ci_logs(client, repo, issue)
                     events.append(
@@ -353,9 +408,14 @@ class GitHubPoller:
             comments = await client.list_comments(repo, issue.number)
             for comment in comments:
                 if comment.user and comment.user.type == "Bot":
+                    # BUG #3: Skip already-processed reactions
+                    reaction_key = (issue.number, comment.id)
+                    if reaction_key in self._seen_reactions:
+                        continue
                     reactions = await client.get_reactions(repo, comment.id)
                     has_thumbsup = any(r.content == "+1" for r in reactions)
                     if has_thumbsup:
+                        self._seen_reactions.add(reaction_key)
                         events.append(
                             PollEvent(
                                 type=EventType.SPLIT_APPROVED,
@@ -369,13 +429,18 @@ class GitHubPoller:
             human_comments = [
                 c for c in comments if c.user and c.user.type != "Bot" and (since is None or c.created_at > since)
             ]
-            if human_comments:
+            for hc in human_comments:
+                # BUG #4: Deduplicate split modified events
+                event_key = f"split_modified:{issue.number}:{hc.id}"
+                if event_key in self._seen_events:
+                    continue
+                self._seen_events.add(event_key)
                 events.append(
                     PollEvent(
                         type=EventType.SPLIT_MODIFIED,
                         repo=repo,
                         issue=issue,
-                        comment=human_comments[-1],
+                        comment=hc,
                     )
                 )
         return events

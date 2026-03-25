@@ -83,24 +83,24 @@ async def _start_foreground(config_path: str) -> None:
         console.print(f"[red]設定ファイルの読み込みに失敗しました: {e}[/red]")
         raise typer.Exit(code=1) from None
 
-    # Pollerと EventRouterを接続してOrchestratorを生成
+    # Orchestrator を生成 (Poller / EventRouter は内部で後から接続)
+    orchestrator = Orchestrator(settings)
+
+    # Poller / EventRouter を構築して注入 (start() 前に設定)
     from ai_agent_orchestrator.poller.event_router import EventRouter
     from ai_agent_orchestrator.poller.github_poller import GitHubPoller
 
-    orchestrator = Orchestrator(settings)
-
-    # 実際のPollerとRouterをセットアップ
     poller = GitHubPoller(
-        account_manager=orchestrator._account_manager,
+        account_manager=orchestrator.account_manager,
         repos=settings.repositories,
         interval_sec=settings.polling_interval_sec,
     )
     router = EventRouter(
-        state_machine=orchestrator._state_machine,
-        task_queue=orchestrator._task_queue,
+        state_machine=orchestrator.state_machine,
+        task_queue=orchestrator.task_queue,
     )
-    orchestrator._poller = poller
-    orchestrator._event_router = router
+    orchestrator.set_poller(poller)  # type: ignore[arg-type]
+    orchestrator.set_event_router(router)  # type: ignore[arg-type]
 
     # PIDファイルを書き込み
     _PID_FILE.parent.mkdir(parents=True, exist_ok=True)

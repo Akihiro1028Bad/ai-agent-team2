@@ -32,6 +32,10 @@ from ai_agent_orchestrator.workspace_manager import WorkspaceManager
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.config.settings import AppSettings
+    from ai_agent_orchestrator.phases.base import PhaseExecutor as PhaseExecutorBase
+    from ai_agent_orchestrator.phases.dispatcher import (
+        PhaseDispatcher as ConcretePhaseDispatcher,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +216,120 @@ class _NullPhaseResult:
 
 
 # ---------------------------------------------------------------------------
+# _RealPhaseDispatcherAdapter
+# ---------------------------------------------------------------------------
+
+
+class _RealPhaseDispatcherAdapter:
+    """Adapter: real PhaseDispatcher -> orchestrator dispatch() protocol.
+
+    The real PhaseDispatcher.execute(TaskRequest) invokes a PhaseExecutor
+    which handles prompt building, agent execution, result processing, and
+    state transitions internally.  This adapter wraps that into the
+    ``dispatch()`` signature expected by ``Orchestrator._execute_task``,
+    returning a lightweight result.  Because the executor already manages
+    transitions, the adapter always returns ``next_phase=None`` so that the
+    orchestrator does not attempt a duplicate transition.
+    """
+
+    def __init__(self, concrete: ConcretePhaseDispatcher) -> None:
+        self._concrete = concrete
+
+    async def dispatch(
+        self,
+        phase: str,
+        *,
+        issue_number: int,
+        repo: str,
+        worktree_path: str,
+        context: str,
+        resume_session_id: str | None = None,
+    ) -> _NullPhaseResult:
+        """Dispatch phase execution via the real PhaseDispatcher.
+
+        A ``models.TaskRequest`` is constructed from the parameters and
+        forwarded to the concrete dispatcher.  The concrete executor takes
+        full responsibility for state transitions, so the returned result
+        reports ``next_phase=None``.
+        """
+        from ai_agent_orchestrator.models import Phase as PhaseEnum
+        from ai_agent_orchestrator.models import TaskRequest as ModelsTaskRequest
+
+        # Convert phase string to Phase enum; use as-is if not a valid enum value
+        try:
+            phase_enum = PhaseEnum(phase.replace("_", "-"))
+        except ValueError:
+            phase_enum = PhaseEnum(phase)
+
+        request = ModelsTaskRequest(
+            issue_number=issue_number,
+            repo=repo,
+            phase=phase_enum,
+        )
+        await self._concrete.execute(request)
+        return _NullPhaseResult()
+
+
+def _build_phase_executors(
+    runner: ClaudeAgentRunner,
+    github: object,
+    notifier: object,
+    tracker: object,
+    workspace: object,
+    context_engine: ContextEngine,
+    state_machine: object,
+) -> dict[str, PhaseExecutorBase]:
+    """Create executor instances for every known phase.
+
+    Returns:
+        Mapping of phase key (underscored) to executor instance.
+    """
+    from ai_agent_orchestrator.phases import (
+        AnalysisExecutor,
+        CiFixExecutor,
+        DesignExecutor,
+        DesignReviseExecutor,
+        DoneExecutor,
+        FixExecutor,
+        HearingExecutor,
+        ImplementExecutor,
+        ImplReviseExecutor,
+        PlanBriefExecutor,
+        PlanningExecutor,
+        SplitExecuteExecutor,
+        SplitProposalExecutor,
+        TypeDetectionExecutor,
+    )
+
+    common_kwargs: dict[str, object] = {
+        "runner": runner,
+        "github": github,
+        "notifier": notifier,
+        "tracker": tracker,
+        "workspace": workspace,
+        "context_engine": context_engine,
+        "state_machine": state_machine,
+    }
+
+    return {
+        "type_detection": TypeDetectionExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "analysis": AnalysisExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "fix": FixExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "hearing": HearingExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "plan_brief": PlanBriefExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "design": DesignExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "design_revise": DesignReviseExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "planning": PlanningExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "implement": ImplementExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "ci_fix": CiFixExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "impl_revise": ImplReviseExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "done": DoneExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "split_proposal": SplitProposalExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "split_execute": SplitExecuteExecutor(**common_kwargs),  # type: ignore[arg-type]
+    }
+
+
+# ---------------------------------------------------------------------------
 # _OrchestratorTaskExecutor (adapts Orchestrator._execute_task to TaskExecutor)
 # ---------------------------------------------------------------------------
 
@@ -354,8 +472,11 @@ class Orchestrator:
         else:
             self._notifier = NullNotifier()
 
-        # Phase dispatcher (placeholder until phases module is implemented)
-        self._phase_dispatcher: PhaseDispatcher = phase_dispatcher or NullPhaseDispatcher()
+        # Phase dispatcher: use injected one, or build real dispatcher
+        if phase_dispatcher is not None:
+            self._phase_dispatcher: PhaseDispatcher = phase_dispatcher
+        else:
+            self._phase_dispatcher = self._build_real_phase_dispatcher()
 
         # Poller (placeholder until poller module is implemented)
         self._poller: Poller = poller or NullPoller()
@@ -365,6 +486,28 @@ class Orchestrator:
 
         # Task executor adapter
         self._executor = _OrchestratorTaskExecutor(self)
+
+    def _build_real_phase_dispatcher(self) -> _RealPhaseDispatcherAdapter:
+        """Build a real PhaseDispatcher with all concrete executors.
+
+        Returns:
+            An adapter wrapping the concrete PhaseDispatcher.
+        """
+        from ai_agent_orchestrator.phases.dispatcher import (
+            PhaseDispatcher as ConcretePhaseDispatcherCls,
+        )
+
+        executors = _build_phase_executors(
+            runner=self._agent_runner,
+            github=self._account_manager,
+            notifier=self._notifier,
+            tracker=self._event_logger,
+            workspace=self._workspace_manager,
+            context_engine=self._context_engine,
+            state_machine=self._state_machine,
+        )
+        concrete = ConcretePhaseDispatcherCls(executors=executors)
+        return _RealPhaseDispatcherAdapter(concrete)
 
     # ------------------------------------------------------------------
     # Properties
@@ -399,6 +542,22 @@ class Orchestrator:
     def is_running(self) -> bool:
         """オーケストレーターが稼働中かどうかを返す."""
         return self._running
+
+    def set_poller(self, poller: Poller) -> None:
+        """ポーラーを差し替える (start() 前に呼ぶこと).
+
+        Args:
+            poller: 新しいポーラー。
+        """
+        self._poller = poller
+
+    def set_event_router(self, router: EventRouterProtocol) -> None:
+        """イベントルーターを差し替える (start() 前に呼ぶこと).
+
+        Args:
+            router: 新しいイベントルーター。
+        """
+        self._event_router = router
 
     # ------------------------------------------------------------------
     # Lifecycle

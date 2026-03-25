@@ -29,6 +29,7 @@ def _make_issue(
     number: int = 1,
     labels: list[str] | None = None,
     updated_at: datetime | None = None,
+    is_pull_request: bool = False,
 ) -> MagicMock:
     """テスト用 Issue モック."""
     issue = MagicMock()
@@ -40,6 +41,10 @@ def _make_issue(
         label_mocks.append(lbl)
     issue.labels = label_mocks
     issue.updated_at = updated_at or datetime.now(UTC)
+    if is_pull_request:
+        issue.pull_request = MagicMock()
+    else:
+        issue.pull_request = None
     return issue
 
 
@@ -122,6 +127,54 @@ class TestDetectNewIssues:
         result = await poller._detect_new_issues(client, repo)
         assert len(result) == 0
 
+    async def test_detect_new_issue_not_re_detected_on_second_poll(self) -> None:
+        """BUG #1: 同じ Issue が2回目のポーリングで再検知されない."""
+        client = _make_client()
+        issue = _make_issue(number=42, labels=["ai-agent"])
+        client.get_issues_with_label = AsyncMock(return_value=[issue])
+
+        repo = _make_repo()
+        am = _make_account_manager(client)
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
+
+        # First poll detects the issue
+        result1 = await poller._detect_new_issues(client, repo)
+        assert len(result1) == 1
+
+        # Second poll should NOT re-detect the same issue
+        result2 = await poller._detect_new_issues(client, repo)
+        assert len(result2) == 0
+
+    async def test_detect_new_issue_excludes_pull_requests(self) -> None:
+        """BUG #2: PR は新規 Issue として検知されない."""
+        client = _make_client()
+        pr_as_issue = _make_issue(number=99, labels=["ai-agent"], is_pull_request=True)
+        real_issue = _make_issue(number=100, labels=["ai-agent"])
+        client.get_issues_with_label = AsyncMock(return_value=[pr_as_issue, real_issue])
+
+        repo = _make_repo()
+        am = _make_account_manager(client)
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
+
+        result = await poller._detect_new_issues(client, repo)
+        assert len(result) == 1
+        assert result[0].number == 100
+
+    async def test_multiple_new_issues_detected(self) -> None:
+        """複数の新規 Issue が一度に検知される."""
+        client = _make_client()
+        issue1 = _make_issue(number=1, labels=["ai-agent"])
+        issue2 = _make_issue(number=2, labels=["ai-agent"])
+        client.get_issues_with_label = AsyncMock(return_value=[issue1, issue2])
+
+        repo = _make_repo()
+        am = _make_account_manager(client)
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
+
+        result = await poller._detect_new_issues(client, repo)
+        assert len(result) == 2
+        assert {r.number for r in result} == {1, 2}
+
 
 # ---------------------------------------------------------------------------
 # Tests: _detect_hearing_replies
@@ -163,6 +216,25 @@ class TestDetectHearingReplies:
 
         result = await poller._detect_hearing_replies(client, repo, None)
         assert len(result) == 0
+
+    async def test_hearing_reply_not_re_detected(self) -> None:
+        """BUG #4: 同じヒアリング回答が2回目のポーリングで再検知されない."""
+        client = _make_client()
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:hearing"])
+        client.get_issues_with_label = AsyncMock(return_value=[issue])
+
+        human_comment = _make_comment(comment_id=10, body="回答です", user_type="User")
+        client.list_comments = AsyncMock(return_value=[human_comment])
+
+        repo = _make_repo()
+        am = _make_account_manager(client)
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
+
+        result1 = await poller._detect_hearing_replies(client, repo, None)
+        assert len(result1) == 1
+
+        result2 = await poller._detect_hearing_replies(client, repo, None)
+        assert len(result2) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +291,28 @@ class TestDetectHearingTimeouts:
         result = await poller._detect_hearing_timeouts(client, repo)
         assert len(result) == 0
 
+    async def test_hearing_timeout_not_re_detected(self) -> None:
+        """BUG #4: 同じタイムアウトが2回目のポーリングで再検知されない."""
+        client = _make_client()
+        old_time = datetime.now(UTC) - timedelta(hours=25)
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:hearing"], updated_at=old_time)
+        client.get_issues_with_label = AsyncMock(return_value=[issue])
+
+        repo = _make_repo()
+        am = _make_account_manager(client)
+        poller = GitHubPoller(
+            account_manager=am,
+            repos=[repo],
+            interval_sec=60,
+            hearing_timeout_hours=24,
+        )
+
+        result1 = await poller._detect_hearing_timeouts(client, repo)
+        assert len(result1) == 1
+
+        result2 = await poller._detect_hearing_timeouts(client, repo)
+        assert len(result2) == 0
+
 
 # ---------------------------------------------------------------------------
 # Tests: _detect_plan_reactions
@@ -265,6 +359,28 @@ class TestDetectPlanReactions:
 
         result = await poller._detect_plan_reactions(client, repo, None)
         assert len(result) == 0
+
+    async def test_plan_reaction_not_re_detected(self) -> None:
+        """BUG #3: 同じリアクションが2回目のポーリングで再検知されない."""
+        client = _make_client()
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:plan-review"])
+        client.get_issues_with_label = AsyncMock(return_value=[issue])
+
+        bot_comment = _make_comment(comment_id=100, body="方針提案", user_type="Bot")
+        client.list_comments = AsyncMock(return_value=[bot_comment])
+
+        thumbsup = _make_reaction(content="+1")
+        client.get_reactions = AsyncMock(return_value=[thumbsup])
+
+        repo = _make_repo()
+        am = _make_account_manager(client)
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
+
+        result1 = await poller._detect_plan_reactions(client, repo, None)
+        assert len(result1) == 1
+
+        result2 = await poller._detect_plan_reactions(client, repo, None)
+        assert len(result2) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +448,67 @@ class TestDetectCIResults:
         assert result[0].extra is not None
         assert result[0].extra["ci_status"] == "success"
 
+    async def test_ci_result_not_re_detected(self) -> None:
+        """BUG #4: 同じ CI 結果が2回目のポーリングで再検知されない."""
+        client = _make_client()
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:implement"])
+        client.get_issues_with_label = AsyncMock(side_effect=[[issue], [], [issue], []])
+
+        pr = MagicMock()
+        pr.number = 10
+        pr.body = "Fixes #1"
+        pr.title = "feat: implement"
+        pr.head = MagicMock()
+        pr.head.ref = "feature/issue-1"
+        client.list_pull_requests = AsyncMock(return_value=[pr])
+
+        client.get_check_runs = AsyncMock(
+            return_value=[{"name": "test", "status": "completed", "conclusion": "success"}]
+        )
+
+        repo = _make_repo()
+        am = _make_account_manager(client)
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
+
+        result1 = await poller._detect_ci_results(client, repo)
+        assert len(result1) == 1
+
+        result2 = await poller._detect_ci_results(client, repo)
+        assert len(result2) == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: _detect_split_events
+# ---------------------------------------------------------------------------
+
+
+class TestDetectSplitEvents:
+    """分割イベント検知のテスト."""
+
+    async def test_split_reaction_not_re_detected(self) -> None:
+        """BUG #3: 同じ分割承認リアクションが2回目で再検知されない."""
+        client = _make_client()
+        issue = _make_issue(number=5, labels=["ai-agent", "phase:split-proposal"])
+        client.get_issues_with_label = AsyncMock(return_value=[issue])
+
+        bot_comment = _make_comment(comment_id=200, body="分割提案", user_type="Bot")
+        client.list_comments = AsyncMock(return_value=[bot_comment])
+
+        thumbsup = _make_reaction(content="+1")
+        client.get_reactions = AsyncMock(return_value=[thumbsup])
+
+        repo = _make_repo()
+        am = _make_account_manager(client)
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
+
+        result1 = await poller._detect_split_events(client, repo, None)
+        approved1 = [e for e in result1 if e.type == EventType.SPLIT_APPROVED]
+        assert len(approved1) == 1
+
+        result2 = await poller._detect_split_events(client, repo, None)
+        approved2 = [e for e in result2 if e.type == EventType.SPLIT_APPROVED]
+        assert len(approved2) == 0
+
 
 # ---------------------------------------------------------------------------
 # Tests: _poll_repo integration
@@ -360,6 +537,47 @@ class TestPollRepo:
         new_issue_events = [e for e in events if e.type == EventType.NEW_ISSUE]
         assert len(new_issue_events) == 1
         assert new_issue_events[0].issue.number == 42
+
+    async def test_poll_repo_no_duplicate_new_issues_across_polls(self) -> None:
+        """BUG #1: _poll_repo を2回呼んでも同じ Issue は再検知されない."""
+        client = _make_client()
+        issue = _make_issue(number=42, labels=["ai-agent"])
+        # 10 calls per poll, 2 polls = 20 calls
+        side_effects = [
+            [issue],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [issue],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+        ]
+        client.get_issues_with_label = AsyncMock(side_effect=side_effects)
+
+        repo = _make_repo()
+        am = _make_account_manager(client)
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
+
+        events1 = await poller._poll_repo(repo)
+        new1 = [e for e in events1 if e.type == EventType.NEW_ISSUE]
+        assert len(new1) == 1
+
+        events2 = await poller._poll_repo(repo)
+        new2 = [e for e in events2 if e.type == EventType.NEW_ISSUE]
+        assert len(new2) == 0
 
     async def test_poll_error_is_caught_in_start(self) -> None:
         """ポーリング中のエラーが start で処理される."""
