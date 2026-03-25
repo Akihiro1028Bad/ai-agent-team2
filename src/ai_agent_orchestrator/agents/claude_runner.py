@@ -1,4 +1,4 @@
-"""ClaudeAgentRunner (Claude Code SDK 実行)."""
+"""ClaudeAgentRunner (Claude Agent SDK 実行)."""
 
 from __future__ import annotations
 
@@ -8,15 +8,15 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from claude_code_sdk import (
-    ClaudeCodeOptions,
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
     ClaudeSDKClient,
     ClaudeSDKError,
     HookMatcher,
     Message,
     query,
 )
-from claude_code_sdk.types import (
+from claude_agent_sdk.types import (
     AssistantMessage,
     HookContext,
     HookEvent,
@@ -126,7 +126,7 @@ class MaxTurnsExceededError(ClaudeSDKError):
 
 
 class ClaudeAgentRunner:
-    """Claude Code SDK を使用した AgentRunner 実装."""
+    """Claude Agent SDK を使用した AgentRunner 実装."""
 
     def __init__(self, tracker: Tracker) -> None:
         """ClaudeAgentRunner を初期化する.
@@ -192,13 +192,13 @@ class ClaudeAgentRunner:
             )
 
         # Build options (max_turns はSDKデフォルトに委任)
-        options = ClaudeCodeOptions(
+        options = ClaudeAgentOptions(
             cwd=cwd,
             permission_mode=cfg.permission_mode,  # type: ignore[arg-type]
             hooks=hooks,
         )
         if append_prompt:
-            options.append_system_prompt = append_prompt
+            options.system_prompt = append_prompt
 
         return await asyncio.wait_for(
             self._run_query(
@@ -229,7 +229,7 @@ class ClaudeAgentRunner:
         self,
         *,
         prompt: str,
-        options: ClaudeCodeOptions,
+        options: ClaudeAgentOptions,
         budget: float,
         subagents: list[SubAgentDefinition],
         phase: str,
@@ -237,55 +237,62 @@ class ClaudeAgentRunner:
         """query() を実行してメッセージを収集し AgentResult を返す."""
         start = time.monotonic()
 
-        messages: list[Message] = []
+        all_messages: list[Message] = []  # accumulate across ALL attempts
         max_retries = 3
+
         for attempt in range(max_retries):
+            attempt_messages: list[Message] = []
             try:
                 async for msg in query(prompt=prompt, options=options):
-                    messages.append(msg)
-                    logger.debug(
-                        "SDK message: type=%s, has_content=%s",
-                        type(msg).__name__,
-                        hasattr(msg, "content"),
-                    )
-                break  # 正常完了
+                    if msg is not None:  # claude-agent-sdk may return None for unknown types
+                        attempt_messages.append(msg)
+                        logger.debug(
+                            "SDK message: type=%s, has_content=%s",
+                            type(msg).__name__,
+                            hasattr(msg, "content"),
+                        )
+                all_messages.extend(attempt_messages)
+                break  # success - got through without exception
             except Exception as e:
+                all_messages.extend(attempt_messages)  # PRESERVE partial messages
+
                 if "Unknown message type" in str(e):
-                    logger.warning(
-                        "Unknown message type on attempt %d/%d (collected %d messages): %s",
-                        attempt + 1,
-                        max_retries,
-                        len(messages),
-                        e,
-                    )
-                    # TextBlock が収集済みならリトライ不要
+                    # Check if we already have useful TextBlock content
                     has_text = any(
                         isinstance(m, AssistantMessage) and any(isinstance(b, TextBlock) for b in m.content)
-                        for m in messages
+                        for m in all_messages
                     )
                     if has_text:
-                        logger.info("TextBlock found, proceeding without retry")
+                        logger.info("TextBlock found in accumulated messages, proceeding")
                         break
-                    # TextBlock 未到達 -> リトライ(指数バックオフ)
+
                     if attempt < max_retries - 1:
-                        wait = 30.0 * (attempt + 1)  # 30s, 60s
-                        logger.info("No TextBlock yet, retrying in %.0fs...", wait)
+                        wait = 30.0 * (2**attempt)  # 30s, 60s exponential backoff
+                        logger.warning(
+                            "rate_limit_event on attempt %d/%d (collected %d messages total). Retrying in %.0fs...",
+                            attempt + 1,
+                            max_retries,
+                            len(all_messages),
+                            wait,
+                        )
                         await asyncio.sleep(wait)
-                        messages.clear()
                     else:
-                        logger.error("Max retries reached with no TextBlock")
+                        logger.error(
+                            "Max retries reached with no TextBlock (total messages: %d)",
+                            len(all_messages),
+                        )
                 else:
-                    raise
+                    raise  # re-raise non-rate-limit errors
 
         elapsed = time.monotonic() - start
         logger.info(
             "SDK query complete: %d messages collected in %.1fs",
-            len(messages),
+            len(all_messages),
             elapsed,
         )
 
         result = self._parse_messages(
-            messages,
+            all_messages,
             elapsed=elapsed,
             budget=budget,
             subagents=subagents,
@@ -296,12 +303,12 @@ class ClaudeAgentRunner:
         if not result.output and not result.session_id:
             logger.warning(
                 "SDK returned no output and no session_id. Messages: %s",
-                [type(m).__name__ for m in messages],
+                [type(m).__name__ for m in all_messages],
             )
 
         # AssistantMessage のテキストがなく ResultMessage にテキストがある場合
         if not result.output:
-            for msg in messages:
+            for msg in all_messages:
                 if isinstance(msg, ResultMessage) and msg.result:
                     logger.info(
                         "Falling back to ResultMessage.result (len=%d)",
@@ -409,6 +416,19 @@ class ClaudeAgentRunner:
                         assistant_text += block.text
                     elif isinstance(block, ToolUseBlock):
                         tool_uses.append({"tool": block.name, "input": block.input})
+
+        # If no TextBlock found, try ThinkingBlock as degraded fallback
+        if not assistant_text:
+            thinking_texts: list[str] = [
+                block.thinking
+                for msg in messages
+                if isinstance(msg, AssistantMessage)
+                for block in msg.content
+                if hasattr(block, "thinking") and block.thinking
+            ]
+            if thinking_texts:
+                logger.warning("No TextBlock found, using ThinkingBlock content as fallback")
+                assistant_text = "\n".join(thinking_texts)
 
         # Use SDK-reported duration if available, fall back to wall clock
         final_duration = duration_ms / 1000.0 if duration_ms > 0 else elapsed

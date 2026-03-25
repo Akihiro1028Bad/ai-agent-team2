@@ -43,13 +43,20 @@ def runner(mock_tracker: AsyncMock) -> ClaudeAgentRunner:
 
 def _make_text_block(text: str = "output text") -> Any:
     """Create a TextBlock."""
-    from claude_code_sdk.types import TextBlock
+    from claude_agent_sdk.types import TextBlock
 
     return TextBlock(text=text)
 
 
+def _make_thinking_block(thinking: str = "thinking content") -> Any:
+    """Create a ThinkingBlock."""
+    from claude_agent_sdk.types import ThinkingBlock
+
+    return ThinkingBlock(thinking=thinking, signature="sig")
+
+
 def _make_tool_use_block(name: str = "Bash", input_data: dict[str, Any] | None = None) -> Any:
-    from claude_code_sdk.types import ToolUseBlock
+    from claude_agent_sdk.types import ToolUseBlock
 
     return ToolUseBlock(id="tu-1", name=name, input=input_data or {})
 
@@ -57,14 +64,34 @@ def _make_tool_use_block(name: str = "Bash", input_data: dict[str, Any] | None =
 def _make_assistant_message(
     text: str = "output text",
     tool_uses: list[Any] | None = None,
+    extra_blocks: list[Any] | None = None,
 ) -> Any:
-    """Create an AssistantMessage."""
-    from claude_code_sdk.types import AssistantMessage
+    """Create an AssistantMessage.
 
-    blocks: list[Any] = [_make_text_block(text)]
+    Args:
+        text: Text content for the TextBlock.
+        tool_uses: Optional ToolUseBlock list to append.
+        extra_blocks: Optional extra blocks (e.g. ThinkingBlock) to prepend.
+    """
+    from claude_agent_sdk.types import AssistantMessage
+
+    blocks: list[Any] = []
+    if extra_blocks:
+        blocks.extend(extra_blocks)
+    blocks.append(_make_text_block(text))
     if tool_uses:
         blocks.extend(tool_uses)
     return AssistantMessage(content=blocks, model="claude-sonnet-4-20250514")
+
+
+def _make_thinking_only_assistant_message(thinking: str = "thinking content") -> Any:
+    """Create an AssistantMessage with only a ThinkingBlock (no TextBlock)."""
+    from claude_agent_sdk.types import AssistantMessage
+
+    return AssistantMessage(
+        content=[_make_thinking_block(thinking)],
+        model="claude-sonnet-4-20250514",
+    )
 
 
 def _make_result_message(
@@ -76,7 +103,7 @@ def _make_result_message(
     result: str | None = None,
 ) -> Any:
     """Create a ResultMessage."""
-    from claude_code_sdk.types import ResultMessage
+    from claude_agent_sdk.types import ResultMessage
 
     return ResultMessage(
         subtype=subtype,
@@ -104,6 +131,23 @@ def _make_fake_query(
             captured_kwargs.append({"prompt": prompt, "options": options})
         for msg in messages:
             yield msg
+
+    return fake_query
+
+
+def _make_fake_query_with_exception(
+    messages_before_error: list[Any],
+    exception: Exception,
+    captured_kwargs: list[dict[str, Any]] | None = None,
+) -> Any:
+    """Create a fake query that yields messages then raises an exception."""
+
+    async def fake_query(*, prompt: str, options: Any = None, transport: Any = None) -> Any:
+        if captured_kwargs is not None:
+            captured_kwargs.append({"prompt": prompt, "options": options})
+        for msg in messages_before_error:
+            yield msg
+        raise exception
 
     return fake_query
 
@@ -248,9 +292,9 @@ async def test_run_adds_subagents_for_implement_phase(
 
     assert len(captured) == 1
     opts = captured[0]["options"]
-    assert opts.append_system_prompt is not None
-    assert "code-analyzer" in opts.append_system_prompt
-    assert "test-writer" in opts.append_system_prompt
+    assert opts.system_prompt is not None
+    assert "code-analyzer" in opts.system_prompt
+    assert "test-writer" in opts.system_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +321,7 @@ async def test_run_no_subagents_for_hearing_phase(
 
     assert len(captured) == 1
     opts = captured[0]["options"]
-    assert opts.append_system_prompt is None
+    assert opts.system_prompt is None
 
 
 # ---------------------------------------------------------------------------
@@ -449,3 +493,112 @@ async def test_run_unknown_phase_uses_defaults(
 def test_impl_phases_set() -> None:
     """_IMPL_PHASES が正しい実装フェーズを含む."""
     assert {"implement", "fix", "ci_fix", "impl_revise"} == _IMPL_PHASES
+
+
+# ---------------------------------------------------------------------------
+# TC-CR-15: run -- rate_limit_event でリトライしてもメッセージが蓄積される
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("ai_agent_orchestrator.agents.claude_runner.asyncio.sleep", new_callable=AsyncMock)
+@patch("ai_agent_orchestrator.agents.claude_runner.query")
+async def test_run_accumulates_messages_across_retries(
+    mock_query: MagicMock,
+    mock_sleep: AsyncMock,
+    runner: ClaudeAgentRunner,
+) -> None:
+    """rate_limit_event でリトライしてもメッセージが蓄積される."""
+    # First attempt: ThinkingBlock only, then "Unknown message type" exception
+    attempt1_messages = [_make_thinking_only_assistant_message("考え中...")]
+    attempt1_error = Exception("Unknown message type: rate_limit_event")
+
+    # Second attempt: TextBlock + ResultMessage, then "Unknown message type" exception
+    attempt2_messages = [
+        _make_assistant_message(text="リトライ後の結果"),
+        _make_result_message(session_id="sess-retry-001", cost_usd=0.6),
+    ]
+    attempt2_error = Exception("Unknown message type: rate_limit_event")
+
+    call_count = 0
+
+    async def fake_query_with_retries(*, prompt: str, options: Any = None, transport: Any = None) -> Any:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            for msg in attempt1_messages:
+                yield msg
+            raise attempt1_error
+        elif call_count == 2:
+            for msg in attempt2_messages:
+                yield msg
+            raise attempt2_error
+
+    mock_query.side_effect = fake_query_with_retries
+
+    result = await runner.run(
+        prompt="テスト",
+        cwd="/tmp/worktree",
+        phase="hearing",
+    )
+
+    assert isinstance(result, AgentResult)
+    assert "リトライ後の結果" in result.output
+    assert result.session_id == "sess-retry-001"
+    # asyncio.sleep should have been called for backoff between attempt 1 and 2
+    mock_sleep.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# TC-CR-16: run -- TextBlock がない場合 ThinkingBlock をフォールバックで使用
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("ai_agent_orchestrator.agents.claude_runner.asyncio.sleep", new_callable=AsyncMock)
+@patch("ai_agent_orchestrator.agents.claude_runner.query")
+async def test_run_thinking_block_fallback(
+    mock_query: MagicMock,
+    mock_sleep: AsyncMock,
+    runner: ClaudeAgentRunner,
+) -> None:
+    """TextBlock がない場合 ThinkingBlock をフォールバックで使用.
+
+    全リトライが ThinkingBlock のみで失敗した場合、
+    ResultMessage.result がなければ output は空文字列になるが、
+    session_id 等のメタデータは取得できる。
+    ThinkingBlock 自体は現在 _parse_messages で TextBlock のみ抽出するため
+    output には含まれないが、エラーにならず正常終了する。
+    """
+    error = Exception("Unknown message type: rate_limit_event")
+
+    call_count = 0
+
+    async def fake_query_always_thinking(*, prompt: str, options: Any = None, transport: Any = None) -> Any:
+        nonlocal call_count
+        call_count += 1
+        # Every attempt yields only ThinkingBlock, no TextBlock
+        yield _make_thinking_only_assistant_message("深い思考中...")
+        if call_count < 3:
+            raise error
+        # Last attempt: also add a ResultMessage so we get metadata
+        yield _make_result_message(
+            session_id="sess-thinking-001",
+            cost_usd=0.3,
+            result="フォールバックテキスト",
+        )
+
+    mock_query.side_effect = fake_query_always_thinking
+
+    result = await runner.run(
+        prompt="テスト",
+        cwd="/tmp/worktree",
+        phase="hearing",
+    )
+
+    assert isinstance(result, AgentResult)
+    assert result.session_id == "sess-thinking-001"
+    # ThinkingBlock content is used as fallback when no TextBlock output
+    assert "深い思考中" in result.output
+    # Verify retries happened (sleep called for backoff)
+    assert mock_sleep.call_count >= 1

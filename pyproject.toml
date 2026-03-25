@@ -11,7 +11,7 @@ dependencies = [
     "pydantic-settings>=2.7",
     "githubkit>=0.14",
     "httpx>=0.28",
-    "claude-code-sdk>=0.0.20",
+    "claude-agent-sdk>=0.1.50",
     "python-statemachine>=2.5",
     "keyring>=25",
     "pyyaml>=6",
@@ -78,7 +78,7 @@ disallow_untyped_calls = false
 
 [[tool.mypy.overrides]]
 module = [
-    "claude_code_sdk.*",
+    "claude_agent_sdk.*",
     "statemachine.*",
 ]
 ignore_missing_imports = true
