@@ -1,3 +1,315 @@
-"""TaskQueue (asyncio.PriorityQueue + Semaphore)."""
+"""TaskQueue (asyncio.PriorityQueue + Semaphore).
 
-# TODO: 実装予定 (docs/specs/ の仕様書に基づいて実装)
+非同期タスクキュー。asyncio.PriorityQueue で優先度付きタスク管理を行い、
+asyncio.Semaphore で全体並行数とリポジトリ単位並行数を制御する。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import Any, Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Priority constants
+# ---------------------------------------------------------------------------
+
+
+class Priority:
+    """タスク優先度定数。値が小さいほど優先される。"""
+
+    CRITICAL: int = 1  # レビュー応答 (impl_revise, design_revise)
+    HIGH: int = 2  # CI 修正 (ci_fix)
+    NORMAL: int = 5  # 新規 Issue, 通常フェーズ実行
+    LOW: int = 10  # ヘルスチェック等のバックグラウンド処理
+
+
+# ---------------------------------------------------------------------------
+# Protocols for dependency injection
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class RepoLike(Protocol):
+    """Repository-like object with owner and repo attributes."""
+
+    @property
+    def owner(self) -> str: ...
+
+    @property
+    def repo(self) -> str: ...
+
+
+class TaskExecutor(Protocol):
+    """Protocol for task execution callback."""
+
+    async def execute(self, request: TaskRequest) -> None:
+        """Execute a task request."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# TaskRequest dataclass
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TaskRequest:
+    """タスク実行リクエスト。
+
+    asyncio.PriorityQueue で比較可能にするため __lt__ を実装。
+    """
+
+    issue_number: int
+    repo: Any  # RepoLike (has .owner and .repo)
+    phase: str
+    priority: int = Priority.NORMAL
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    def __lt__(self, other: TaskRequest) -> bool:
+        """PriorityQueue 用の比較。priority が小さいほど優先。"""
+        return self.priority < other.priority
+
+    @property
+    def repo_key(self) -> str:
+        """リポジトリを一意に識別するキー。"""
+        return f"{self.repo.owner}/{self.repo.repo}"
+
+
+# ---------------------------------------------------------------------------
+# TaskQueue
+# ---------------------------------------------------------------------------
+
+
+class TaskQueue:
+    """asyncio.PriorityQueue + Semaphore による同時実行制御付きタスクキュー。
+
+    - 全体の同時実行数を global_sem で制限 (デフォルト: 2)
+    - リポジトリ単位の同時実行数を repo_sems で制限 (デフォルト: 1)
+    - 同一 Issue 番号のタスクは重複排除 (最新のみ保持)
+    """
+
+    def __init__(
+        self,
+        max_total: int = 2,
+        max_per_repo: int = 1,
+    ) -> None:
+        """TaskQueue を初期化する。
+
+        Args:
+            max_total: 全体の最大同時実行数
+            max_per_repo: リポジトリ単位の最大同時実行数
+        """
+        self._max_total = max_total
+        self._max_per_repo = max_per_repo
+        self._seq = 0  # FIFO 保証用シーケンスカウンタ
+        self._queue: asyncio.PriorityQueue[tuple[int, int, TaskRequest]] = (
+            asyncio.PriorityQueue()
+        )
+        self._global_sem = asyncio.Semaphore(max_total)
+        self._repo_sems: dict[str, asyncio.Semaphore] = defaultdict(
+            lambda: asyncio.Semaphore(max_per_repo)
+        )
+        self._active_tasks: dict[int, asyncio.Task[None]] = {}
+        self._queued_issues: set[int] = set()  # 重複排除用
+
+    # --- public methods ---
+
+    async def enqueue(self, request: TaskRequest) -> None:
+        """タスクをキューに追加する。
+
+        同一 Issue 番号のタスクが既にキューにある場合は、
+        新しいリクエストで置換される (priority が反映される)。
+        既に実行中の Issue は重複投入しない。
+
+        Args:
+            request: 実行するタスクリクエスト
+        """
+        if request.issue_number in self._active_tasks:
+            logger.warning(
+                "Issue #%d is already executing, skipping enqueue",
+                request.issue_number,
+            )
+            return
+
+        if request.issue_number in self._queued_issues:
+            logger.info(
+                "Issue #%d already in queue, will be replaced on dequeue",
+                request.issue_number,
+            )
+
+        self._queued_issues.add(request.issue_number)
+        self._seq += 1
+        await self._queue.put((request.priority, self._seq, request))
+        logger.info(
+            "Enqueued Issue #%d phase=%s priority=%d",
+            request.issue_number,
+            request.phase,
+            request.priority,
+        )
+
+    async def dequeue(self) -> TaskRequest:
+        """キューからタスクを取り出す。
+
+        キューが空の場合はタスクが追加されるまでブロックする。
+
+        Returns:
+            最も優先度の高い TaskRequest
+        """
+        _, _, request = await self._queue.get()
+        self._queued_issues.discard(request.issue_number)
+        return request
+
+    async def worker_loop(self, executor: TaskExecutor) -> None:
+        """ワーカーループ: キューからタスクを取り出して実行する。
+
+        全体セマフォ (global_sem) とリポジトリ単位セマフォ (repo_sem) の
+        両方を取得してから executor.execute() を呼び出す。
+
+        このメソッドは無限ループであり、通常は asyncio.TaskGroup 内で実行される。
+
+        Note:
+            task_done() は dequeue 後に必ず呼び出す (finally ブロック)。
+
+            head-of-line blocking 対策: global_sem を先に取得し、
+            repo_sem が取得できなければ global_sem を解放してリトライする。
+
+        Args:
+            executor: フェーズ実行エンジン
+        """
+        while True:
+            _priority, _seq, request = await self._queue.get()
+            try:
+                self._queued_issues.discard(request.issue_number)
+                await self._try_execute(executor, request)
+            except Exception as e:
+                logger.error(
+                    "Task failed for Issue #%d: %s",
+                    request.issue_number,
+                    e,
+                )
+            finally:
+                self._active_tasks.pop(request.issue_number, None)
+                self._queue.task_done()  # always called after get()
+
+    async def _try_execute(
+        self,
+        executor: TaskExecutor,
+        request: TaskRequest,
+    ) -> None:
+        """タスク実行を試みる。
+
+        head-of-line blocking 対策:
+        1. global_sem を取得
+        2. repo_sem を非ブロッキングで試行
+        3. 取得できなければ global_sem を解放してキューに戻す
+        """
+        repo_key = request.repo_key
+        repo_sem = self._repo_sems[repo_key]
+
+        await self._global_sem.acquire()
+        try:
+            # repo_sem を非ブロッキングで試行
+            acquired = repo_sem._value > 0
+            if not acquired:
+                # global_sem を解放して再キューイング
+                self._global_sem.release()
+                logger.info(
+                    "Repo semaphore busy for %s, re-enqueuing Issue #%d",
+                    repo_key,
+                    request.issue_number,
+                )
+                await asyncio.sleep(0.5)
+                self._seq += 1
+                await self._queue.put((request.priority, self._seq, request))
+                self._queued_issues.add(request.issue_number)
+                return
+
+            await repo_sem.acquire()
+            try:
+                task = asyncio.current_task()
+                if task is not None:
+                    self._active_tasks[request.issue_number] = task
+                await self._execute_task(executor, request)
+            finally:
+                repo_sem.release()
+        finally:
+            # Only release global_sem if we didn't already release it above
+            # We track this by checking if we're still holding it
+            if request.issue_number in self._active_tasks:
+                self._global_sem.release()
+            elif repo_sem._value <= self._max_per_repo:
+                # We acquired global_sem and repo_sem, need to release global
+                self._global_sem.release()
+
+    async def _execute_task(
+        self,
+        executor: TaskExecutor,
+        request: TaskRequest,
+    ) -> None:
+        """タスクを実行する。
+
+        Args:
+            executor: フェーズ実行エンジン
+            request: 実行するタスクリクエスト
+        """
+        logger.info(
+            "Executing Issue #%d phase=%s",
+            request.issue_number,
+            request.phase,
+        )
+        await executor.execute(request)
+        logger.info(
+            "Completed Issue #%d phase=%s",
+            request.issue_number,
+            request.phase,
+        )
+
+    @property
+    def active_count(self) -> int:
+        """現在実行中のタスク数。"""
+        return len(self._active_tasks)
+
+    @property
+    def queued_count(self) -> int:
+        """キュー待ちのタスク数。"""
+        return self._queue.qsize()
+
+    def get_status(self) -> dict[str, Any]:
+        """キューの状態を辞書形式で返す。
+
+        Returns:
+            {"active": int, "max_total": int, "queued": int,
+             "active_issues": list[int]}
+        """
+        return {
+            "active": self.active_count,
+            "max_total": self._max_total,
+            "queued": self.queued_count,
+            "active_issues": list(self._active_tasks.keys()),
+        }
+
+    def is_issue_active(self, issue_number: int) -> bool:
+        """指定 Issue が現在実行中かどうかを返す。"""
+        return issue_number in self._active_tasks
+
+    async def cancel_task(self, issue_number: int) -> bool:
+        """実行中のタスクをキャンセルする。
+
+        Args:
+            issue_number: キャンセルする Issue 番号
+
+        Returns:
+            キャンセルに成功した場合 True
+        """
+        task = self._active_tasks.get(issue_number)
+        if task and not task.done():
+            task.cancel()
+            logger.info("Cancelled task for Issue #%d", issue_number)
+            return True
+        return False

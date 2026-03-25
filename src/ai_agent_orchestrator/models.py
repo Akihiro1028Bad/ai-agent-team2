@@ -184,6 +184,7 @@ class PollEvent:
     issue: Issue | None = None
     comment: IssueComment | None = None
     pr: PullRequest | None = None
+    extra: dict[str, Any] | None = None
     error: Exception | None = None
 
 

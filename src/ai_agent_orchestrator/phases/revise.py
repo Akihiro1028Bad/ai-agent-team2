@@ -1,3 +1,10 @@
-"""レビュー対応フェーズ."""
+"""レビュー対応フェーズ (後方互換性のためのエイリアス)."""
 
-# TODO: 実装予定 (docs/specs/ の仕様書に基づいて実装)
+from ai_agent_orchestrator.phases.design_revise import (
+    DesignReviseExecutor,
+)
+from ai_agent_orchestrator.phases.impl_revise import (
+    ImplReviseExecutor,
+)
+
+__all__ = ["DesignReviseExecutor", "ImplReviseExecutor"]

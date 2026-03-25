@@ -1,0 +1,1034 @@
+"""Phase executors unit tests."""
+
+from __future__ import annotations
+
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from ai_agent_orchestrator.models import AgentResult
+
+# ---------------------------------------------------------------------------
+# Common fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_runner() -> AsyncMock:
+    """Mock ClaudeAgentRunner."""
+    runner = AsyncMock()
+    runner.run.return_value = AgentResult(
+        session_id="sess-001",
+        output="test output",
+        tool_uses=[],
+        cost_usd=0.5,
+        duration_sec=30.0,
+    )
+    return runner
+
+
+@pytest.fixture
+def mock_github() -> AsyncMock:
+    """Mock GitHubClient."""
+    gh = AsyncMock()
+    issue = MagicMock()
+    issue.title = "テストIssue"
+    issue.body = "テスト本文"
+    issue.number = 1
+    gh.get_issue.return_value = issue
+    gh.list_comments.return_value = []
+    return gh
+
+
+@pytest.fixture
+def mock_notifier() -> AsyncMock:
+    """Mock Notifier."""
+    return AsyncMock()
+
+
+@pytest.fixture
+def mock_tracker() -> AsyncMock:
+    """Mock Tracker."""
+    return AsyncMock()
+
+
+@pytest.fixture
+def mock_workspace() -> AsyncMock:
+    """Mock WorkspaceManager."""
+    ws = AsyncMock()
+    ws.create_worktree.return_value = "/tmp/worktree/issue-1"
+    return ws
+
+
+@pytest.fixture
+def mock_context() -> AsyncMock:
+    """Mock ContextEngine."""
+    ctx = AsyncMock()
+    ctx.build_context.return_value = "## リポジトリ構造\n(mock context)"
+    return ctx
+
+
+@pytest.fixture
+def mock_sm() -> MagicMock:
+    """Mock StateMachineManager.
+
+    Uses MagicMock as base since get_state/get_issue_type/set_issue_type
+    are synchronous. Async methods (transition, increment_ci_retry)
+    are explicitly set to AsyncMock.
+    """
+    sm = MagicMock()
+    sm.get_state.return_value = MagicMock(
+        issue_number=1,
+        session_id=None,
+        pr_number=None,
+        design_pr_number=None,
+    )
+    sm.get_issue_type.return_value = "feature-m"
+    sm.transition = AsyncMock()
+    sm.increment_ci_retry = AsyncMock()
+    return sm
+
+
+def _make_request(
+    phase: str = "hearing",
+    issue_number: int = 1,
+    extra: dict[str, Any] | None = None,
+) -> MagicMock:
+    """Create a mock TaskRequest."""
+    repo = MagicMock()
+    repo.owner = "org"
+    repo.repo = "app"
+    req = MagicMock()
+    req.issue_number = issue_number
+    req.repo = repo
+    req.phase = phase
+    req.extra = extra or {}
+    return req
+
+
+# ---------------------------------------------------------------------------
+# TypeDetectionExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestTypeDetectionExecutor:
+    """TypeDetectionExecutor tests."""
+
+    async def test_detects_bug_type(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """Bug タイプが正しく判定されラベルが付与される。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output='{"type": "bug", "reason": "エラーキーワードあり"}',
+            tool_uses=[],
+            cost_usd=0.1,
+            duration_sec=5.0,
+        )
+        from ai_agent_orchestrator.phases.type_detection import (
+            TypeDetectionExecutor,
+        )
+
+        executor = TypeDetectionExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="type-detection")
+        await executor.execute(request)
+
+        mock_sm.set_issue_type.assert_called_with(1, "bug")
+        mock_github.add_label.assert_called_once()
+        mock_sm.transition.assert_called_with(1, "analysis")
+
+    async def test_detects_feature_s_type(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """Feature-S タイプが正しく判定される。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output='{"type": "feature-s", "reason": "小規模変更"}',
+            tool_uses=[],
+            cost_usd=0.1,
+            duration_sec=5.0,
+        )
+        from ai_agent_orchestrator.phases.type_detection import (
+            TypeDetectionExecutor,
+        )
+
+        executor = TypeDetectionExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="type-detection")
+        await executor.execute(request)
+
+        mock_sm.set_issue_type.assert_called_with(1, "feature-s")
+        mock_sm.transition.assert_called_with(1, "hearing")
+
+    async def test_fallback_detection_on_invalid_json(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """JSON パース失敗時にフォールバック判定が動作する。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="これはバグです",
+            tool_uses=[],
+            cost_usd=0.1,
+            duration_sec=5.0,
+        )
+        from ai_agent_orchestrator.phases.type_detection import (
+            TypeDetectionExecutor,
+        )
+
+        executor = TypeDetectionExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="type-detection")
+        await executor.execute(request)
+
+        # "バグ" keyword triggers bug detection
+        mock_sm.set_issue_type.assert_called_with(1, "bug")
+
+
+# ---------------------------------------------------------------------------
+# HearingExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestHearingExecutor:
+    """HearingExecutor tests."""
+
+    async def test_posts_question_when_not_ready(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """情報不足時に質問がコメント投稿される。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="確認したいのですが、認証方式はOAuth2ですか?",
+            tool_uses=[],
+            cost_usd=0.3,
+            duration_sec=10.0,
+        )
+        from ai_agent_orchestrator.phases.hearing import HearingExecutor
+
+        executor = HearingExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="hearing")
+        await executor.execute(request)
+
+        mock_github.create_comment.assert_called_once()
+        mock_notifier.notify.assert_called_once()
+
+    async def test_transitions_to_design_when_ready(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """情報十分時に DESIGN へ遷移する (Feature-M)。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="READY",
+            tool_uses=[],
+            cost_usd=0.2,
+            duration_sec=8.0,
+        )
+        mock_sm.get_issue_type.return_value = "feature-m"
+        from ai_agent_orchestrator.phases.hearing import HearingExecutor
+
+        executor = HearingExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="hearing")
+        await executor.execute(request)
+
+        mock_sm.transition.assert_called_with(1, "design")
+
+    async def test_transitions_to_split_when_needs_split(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """NEEDS_SPLIT 出力時に split-proposal へ遷移する。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="NEEDS_SPLIT",
+            tool_uses=[],
+            cost_usd=0.2,
+            duration_sec=8.0,
+        )
+        from ai_agent_orchestrator.phases.hearing import HearingExecutor
+
+        executor = HearingExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="hearing")
+        await executor.execute(request)
+
+        mock_sm.transition.assert_called_with(1, "split-proposal")
+
+
+# ---------------------------------------------------------------------------
+# AnalysisExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestAnalysisExecutor:
+    """AnalysisExecutor tests."""
+
+    async def test_posts_plan_and_transitions_to_plan_review(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """修正方針がコメント投稿され PLAN_REVIEW に遷移する。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="修正方針: null check漏れ",
+            tool_uses=[],
+            cost_usd=0.5,
+            duration_sec=20.0,
+        )
+        from ai_agent_orchestrator.phases.analysis import AnalysisExecutor
+
+        executor = AnalysisExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="analysis")
+        await executor.execute(request)
+
+        mock_github.create_comment.assert_called_once()
+        mock_sm.transition.assert_called_with(1, "plan-review")
+
+
+# ---------------------------------------------------------------------------
+# PlanBriefExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestPlanBriefExecutor:
+    """PlanBriefExecutor tests."""
+
+    async def test_posts_plan_and_transitions_to_plan_review(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """方針がコメント投稿され PLAN_REVIEW に遷移する。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="実装方針: ファイル修正",
+            tool_uses=[],
+            cost_usd=0.3,
+            duration_sec=15.0,
+        )
+        from ai_agent_orchestrator.phases.plan_brief import PlanBriefExecutor
+
+        executor = PlanBriefExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="plan-brief")
+        await executor.execute(request)
+
+        mock_github.create_comment.assert_called_once()
+        mock_sm.transition.assert_called_with(1, "plan-review")
+
+
+# ---------------------------------------------------------------------------
+# DesignExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestDesignExecutor:
+    """DesignExecutor tests."""
+
+    async def test_creates_design_pr_and_transitions(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """設計 PR が作成され DESIGN_REVIEW に遷移する。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="設計PR #5 を作成しました",
+            tool_uses=[],
+            cost_usd=1.0,
+            duration_sec=60.0,
+        )
+        from ai_agent_orchestrator.phases.design import DesignExecutor
+
+        executor = DesignExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="design")
+        await executor.execute(request)
+
+        mock_sm.transition.assert_called_with(1, "design-review")
+        state = mock_sm.get_state(1)
+        assert state.design_pr_number == 5
+
+
+# ---------------------------------------------------------------------------
+# DesignReviseExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestDesignReviseExecutor:
+    """DesignReviseExecutor tests."""
+
+    async def test_uses_resume_session(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """セッション継続で実行される。"""
+        mock_sm.get_state.return_value = MagicMock(
+            session_id="prev-session"
+        )
+        from ai_agent_orchestrator.phases.design_revise import (
+            DesignReviseExecutor,
+        )
+
+        executor = DesignReviseExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(
+            phase="design-revise", extra={"comments": "要修正"}
+        )
+        await executor.execute(request)
+
+        mock_runner.run.assert_called_once()
+        call_kwargs = mock_runner.run.call_args.kwargs
+        assert call_kwargs["resume_session_id"] == "prev-session"
+
+
+# ---------------------------------------------------------------------------
+# PlanningExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestPlanningExecutor:
+    """PlanningExecutor tests."""
+
+    async def test_transitions_to_implement(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """実装計画作成後に IMPLEMENT に遷移する。"""
+        from ai_agent_orchestrator.phases.planning import PlanningExecutor
+
+        executor = PlanningExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="planning")
+        await executor.execute(request)
+
+        mock_sm.transition.assert_called_with(1, "implement")
+
+
+# ---------------------------------------------------------------------------
+# ImplementExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestImplementExecutor:
+    """ImplementExecutor tests."""
+
+    async def test_creates_pr_and_transitions_to_impl_review(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """PR が作成され IMPL_REVIEW に遷移する。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="PR #42 を作成しました",
+            tool_uses=[],
+            cost_usd=3.0,
+            duration_sec=120.0,
+        )
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
+
+        executor = ImplementExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="implement")
+        await executor.execute(request)
+
+        mock_sm.transition.assert_called_with(1, "impl-review")
+        state = mock_sm.get_state(1)
+        assert state.pr_number == 42
+
+
+# ---------------------------------------------------------------------------
+# FixExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestFixExecutor:
+    """FixExecutor tests."""
+
+    async def test_does_not_transition_to_impl_review(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """FixExecutor は IMPL_REVIEW に遷移しない。CI結果を待つ。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="修正PR #7 を作成しました",
+            tool_uses=[],
+            cost_usd=2.0,
+            duration_sec=60.0,
+        )
+        from ai_agent_orchestrator.phases.fix import FixExecutor
+
+        executor = FixExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="fix")
+        await executor.execute(request)
+
+        # transition should NOT be called (except tracker calls)
+        mock_sm.transition.assert_not_called()
+        # tracker should record fix_complete
+        mock_tracker.track.assert_any_call(
+            "fix_complete",
+            issue_number=1,
+            note="CI結果待ち",
+        )
+        # PR number should be recorded
+        state = mock_sm.get_state(1)
+        assert state.pr_number == 7
+
+
+# ---------------------------------------------------------------------------
+# CiFixExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestCiFixExecutor:
+    """CiFixExecutor tests."""
+
+    async def test_increments_retry_count(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """CI 修正後にリトライカウンタがインクリメントされる。"""
+        from ai_agent_orchestrator.phases.ci_fix import CiFixExecutor
+
+        executor = CiFixExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(
+            phase="ci-fix",
+            extra={"ci_logs": "Error: test failed", "retry_count": 2},
+        )
+        await executor.execute(request)
+
+        mock_sm.increment_ci_retry.assert_called_with(1)
+
+
+# ---------------------------------------------------------------------------
+# ImplReviseExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestImplReviseExecutor:
+    """ImplReviseExecutor tests."""
+
+    async def test_uses_resume_session_and_transitions(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """セッション継続で実行され IMPL_REVIEW に遷移する。"""
+        mock_sm.get_state.return_value = MagicMock(
+            session_id="prev-impl-session"
+        )
+        from ai_agent_orchestrator.phases.impl_revise import (
+            ImplReviseExecutor,
+        )
+
+        executor = ImplReviseExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(
+            phase="impl-revise", extra={"comments": "変数名修正"}
+        )
+        await executor.execute(request)
+
+        mock_runner.run.assert_called_once()
+        call_kwargs = mock_runner.run.call_args.kwargs
+        assert call_kwargs["resume_session_id"] == "prev-impl-session"
+        mock_sm.transition.assert_called_with(1, "impl-review")
+
+
+# ---------------------------------------------------------------------------
+# SplitProposalExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestSplitProposalExecutor:
+    """SplitProposalExecutor tests."""
+
+    async def test_posts_proposal_comment(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """分割提案がコメント投稿される。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="Issue分割提案\n| # | タイトル |",
+            tool_uses=[],
+            cost_usd=0.5,
+            duration_sec=20.0,
+        )
+        from ai_agent_orchestrator.phases.split import (
+            SplitProposalExecutor,
+        )
+
+        executor = SplitProposalExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="split-proposal")
+        await executor.execute(request)
+
+        mock_github.create_comment.assert_called_once()
+        mock_notifier.notify.assert_called_once()
+        # transition should NOT be called (stays in split-proposal)
+        mock_sm.transition.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# SplitExecuteExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestSplitExecuteExecutor:
+    """SplitExecuteExecutor tests."""
+
+    async def test_transitions_to_done_after_split(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """分割実行後に DONE へ遷移する。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="子Issue #10, #11, #12 を作成しました",
+            tool_uses=[],
+            cost_usd=0.3,
+            duration_sec=15.0,
+        )
+        from ai_agent_orchestrator.phases.split import (
+            SplitExecuteExecutor,
+        )
+
+        executor = SplitExecuteExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="split-execute")
+        await executor.execute(request)
+
+        mock_sm.transition.assert_called_with(1, "done")
+        mock_github.create_comment.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# DoneExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestDoneExecutor:
+    """DoneExecutor tests."""
+
+    async def test_merges_pr_closes_issue_removes_worktree(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """PR マージ、Issue クローズ、worktree 削除が全て実行される。"""
+        mock_sm.get_state.return_value = MagicMock(pr_number=42)
+        from ai_agent_orchestrator.phases.done import DoneExecutor
+
+        executor = DoneExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="done")
+        await executor.execute(request)
+
+        mock_github.merge_pull_request.assert_called_once()
+        mock_github.close_issue.assert_called_once()
+        mock_workspace.remove_worktree.assert_called_once()
+
+    async def test_skips_merge_when_no_pr(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """PR がない場合はマージをスキップする。"""
+        mock_sm.get_state.return_value = MagicMock(pr_number=None)
+        from ai_agent_orchestrator.phases.done import DoneExecutor
+
+        executor = DoneExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="done")
+        await executor.execute(request)
+
+        mock_github.merge_pull_request.assert_not_called()
+        mock_github.close_issue.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseExecutorErrorHandling:
+    """Error handling tests for PhaseExecutor base class."""
+
+    async def test_timeout_transitions_to_suspended(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """タイムアウト時に SUSPENDED へ遷移し通知される。"""
+        mock_runner.run.side_effect = TimeoutError()
+        from ai_agent_orchestrator.phases.hearing import HearingExecutor
+
+        executor = HearingExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="hearing")
+        await executor.execute(request)
+
+        mock_sm.transition.assert_called_with(1, "suspended")
+        mock_notifier.notify.assert_called_once()
+
+    async def test_generic_error_transitions_to_suspended(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """一般エラー時に SUSPENDED へ遷移し Issue コメント + 通知される。"""
+        mock_runner.run.side_effect = RuntimeError("Unexpected error")
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
+
+        executor = ImplementExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="implement")
+        await executor.execute(request)
+
+        mock_sm.transition.assert_called_with(1, "suspended")
+        mock_github.create_comment.assert_called_once()
+        mock_notifier.notify.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# PhaseDispatcher
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseDispatcher:
+    """PhaseDispatcher tests."""
+
+    async def test_dispatches_to_correct_executor(self) -> None:
+        """phase に対応する executor が呼び出される。"""
+        from ai_agent_orchestrator.phases.dispatcher import PhaseDispatcher
+
+        mock_executor = AsyncMock()
+        dispatcher = PhaseDispatcher(executors={"hearing": mock_executor})
+
+        request = _make_request(phase="hearing")
+        await dispatcher.execute(request)
+
+        mock_executor.execute.assert_called_once_with(request)
+
+    async def test_unknown_phase_raises_key_error(self) -> None:
+        """未登録フェーズは KeyError を発生させる。"""
+        from ai_agent_orchestrator.phases.dispatcher import PhaseDispatcher
+
+        dispatcher = PhaseDispatcher(executors={})
+        request = _make_request(phase="unknown")
+
+        with pytest.raises(KeyError):
+            await dispatcher.execute(request)
+
+    async def test_normalizes_phase_key(self) -> None:
+        """ハイフン付きフェーズ名がアンダースコアに正規化される。"""
+        from ai_agent_orchestrator.phases.dispatcher import PhaseDispatcher
+
+        mock_executor = AsyncMock()
+        dispatcher = PhaseDispatcher(
+            executors={"ci_fix": mock_executor}
+        )
+
+        request = _make_request(phase="ci-fix")
+        await dispatcher.execute(request)
+
+        mock_executor.execute.assert_called_once_with(request)
+
+
+# ---------------------------------------------------------------------------
+# PhaseExecutor._extract_pr_number
+# ---------------------------------------------------------------------------
+
+
+class TestExtractPrNumber:
+    """_extract_pr_number utility tests."""
+
+    def test_extracts_pr_number(self) -> None:
+        """PR 番号を正しく抽出する。"""
+        from ai_agent_orchestrator.phases.base import PhaseExecutor
+
+        assert PhaseExecutor._extract_pr_number("PR #42 を作成") == 42
+
+    def test_returns_none_for_no_match(self) -> None:
+        """PR 番号がない場合は None を返す。"""
+        from ai_agent_orchestrator.phases.base import PhaseExecutor
+
+        assert PhaseExecutor._extract_pr_number("完了しました") is None
