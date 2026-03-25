@@ -126,12 +126,23 @@ class TaskQueue:
         Args:
             request: 実行するタスクリクエスト
         """
+        # 同一Issueが実行中でも、フェーズが変わった場合は
+        # 次フェーズのタスクとしてエンキューを許可する
+        # (auto-enqueue は _execute_task 完了直前に呼ばれるため)
         if request.issue_number in self._active_tasks:
-            logger.warning(
-                "Issue #%d is already executing, skipping enqueue",
-                request.issue_number,
-            )
-            return
+            if request.issue_number not in self._queued_issues:
+                # 実行中だが未キューイング -> 次フェーズとしてキューに入れる
+                logger.info(
+                    "Issue #%d is executing, queueing next phase=%s",
+                    request.issue_number,
+                    request.phase,
+                )
+            else:
+                logger.warning(
+                    "Issue #%d is already queued and executing, skipping",
+                    request.issue_number,
+                )
+                return
 
         if request.issue_number in self._queued_issues:
             logger.info(

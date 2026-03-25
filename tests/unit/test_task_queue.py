@@ -247,17 +247,22 @@ class TestErrorHandling:
 class TestDuplicateHandling:
     """同一 Issue の重複排除をテスト。"""
 
-    async def test_skip_enqueue_for_active_issue(self) -> None:
-        """実行中の Issue は重複投入されない。"""
+    async def test_next_phase_enqueue_for_active_issue(self) -> None:
+        """実行中でも次フェーズはキューに入り、2回目はスキップ。"""
         tq = TaskQueue(max_total=2, max_per_repo=1)
         repo = _make_repo()
 
-        # Issue #1 を実行中にする (手動で _active_tasks にセット)
+        # Issue #1 を実行中にする
         dummy_task = asyncio.create_task(asyncio.sleep(10))
         tq._active_tasks[1] = dummy_task
 
+        # 1回目: 次フェーズとしてキューに入る
         await tq.enqueue(TaskRequest(issue_number=1, repo=repo, phase="hearing"))
-        assert tq.queued_count == 0  # キューに入らない
+        assert tq.queued_count == 1
+
+        # 2回目: 既にキュー済みなのでスキップ
+        await tq.enqueue(TaskRequest(issue_number=1, repo=repo, phase="design"))
+        assert tq.queued_count == 1
 
         dummy_task.cancel()
         await asyncio.gather(dummy_task, return_exceptions=True)
