@@ -121,6 +121,7 @@ class AppSettings(BaseSettings):
                 converted: dict[str, AccountConfig] = {}
                 for key, val in raw.items():
                     if isinstance(val, dict):
+                        val.setdefault("name", key)
                         converted[key] = AccountConfig(**val)
                     elif isinstance(val, AccountConfig):
                         converted[key] = val

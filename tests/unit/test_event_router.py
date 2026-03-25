@@ -82,6 +82,7 @@ class TestEventRouterNewIssue:
         mock_tq: AsyncMock,
     ) -> None:
         """NEW_ISSUE -> register_issue + TYPE_DETECTION エンキュー."""
+        mock_sm.get_phase = MagicMock(side_effect=KeyError(42))  # 未登録 -> KeyError
         event = _make_event(EventType.NEW_ISSUE)
         await router.route(event)
 

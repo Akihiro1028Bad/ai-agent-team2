@@ -105,6 +105,12 @@ class EventRouter:
         """新規 Issue: ステートマシンに登録し、TYPE_DETECTION をエンキュー."""
         assert event.issue is not None
         repo_key = f"{event.repo.owner}/{event.repo.repo}"
+        # 既に登録済みの場合はスキップ (再ポーリングで重複検知される)
+        try:
+            self._sm.get_phase(event.issue.number)
+            return  # 登録済み
+        except KeyError:
+            pass  # 未登録 -> 登録に進む
         self._sm.register_issue(
             issue_number=event.issue.number,
             repo=repo_key,

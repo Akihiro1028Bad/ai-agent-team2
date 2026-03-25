@@ -84,7 +84,7 @@ class GitHubPoller:
                     )
             await asyncio.sleep(self._interval_sec)
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         """ポーリングループを停止する."""
         self._running = False
 

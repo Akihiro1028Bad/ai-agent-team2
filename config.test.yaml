@@ -21,4 +21,4 @@ timeouts:
   phase_timeout_sec: 600
 
 slack:
-  webhook_url: ""
+  webhook_url: "https://hooks.slack.com/services/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"
