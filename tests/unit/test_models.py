@@ -8,22 +8,21 @@ from unittest.mock import MagicMock
 import pytest
 
 from ai_agent_orchestrator.models import (
+    PHASE_CONFIG,
+    VALID_TRANSITIONS,
     AgentResult,
     ApprovalMethod,
     ErrorCategory,
     EventType,
     IssueState,
     IssueType,
-    PHASE_CONFIG,
     Phase,
     PhaseConfig,
     PhaseContext,
     PhaseResult,
     PollEvent,
     TaskRequest,
-    VALID_TRANSITIONS,
 )
-
 
 # ---------------------------------------------------------------------------
 # TC-M01: Phase Enum 値の完全性

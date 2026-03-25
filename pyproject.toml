@@ -113,7 +113,13 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
     "S101",    # assert is fine in tests
+    "S105",    # hardcoded password (false positive in test assertions)
+    "S106",    # hardcoded password in function args (false positive in test fixtures)
+    "S108",    # insecure temp file (test data only)
     "ANN",     # don't require annotations in tests
+    "RUF002",  # ambiguous unicode in docstrings (Japanese parentheses)
+    "RUF003",  # ambiguous unicode in comments (Japanese parentheses)
+    "SIM117",  # nested with statements (pytest.raises + patch)
 ]
 
 [tool.ruff.lint.isort]

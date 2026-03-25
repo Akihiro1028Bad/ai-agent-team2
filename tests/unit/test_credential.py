@@ -69,11 +69,10 @@ async def test_resolve_fallback_to_gh_cli(resolver: CredentialResolver) -> None:
     """全て失敗した場合、gh auth tokenにフォールバックすること."""
     config = AccountConfig(name="minimal")  # token_env, token_command 未設定
 
-    with patch("keyring.get_password", return_value=None):
-        with patch.object(
-            resolver, "_resolve_command", return_value="ghp_from_gh_cli"
-        ) as mock_cmd:
-            token = await resolver.resolve(config)
+    with patch("keyring.get_password", return_value=None), patch.object(
+        resolver, "_resolve_command", return_value="ghp_from_gh_cli"
+    ) as mock_cmd:
+        token = await resolver.resolve(config)
 
     assert token == "ghp_from_gh_cli"
     mock_cmd.assert_called_once_with("gh auth token")
