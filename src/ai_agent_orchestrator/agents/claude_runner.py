@@ -82,7 +82,7 @@ _SUBAGENTS: list[SubAgentDefinition] = [CODE_ANALYZER, TEST_WRITER]
 PHASE_CONFIG: dict[str, PhaseConfig] = {
     "type_detection": PhaseConfig(max_budget_usd=0.3, timeout_sec=120, permission_mode="plan"),
     "hearing": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
-    "analysis": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"),
+    "analysis": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="default"),
     "plan_brief": PhaseConfig(max_budget_usd=1.0, timeout_sec=300, permission_mode="plan"),
     "design": PhaseConfig(max_budget_usd=3.0, timeout_sec=1800, permission_mode="plan"),
     "design_revise": PhaseConfig(
@@ -192,9 +192,18 @@ class ClaudeAgentRunner:
             )
 
         # Build options
+        # max_turns: plan モードは 3, 実装系は 30, その他は 10
+        if cfg.permission_mode == "plan":
+            max_turns = 3
+        elif phase in _IMPL_PHASES:
+            max_turns = 30
+        else:
+            max_turns = 10
+
         options = ClaudeCodeOptions(
             cwd=cwd,
             permission_mode=cfg.permission_mode,  # type: ignore[arg-type]
+            max_turns=max_turns,
             hooks=hooks,
         )
         if append_prompt:

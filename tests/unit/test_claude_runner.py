@@ -335,7 +335,7 @@ def test_phase_config_has_all_phases() -> None:
         assert isinstance(config, PhaseConfig)
         assert config.max_budget_usd > 0
         assert config.timeout_sec > 0
-        assert config.permission_mode in ("plan", "acceptEdits", "bypassPermissions")
+        assert config.permission_mode in ("plan", "default", "acceptEdits", "bypassPermissions")
 
 
 # ---------------------------------------------------------------------------
