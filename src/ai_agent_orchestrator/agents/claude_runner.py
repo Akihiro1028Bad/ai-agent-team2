@@ -237,7 +237,16 @@ class ClaudeAgentRunner:
         """query() を実行してメッセージを収集し AgentResult を返す."""
         start = time.monotonic()
 
-        messages: list[Message] = [msg async for msg in query(prompt=prompt, options=options)]
+        messages: list[Message] = []
+        try:
+            async for msg in query(prompt=prompt, options=options):
+                messages.append(msg)  # noqa: PERF401
+        except Exception as e:
+            # rate_limit_event など未知のメッセージタイプはスキップ
+            if "Unknown message type" in str(e):
+                pass
+            else:
+                raise
 
         elapsed = time.monotonic() - start
 
