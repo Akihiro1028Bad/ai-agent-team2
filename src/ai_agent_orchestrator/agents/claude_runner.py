@@ -238,25 +238,85 @@ class ClaudeAgentRunner:
         start = time.monotonic()
 
         messages: list[Message] = []
-        try:
-            async for msg in query(prompt=prompt, options=options):
-                messages.append(msg)  # noqa: PERF401
-        except Exception as e:
-            # rate_limit_event など未知のメッセージタイプはスキップ
-            if "Unknown message type" in str(e):
-                pass
-            else:
-                raise
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async for msg in query(prompt=prompt, options=options):
+                    messages.append(msg)
+                    logger.debug(
+                        "SDK message: type=%s, has_content=%s",
+                        type(msg).__name__,
+                        hasattr(msg, "content"),
+                    )
+                break  # 正常完了
+            except Exception as e:
+                if "Unknown message type" in str(e):
+                    logger.warning(
+                        "Unknown message type on attempt %d/%d (collected %d messages): %s",
+                        attempt + 1,
+                        max_retries,
+                        len(messages),
+                        e,
+                    )
+                    # TextBlock が収集済みならリトライ不要
+                    has_text = any(
+                        isinstance(m, AssistantMessage) and any(isinstance(b, TextBlock) for b in m.content)
+                        for m in messages
+                    )
+                    if has_text:
+                        logger.info("TextBlock found, proceeding without retry")
+                        break
+                    # TextBlock 未到達 -> リトライ
+                    if attempt < max_retries - 1:
+                        wait = 5.0 * (attempt + 1)
+                        logger.info("No TextBlock yet, retrying in %.0fs...", wait)
+                        await asyncio.sleep(wait)
+                        messages.clear()
+                    else:
+                        logger.error("Max retries reached with no TextBlock")
+                else:
+                    raise
 
         elapsed = time.monotonic() - start
+        logger.info(
+            "SDK query complete: %d messages collected in %.1fs",
+            len(messages),
+            elapsed,
+        )
 
-        return self._parse_messages(
+        result = self._parse_messages(
             messages,
             elapsed=elapsed,
             budget=budget,
             subagents=subagents,
             phase=phase,
         )
+
+        # ResultMessage が欠落した場合のフォールバック
+        if not result.output and not result.session_id:
+            logger.warning(
+                "SDK returned no output and no session_id. Messages: %s",
+                [type(m).__name__ for m in messages],
+            )
+
+        # AssistantMessage のテキストがなく ResultMessage にテキストがある場合
+        if not result.output:
+            for msg in messages:
+                if isinstance(msg, ResultMessage) and msg.result:
+                    logger.info(
+                        "Falling back to ResultMessage.result (len=%d)",
+                        len(msg.result),
+                    )
+                    result = AgentResult(
+                        session_id=result.session_id,
+                        output=msg.result,
+                        tool_uses=result.tool_uses,
+                        cost_usd=result.cost_usd,
+                        duration_sec=result.duration_sec,
+                    )
+                    break
+
+        return result
 
     def _build_hooks(self) -> dict[HookEvent, list[HookMatcher]]:
         """PreToolUse / PostToolUse フックを構成する."""
