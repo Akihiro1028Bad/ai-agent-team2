@@ -70,7 +70,7 @@ TEST_WRITER = SubAgentDefinition(
     instructions=("既存テストのパターンに従い、ユニットテストと統合テストを作成する。"),
 )
 
-_IMPL_PHASES = frozenset({"implement", "fix", "ci_fix", "impl_revise"})
+_IMPL_PHASES = frozenset({"implement", "fix", "ci-fix", "impl-revise"})
 
 _SUBAGENTS: list[SubAgentDefinition] = [CODE_ANALYZER, TEST_WRITER]
 
@@ -80,23 +80,24 @@ _SUBAGENTS: list[SubAgentDefinition] = [CODE_ANALYZER, TEST_WRITER]
 # ---------------------------------------------------------------------------
 
 PHASE_CONFIG: dict[str, PhaseConfig] = {
-    "type_detection": PhaseConfig(max_budget_usd=0.3, timeout_sec=120, permission_mode="plan"),
+    # キーは Phase enum の .value と一致させる (ハイフン区切り)
+    "type-detection": PhaseConfig(max_budget_usd=0.3, timeout_sec=120, permission_mode="plan"),
     "hearing": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
-    "analysis": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="default"),
-    "plan_brief": PhaseConfig(max_budget_usd=1.0, timeout_sec=300, permission_mode="plan"),
+    "analysis": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="bypassPermissions"),
+    "plan-brief": PhaseConfig(max_budget_usd=1.0, timeout_sec=300, permission_mode="plan"),
     "design": PhaseConfig(max_budget_usd=3.0, timeout_sec=1800, permission_mode="plan"),
-    "design_revise": PhaseConfig(
+    "design-revise": PhaseConfig(
         max_budget_usd=2.0,
         timeout_sec=1200,
         permission_mode="bypassPermissions",
         resume=True,
     ),
     "planning": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
-    "split_proposal": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"),
+    "split-proposal": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"),
     "implement": PhaseConfig(max_budget_usd=10.0, timeout_sec=3600, permission_mode="bypassPermissions"),
     "fix": PhaseConfig(max_budget_usd=5.0, timeout_sec=1800, permission_mode="bypassPermissions"),
-    "ci_fix": PhaseConfig(max_budget_usd=3.0, timeout_sec=1200, permission_mode="bypassPermissions"),
-    "impl_revise": PhaseConfig(
+    "ci-fix": PhaseConfig(max_budget_usd=3.0, timeout_sec=1200, permission_mode="bypassPermissions"),
+    "impl-revise": PhaseConfig(
         max_budget_usd=5.0,
         timeout_sec=1800,
         permission_mode="bypassPermissions",

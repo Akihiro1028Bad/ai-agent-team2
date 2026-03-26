@@ -207,7 +207,7 @@ async def test_run_multiturn_resume(runner: ClaudeAgentRunner) -> None:
     result = await runner.run(
         prompt="レビュー指摘に対応してください",
         cwd="/tmp/worktree/issue-42",
-        phase="impl_revise",
+        phase="impl-revise",
         resume_session_id="sess-impl-001",
     )
 
@@ -360,18 +360,18 @@ async def test_interrupt_ignores_unknown_session(runner: ClaudeAgentRunner) -> N
 def test_phase_config_has_all_phases() -> None:
     """PHASE_CONFIG に全 12 フェーズが定義されている."""
     expected_phases = {
-        "type_detection",
+        "type-detection",
         "hearing",
         "analysis",
-        "plan_brief",
+        "plan-brief",
         "design",
-        "design_revise",
+        "design-revise",
         "planning",
-        "split_proposal",
+        "split-proposal",
         "implement",
         "fix",
-        "ci_fix",
-        "impl_revise",
+        "ci-fix",
+        "impl-revise",
     }
     assert set(PHASE_CONFIG.keys()) == expected_phases
 
@@ -403,10 +403,8 @@ async def test_run_hooks_are_configured(
     assert len(captured) == 1
     opts = captured[0]["options"]
     hooks = opts.hooks
-    assert "PreToolUse" in hooks
-    assert "PostToolUse" in hooks
-    assert len(hooks["PreToolUse"]) == 1
-    assert len(hooks["PostToolUse"]) == 1
+    # hooks は SDK バグ (#730: Stream closed) のため無効化済み
+    assert hooks == {}
 
 
 # ---------------------------------------------------------------------------
@@ -492,7 +490,7 @@ async def test_run_unknown_phase_uses_defaults(
 
 def test_impl_phases_set() -> None:
     """_IMPL_PHASES が正しい実装フェーズを含む."""
-    assert {"implement", "fix", "ci_fix", "impl_revise"} == _IMPL_PHASES
+    assert {"implement", "fix", "ci-fix", "impl-revise"} == _IMPL_PHASES
 
 
 # ---------------------------------------------------------------------------

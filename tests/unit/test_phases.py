@@ -648,7 +648,8 @@ class TestFixExecutor:
         mock_tracker.track.assert_any_call(
             "fix_complete",
             issue_number=1,
-            note="CI結果待ち",
+            phase="fix",
+            data={"note": "CI結果待ち"},
         )
         # PR number should be recorded
         state = mock_sm.get_state(1)

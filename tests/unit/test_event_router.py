@@ -20,7 +20,9 @@ def mock_sm() -> AsyncMock:
     """StateMachineManager のモック."""
     sm = AsyncMock()
     sm.register_issue = MagicMock()
+    sm.get_phase = MagicMock(return_value="plan-review")  # 同期メソッド
     sm.get_issue_type = MagicMock(return_value="bug")
+    sm.set_issue_type = MagicMock()  # 同期メソッド
     sm.get_ci_retry_count = AsyncMock(return_value=0)
     return sm
 
