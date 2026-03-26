@@ -347,7 +347,9 @@ class StateMachineManager:
             updated_at=now,
         )
         self._states[issue_number] = state
-        self._workflows[issue_number] = IssueWorkflow()
+        self._workflows[issue_number] = IssueWorkflow(
+            start_value=self._phase_to_state_id(initial_phase),
+        )
         self._auto_save()
 
     async def transition(

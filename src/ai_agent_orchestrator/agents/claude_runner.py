@@ -173,8 +173,8 @@ class ClaudeAgentRunner:
         budget = max_budget_usd if max_budget_usd is not None else cfg.max_budget_usd
         effective_timeout = timeout_sec if timeout_sec > 0 else cfg.timeout_sec
 
-        # Build hooks
-        hooks = self._build_hooks()
+        # Build hooks (disabled: hook callbacks cause Stream closed errors in SDK)
+        hooks: dict[str, list[HookMatcher]] = {}
 
         # Build subagent instructions for implementation phases
         subagents: list[SubAgentDefinition] = []
@@ -197,6 +197,17 @@ class ClaudeAgentRunner:
             permission_mode=cfg.permission_mode,  # type: ignore[arg-type]
             hooks=hooks,
         )
+        # 実装系フェーズでは allowed_tools を明示的に設定
+        if cfg.permission_mode == "bypassPermissions":
+            options.allowed_tools = [
+                "Read",
+                "Write",
+                "Edit",
+                "Glob",
+                "Grep",
+                "Bash",
+                "TodoWrite",
+            ]
         if append_prompt:
             options.system_prompt = append_prompt
 
@@ -267,7 +278,7 @@ class ClaudeAgentRunner:
                         break
 
                     if attempt < max_retries - 1:
-                        wait = 30.0 * (2**attempt)  # 30s, 60s exponential backoff
+                        wait = 60.0 * (2**attempt)  # 60s, 120s exponential backoff
                         logger.warning(
                             "rate_limit_event on attempt %d/%d (collected %d messages total). Retrying in %.0fs...",
                             attempt + 1,
