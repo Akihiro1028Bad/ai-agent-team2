@@ -62,7 +62,14 @@ class ImplementExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
-        pr_number = self._extract_pr_number(result.output)
+        # PR番号を確実に取得 (エージェント出力 → 既存PR検索 → API作成)
+        pr_number = await self._ensure_pr_created(
+            request,
+            result.output,
+            branch_prefix="feature",
+            title_prefix="feat: ",
+        )
+
         state = self._sm.get_state(request.issue_number)
         if state:
             state.pr_number = pr_number
@@ -72,7 +79,7 @@ class ImplementExecutor(PhaseExecutor):
         await client.replace_phase_label(request.repo, request.issue_number, "phase:impl-review")
         await self._sm.transition(request.issue_number, "impl-review")
         await self._notifier.notify(
-            f"Issue #{request.issue_number} の実装PRを作成しました",
+            f"Issue #{request.issue_number} の実装PR #{pr_number} を作成しました",
             metadata={
                 "issue": request.issue_number,
                 "pr": pr_number,

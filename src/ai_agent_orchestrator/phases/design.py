@@ -71,7 +71,14 @@ class DesignExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
-        pr_number = self._extract_pr_number(result.output)
+        # PR番号を確実に取得 (エージェント出力 → 既存PR検索 → API作成)
+        pr_number = await self._ensure_pr_created(
+            request,
+            result.output,
+            branch_prefix="design",
+            title_prefix="docs: ",
+        )
+
         state = self._sm.get_state(request.issue_number)
         if state:
             state.design_pr_number = pr_number
@@ -81,7 +88,7 @@ class DesignExecutor(PhaseExecutor):
         await client.replace_phase_label(request.repo, request.issue_number, "phase:design-review")
         await self._sm.transition(request.issue_number, "design-review")
         await self._notifier.notify(
-            f"Issue #{request.issue_number} の設計PRを作成しました。レビューをお願いします",
+            f"Issue #{request.issue_number} の設計PR #{pr_number} を作成しました。レビューをお願いします",
             metadata={
                 "issue": request.issue_number,
                 "pr": pr_number,

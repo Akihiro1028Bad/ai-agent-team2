@@ -644,12 +644,12 @@ class TestFixExecutor:
 
         # transition to impl-review should be called
         mock_sm.transition.assert_called_with(1, "impl-review")
-        # tracker should record fix_complete
+        # tracker should record fix_complete with pr_number
         mock_tracker.track.assert_any_call(
             "fix_complete",
             issue_number=1,
             phase="fix",
-            data={"note": "impl-review に遷移"},
+            data={"note": "impl-review に遷移", "pr_number": 7},
         )
         # PR number should be recorded
         state = mock_sm.get_state(1)
@@ -1008,6 +1008,186 @@ class TestPhaseDispatcher:
         await dispatcher.execute(request)
 
         mock_executor.execute.assert_called_once_with(request)
+
+
+# ---------------------------------------------------------------------------
+# _ensure_pr_created fallback tests
+# ---------------------------------------------------------------------------
+
+
+class TestEnsurePrCreated:
+    """_ensure_pr_created フォールバック機能のテスト。"""
+
+    async def test_fix_fallback_finds_existing_pr(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """エージェント出力にPR番号がなくても既存PRを検索して取得する。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="修正を完了しました",  # PR番号なし
+            tool_uses=[],
+            cost_usd=2.0,
+            duration_sec=60.0,
+        )
+        # 既存PRを返す
+        existing_pr = MagicMock()
+        existing_pr.number = 99
+        mock_github.list_pull_requests.return_value = [existing_pr]
+
+        from ai_agent_orchestrator.phases.fix import FixExecutor
+
+        executor = FixExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="fix")
+        await executor.execute(request)
+
+        # 既存PRが見つかるのでimpl-reviewに遷移
+        mock_sm.transition.assert_called_with(1, "impl-review")
+        state = mock_sm.get_state(1)
+        assert state.pr_number == 99
+
+    async def test_implement_fallback_creates_pr_via_api(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """エージェント出力にもPR検索にもなければAPIでPR作成する。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="実装を完了しました",  # PR番号なし
+            tool_uses=[],
+            cost_usd=3.0,
+            duration_sec=120.0,
+        )
+        # 既存PRなし
+        mock_github.list_pull_requests.return_value = []
+        # API作成が成功
+        created_pr = MagicMock()
+        created_pr.number = 101
+        mock_github.create_pull_request.return_value = created_pr
+
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
+
+        executor = ImplementExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="implement")
+        request.repo.base_branch = "main"
+        await executor.execute(request)
+
+        # APIでPR作成 → impl-reviewに遷移
+        mock_github.create_pull_request.assert_called_once()
+        mock_sm.transition.assert_called_with(1, "impl-review")
+        state = mock_sm.get_state(1)
+        assert state.pr_number == 101
+
+    async def test_design_fallback_creates_pr_via_api(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """設計フェーズでもフォールバックPR作成が動作する。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="設計書を作成しました",  # PR番号なし
+            tool_uses=[],
+            cost_usd=1.0,
+            duration_sec=60.0,
+        )
+        mock_github.list_pull_requests.return_value = []
+        created_pr = MagicMock()
+        created_pr.number = 55
+        mock_github.create_pull_request.return_value = created_pr
+
+        from ai_agent_orchestrator.phases.design import DesignExecutor
+
+        executor = DesignExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="design")
+        request.repo.base_branch = "main"
+        await executor.execute(request)
+
+        mock_github.create_pull_request.assert_called_once()
+        mock_sm.transition.assert_called_with(1, "design-review")
+        state = mock_sm.get_state(1)
+        assert state.design_pr_number == 55
+
+    async def test_fallback_failure_transitions_to_suspended(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """全フォールバックが失敗するとSUSPENDEDに遷移する。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="完了",  # PR番号なし
+            tool_uses=[],
+            cost_usd=2.0,
+            duration_sec=60.0,
+        )
+        # 全て失敗
+        mock_github.list_pull_requests.side_effect = Exception("API error")
+        mock_github.create_pull_request.side_effect = Exception("Create failed")
+
+        from ai_agent_orchestrator.phases.fix import FixExecutor
+
+        executor = FixExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="fix")
+        await executor.execute(request)
+
+        # RuntimeError → _handle_error → suspended
+        mock_sm.transition.assert_called_with(1, "suspended")
+        mock_notifier.notify.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

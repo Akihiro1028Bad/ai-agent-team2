@@ -77,6 +77,26 @@ class GitHubClientProtocol:
         """Merge a pull request."""
         ...  # pragma: no cover
 
+    async def create_pull_request(
+        self,
+        repo: object,
+        title: str,
+        body: str,
+        head: str,
+        base: str | None = None,
+    ) -> object:
+        """Create a pull request."""
+        raise NotImplementedError  # pragma: no cover
+
+    async def list_pull_requests(
+        self,
+        repo: object,
+        state: str = "open",
+        head: str | None = None,
+    ) -> list[object]:
+        """List pull requests."""
+        return []  # pragma: no cover
+
 
 class NotifierProtocol:
     """Minimal notifier protocol."""
@@ -340,6 +360,110 @@ class PhaseExecutor(ABC):
     # ------------------------------------------------------------------
     # Utility helpers
     # ------------------------------------------------------------------
+
+    async def _ensure_pr_created(
+        self,
+        request: TaskRequest,
+        agent_output: str,
+        *,
+        branch_prefix: str = "feature",
+        title_prefix: str = "",
+    ) -> int:
+        """エージェント出力からPR番号を取得し、無ければAPI経由で作成する。
+
+        フォールバック手順:
+        1. エージェント出力からPR番号を正規表現で抽出
+        2. 失敗: ブランチ名で GitHub API から既存PRを検索
+        3. 失敗: GitHub API で新規PR作成
+
+        Args:
+            request: タスクリクエスト。
+            agent_output: エージェントの出力テキスト。
+            branch_prefix: worktreeブランチのプレフィックス。
+            title_prefix: PRタイトルのプレフィックス (例: "fix:", "feat:")。
+
+        Returns:
+            PR 番号。
+
+        Raises:
+            RuntimeError: PR作成に失敗した場合。
+        """
+        client = await self._get_client(request.repo)
+
+        # Step 1: エージェント出力からPR番号を抽出
+        pr_number = self._extract_pr_number(agent_output)
+        if pr_number is not None:
+            logger.info("PR #%d extracted from agent output for issue #%d", pr_number, request.issue_number)
+            return pr_number
+
+        logger.warning(
+            "PR number not found in agent output for issue #%d, attempting fallback",
+            request.issue_number,
+        )
+
+        # Step 2: ブランチ名で既存PRを検索
+        branch_name = f"{branch_prefix}/issue-{request.issue_number}"
+        owner = getattr(request.repo, "owner", "")
+        head_filter = f"{owner}:{branch_name}"
+        try:
+            existing_prs = await client.list_pull_requests(
+                request.repo,
+                state="open",
+                head=head_filter,
+            )
+            if existing_prs:
+                found_pr = getattr(existing_prs[0], "number", None)
+                if found_pr is not None:
+                    logger.info(
+                        "Found existing PR #%d for branch %s (issue #%d)",
+                        found_pr,
+                        branch_name,
+                        request.issue_number,
+                    )
+                    return int(found_pr)
+        except Exception:
+            logger.warning("Failed to search existing PRs for issue #%d", request.issue_number)
+
+        # Step 3: GitHub API で新規PR作成
+        try:
+            issue = await client.get_issue(request.repo, request.issue_number)
+            title = f"{title_prefix}#{request.issue_number} {issue.title}".strip()
+            body = (
+                f"Closes #{request.issue_number}\n\n"
+                f"## 概要\n"
+                f"Issue #{request.issue_number} に対する自動生成PRです。\n"
+            )
+            base_branch = getattr(request.repo, "base_branch", "main")
+
+            # pushされているか確認するためPR作成を試行
+            pr = await client.create_pull_request(
+                request.repo,
+                title=title,
+                body=body,
+                head=branch_name,
+                base=base_branch,
+            )
+            created_number = getattr(pr, "number", None)
+            if created_number is not None:
+                logger.info(
+                    "Created fallback PR #%d for issue #%d",
+                    created_number,
+                    request.issue_number,
+                )
+                return int(created_number)
+        except Exception as exc:
+            logger.error(
+                "Failed to create fallback PR for issue #%d: %s",
+                request.issue_number,
+                exc,
+            )
+
+        msg = (
+            f"Issue #{request.issue_number}: PR作成に失敗しました。"
+            f"エージェント出力にPR番号がなく、ブランチ '{branch_name}' の"
+            f"PRも見つからず、API経由のPR作成も失敗しました。"
+        )
+        raise RuntimeError(msg)
 
     @staticmethod
     def _extract_json(text: str) -> dict[str, Any] | None:
