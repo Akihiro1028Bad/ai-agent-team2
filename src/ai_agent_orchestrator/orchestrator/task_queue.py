@@ -231,7 +231,7 @@ class TaskQueue:
                     repo_key,
                     request.issue_number,
                 )
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(5)
                 self._seq += 1
                 await self._queue.put((request.priority, self._seq, request))
                 self._queued_issues.add(request.issue_number)

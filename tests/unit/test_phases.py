@@ -610,7 +610,7 @@ class TestImplementExecutor:
 class TestFixExecutor:
     """FixExecutor tests."""
 
-    async def test_does_not_transition_to_impl_review(
+    async def test_transitions_to_impl_review(
         self,
         mock_runner: AsyncMock,
         mock_github: AsyncMock,
@@ -620,7 +620,7 @@ class TestFixExecutor:
         mock_context: AsyncMock,
         mock_sm: AsyncMock,
     ) -> None:
-        """FixExecutor は IMPL_REVIEW に遷移しない。CI結果を待つ。"""
+        """FixExecutor は修正完了後 IMPL_REVIEW に遷移する。"""
         mock_runner.run.return_value = AgentResult(
             session_id="s1",
             output="修正PR #7 を作成しました",
@@ -642,14 +642,14 @@ class TestFixExecutor:
         request = _make_request(phase="fix")
         await executor.execute(request)
 
-        # transition should NOT be called (except tracker calls)
-        mock_sm.transition.assert_not_called()
+        # transition to impl-review should be called
+        mock_sm.transition.assert_called_with(1, "impl-review")
         # tracker should record fix_complete
         mock_tracker.track.assert_any_call(
             "fix_complete",
             issue_number=1,
             phase="fix",
-            data={"note": "CI結果待ち"},
+            data={"note": "impl-review に遷移"},
         )
         # PR number should be recorded
         state = mock_sm.get_state(1)

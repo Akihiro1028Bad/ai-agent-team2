@@ -33,15 +33,37 @@ class EventRouter:
         self,
         state_machine: StateMachineManager,
         task_queue: TaskQueue,
+        account_manager: object | None = None,
     ) -> None:
         """EventRouter を初期化する.
 
         Args:
             state_machine: ステートマシンマネージャ.
             task_queue: タスクキュー.
+            account_manager: AccountManager (GitHub ラベル更新用、省略可).
         """
         self._sm = state_machine
         self._tq = task_queue
+        self._account_manager = account_manager
+
+    async def _get_client(self, repo: object) -> object | None:
+        """リポジトリに対応する GitHubClient を取得する (省略可能).
+
+        account_manager が設定されていない場合は None を返す。
+
+        Args:
+            repo: リポジトリ設定オブジェクト.
+
+        Returns:
+            GitHubClient または None.
+        """
+        if self._account_manager is None:
+            return None
+        if hasattr(self._account_manager, "get_client_for_repo"):
+            owner = getattr(repo, "owner", "")
+            repo_name = getattr(repo, "repo", "")
+            return await self._account_manager.get_client_for_repo(owner, repo_name)
+        return None
 
     async def route(self, event: PollEvent) -> None:
         """イベントを処理し、適切な遷移とエンキューを行う.
@@ -175,14 +197,31 @@ class EventRouter:
         )
 
     async def _handle_hearing_reply(self, event: PollEvent) -> None:
-        """ヒアリング回答: hearing_continue をエンキュー (遷移なし)."""
+        """ヒアリング回答: HEARING フェーズを再開 (SUSPENDED なら復帰)."""
         assert event.comment is not None
         issue_number = int(str(event.comment.issue_url).split("/")[-1])
+
+        # 現在のフェーズを確認
+        try:
+            current_phase = self._sm.get_phase(issue_number)
+        except KeyError:
+            logger.warning("Issue #%d is not registered, skipping hearing reply", issue_number)
+            return
+
+        # SUSPENDED なら HEARING に復帰してからエンキュー
+        if current_phase == Phase.SUSPENDED:
+            await self._sm.transition(issue_number, Phase.HEARING)
+            logger.info("Issue #%d resumed from SUSPENDED to HEARING", issue_number)
+        elif current_phase != Phase.HEARING:
+            # HEARING 以外のフェーズ (例: DESIGN) なら hearing reply は無視
+            logger.info("Issue #%d is in phase %s, ignoring hearing reply", issue_number, current_phase)
+            return
+
         await self._tq.enqueue(
             TaskRequest(
                 issue_number=issue_number,
                 repo=event.repo,
-                phase="hearing_continue",
+                phase=Phase.HEARING.value,
                 priority=Priority.HIGH,
                 extra={"comment": event.comment.body},
             )
@@ -192,6 +231,12 @@ class EventRouter:
         """ヒアリングタイムアウト: SUSPENDED に遷移."""
         assert event.issue is not None
         await self._sm.transition(event.issue.number, Phase.SUSPENDED)
+        try:
+            client = await self._get_client(event.repo)
+            if client:
+                await client.replace_phase_label(event.repo, event.issue.number, "phase:suspended")
+        except Exception:
+            logger.warning("Failed to update phase label to suspended for issue #%d", event.issue.number)
 
     async def _handle_plan_reaction(self, event: PollEvent) -> None:
         """方針承認 (thumbsup リアクション): タイプ別に次フェーズへ遷移.
@@ -220,10 +265,34 @@ class EventRouter:
 
         Bug       -> ANALYSIS (再分析)
         Feature-S -> PLAN_BRIEF (方針再作成)
+
+        既に ANALYSIS / PLAN_BRIEF にいる場合は遷移をスキップする (重複防止)。
         """
         assert event.issue is not None
+        # 現在のフェーズを確認し、既に修正フェーズにいる場合はスキップ
+        try:
+            current_phase = self._sm.get_phase(event.issue.number)
+        except KeyError:
+            logger.warning("Issue #%d is not registered, skipping plan comment", event.issue.number)
+            return
+
         issue_type = self._sm.get_issue_type(event.issue.number)
         next_phase = Phase.ANALYSIS if issue_type == "bug" else Phase.PLAN_BRIEF
+
+        if current_phase == next_phase:
+            logger.info(
+                "Issue #%d already in %s, skipping duplicate plan comment",
+                event.issue.number,
+                next_phase.value,
+            )
+            return
+        if current_phase != Phase.PLAN_REVIEW:
+            logger.info(
+                "Issue #%d is in %s (not plan-review), ignoring plan comment",
+                event.issue.number,
+                current_phase.value,
+            )
+            return
 
         await self._sm.transition(event.issue.number, next_phase)
         await self._tq.enqueue(
@@ -322,6 +391,12 @@ class EventRouter:
                 )
             else:
                 await self._sm.transition(event.issue.number, Phase.SUSPENDED)
+                try:
+                    client = await self._get_client(event.repo)
+                    if client:
+                        await client.replace_phase_label(event.repo, event.issue.number, "phase:suspended")
+                except Exception:
+                    logger.warning("Failed to update phase label to suspended for issue #%d", event.issue.number)
         elif ci_status == "success":
             await self._sm.transition(event.issue.number, Phase.IMPL_REVIEW)
             # IMPL_REVIEW はポーリングで PR approve/comment を待つため、エンキュー不要

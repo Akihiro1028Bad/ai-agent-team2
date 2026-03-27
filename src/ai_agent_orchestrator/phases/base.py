@@ -301,6 +301,11 @@ class PhaseExecutor(ABC):
             await self._runner.interrupt(state.session_id)
 
         await self._sm.transition(request.issue_number, "suspended")
+        try:
+            client = await self._get_client(request.repo)
+            await client.replace_phase_label(request.repo, request.issue_number, "phase:suspended")
+        except Exception:
+            logger.warning("Failed to update phase label to suspended for issue #%d", request.issue_number)
         await self._notifier.notify(
             f"Issue #{request.issue_number} がタイムアウトしました (phase: {request.phase})",
             level="error",
@@ -314,6 +319,10 @@ class PhaseExecutor(ABC):
         """エラー処理: SUSPENDED 遷移 + Issue コメント + 通知。"""
         await self._sm.transition(request.issue_number, "suspended")
         client = await self._get_client(request.repo)
+        try:
+            await client.replace_phase_label(request.repo, request.issue_number, "phase:suspended")
+        except Exception:
+            logger.warning("Failed to update phase label to suspended for issue #%d", request.issue_number)
         await client.create_comment(
             request.repo,
             request.issue_number,
