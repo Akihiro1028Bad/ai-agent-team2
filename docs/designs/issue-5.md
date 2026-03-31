@@ -969,43 +969,233 @@ await self._notifier.notify(
 4. ヘルスチェック失敗メッセージを日本語化
 5. Issue受付通知を追加
 
-### ステップ6: テスト更新
+### ステップ6: テスト更新（カバレッジ率100%目標）
 1. `test_slack.py` - リッチフォーマットのテスト追加
-   - TC-SL-14: notification_type 別絵文字テスト
-   - TC-SL-15: Header ブロックが含まれることのテスト
-   - TC-SL-16: Fields ブロック（コスト・所要時間）テスト
-   - TC-SL-17: next_action セクションテスト
-   - TC-SL-18: error_detail + error_analysis テスト
-   - TC-SL-19: issue_title がメインテキストに含まれるテスト
-   - TC-SL-20: _resolve_emoji の優先度テスト
-   - TC-SL-21: _build_fields のテスト
-   - TC-SL-22: metadata なしの後方互換テスト
-2. `test_phases.py` - フェーズ開始通知が送信されることのテスト追加
+   - TC-SL-14: notification_type 別絵文字テスト（全19タイプ網羅）
+   - TC-SL-15: Header ブロックが含まれることのテスト（header あり/なし）
+   - TC-SL-16: Fields ブロック（phase のみ / duration_sec のみ / cost_usd のみ / 全組み合わせ / 空）
+   - TC-SL-17: next_action セクションテスト（あり/なし、divider の有無）
+   - TC-SL-18: error_detail + error_analysis テスト（両方あり / error_detail のみ / error_analysis のみ / 両方なし）
+   - TC-SL-19: issue_title がメインテキストに含まれるテスト（あり/なし）
+   - TC-SL-20: _resolve_emoji の優先度テスト（notification_type 優先 / level フォールバック / 両方未指定時デフォルト）
+   - TC-SL-21: _build_fields のテスト（duration_sec の分秒変換: 0秒 / 59秒 / 60秒 / 複数分）
+   - TC-SL-22: metadata なしの後方互換テスト（metadata=None / metadata={} / notification_type 未指定）
+   - TC-SL-23: _build_context_text テスト（repo のみ / repo+issue / repo+issue+pr / 全なし）
+   - TC-SL-24: channel 解決テスト（明示指定 / デフォルト / 両方 None）
+   - TC-SL-25: 全通知カテゴリのペイロード構造検証（ユーザーアクション要求系 / 情報通知系 / エラー系）
+   - TC-SL-26: _NOTIFICATION_TYPE_EMOJI に未登録のタイプが渡された場合の fallback テスト
+2. `test_phases.py` - フェーズ通知のテスト追加（カバレッジ100%）
+   - TC-PH-01: フェーズ開始通知が送信されることのテスト（metadata の全キー検証）
+   - TC-PH-02: フェーズ開始通知で `_get_issue_title()` が失敗した場合に空文字列で通知が送信されること
+   - TC-PH-03: `_get_repo_str()` テスト（owner/repo 正常 / owner 欠落 / repo 欠落 / 両方欠落）
+   - TC-PH-04: `_get_issue_title()` テスト（正常取得 / 例外発生時に空文字列）
+   - TC-PH-05: `_analyze_error()` テスト（遷移エラー / 認証エラー / Git エラー / タイムアウト / PR エラー / レート制限 / 不明エラー）
+   - TC-PH-06: `_handle_error()` テスト（リッチ通知の metadata 全キー検証、スタックトレース切り詰め検証）
+   - TC-PH-07: `_handle_error()` でスタックトレースが1500文字超の場合に切り詰めされること
+   - TC-PH-08: `_handle_timeout()` テスト（リッチ通知の metadata 全キー検証）
+   - TC-PH-09: `_handle_timeout()` でセッションIDがある場合に interrupt が呼ばれること
+   - TC-PH-10: `_handle_timeout()` でセッションIDがない場合に interrupt が呼ばれないこと
+   - TC-PH-11: `_handle_error()` でラベル更新失敗時もログ出力して通知が継続されること
+   - TC-PH-12: `_handle_timeout()` でラベル更新失敗時もログ出力して通知が継続されること
+3. `test_orchestrator.py` - オーケストレーター通知のテスト追加（カバレッジ100%）
+   - TC-OR-01: 起動通知が日本語で送信されること（metadata の notification_type, repos, header 検証）
+   - TC-OR-02: イベントルーティングエラー通知のテスト（metadata の notification_type, header, error_detail 検証）
+   - TC-OR-03: Issue中断通知のテスト（metadata の notification_type, repo, issue, header, error_detail 検証）
+   - TC-OR-04: ヘルスチェック失敗通知のテスト（metadata の notification_type, header, error_detail 検証）
+   - TC-OR-05: Issue受付通知のテスト（metadata の notification_type, repo, issue, issue_title, header 検証）
+4. `test_phase_notifications.py` - 各フェーズの通知メッセージ検証（カバレッジ100%）
+   - TC-PN-01〜10: 各フェーズ（hearing, analysis, plan_brief, design, design_revise, implement, fix, impl_revise, split, done）の `process_result()` で正しい notification_type, メッセージ, next_action, header, repo, issue_title, cost_usd, duration_sec が設定されること
+   - TC-PN-11: split フェーズの分割提案時と分割完了時で異なる notification_type が使われること
+   - TC-PN-12: done フェーズで連鎖Issue開始時に issue_chain タイプが使われること
 
 ### ステップ7: 仕様書更新
 1. `docs/specs/slack.md` を新フォーマットに合わせて更新
 
 ---
 
-## 7. テスト方針
+## 7. テスト方針（カバレッジ率100%目標）
 
-### 7.1 ユニットテスト
+本改修では、変更対象のすべてのメソッド・分岐・パスに対してテストを作成し、**カバレッジ率100%**を目指す。
 
-- **SlackNotifier**: `_build_payload()` の出力を JSON 構造で検証
-- **PhaseExecutor**: フェーズ開始通知が `_notifier.notify()` に正しい引数で渡されることを検証
-- **_analyze_error()**: 各エラーパターンに対する原因分析結果を検証
-- **_resolve_emoji()**: notification_type 優先、level フォールバックの動作を検証
-- **_build_fields()**: phase, duration_sec, cost_usd の各パターンを検証
+### 7.1 カバレッジ対象と戦略
 
-### 7.2 後方互換テスト
+| 対象ファイル | テストファイル | カバレッジ目標 | 戦略 |
+|------------|-------------|-------------|------|
+| `notifications/slack.py` | `test_slack.py` | 100% | 全メソッド・全分岐を網羅。既存TC-SL-01〜13 + 新規TC-SL-14〜26 |
+| `phases/base.py` | `test_phases.py` | 100% | 新規メソッド3つ + 改修メソッド3つの全分岐。TC-PH-01〜12 |
+| `orchestrator/orchestrator.py` | `test_orchestrator.py` | 100% | 全通知箇所5箇所の metadata 検証。TC-OR-01〜05 |
+| 各フェーズファイル（10ファイル） | `test_phase_notifications.py` | 100% | 各フェーズの process_result() 内 notify 呼び出し検証。TC-PN-01〜12 |
+| `models.py` | `test_models.py` | 100% | NotificationType Enum の全メンバーが正しい値を持つことを検証 |
 
-- metadata が空/None の場合に既存と同等の出力になることを検証
-- `notification_type` 未指定時に `level` ベースの絵文字にフォールバックすることを検証
-- 既存の13テストケース（TC-SL-01〜TC-SL-13）が引き続きパスすることを確認
+### 7.2 SlackNotifier テスト詳細（test_slack.py）
 
-### 7.3 統合テスト
+#### 7.2.1 `_resolve_emoji()` の全分岐テスト
+
+| TC | 入力 | 期待値 | カバレッジ |
+|----|------|--------|-----------|
+| TC-SL-20a | notification_type="system_start", level="info" | `:rocket:` | notification_type 優先パス |
+| TC-SL-20b | notification_type="", level="error" | `:x:` | level フォールバックパス |
+| TC-SL-20c | notification_type=None, level="info" | `:information_source:` | notification_type が falsy パス |
+| TC-SL-20d | notification_type="unknown_type", level="info" | `:information_source:` | 未登録タイプのフォールバック |
+| TC-SL-20e | notification_type="", level="unknown" | `:robot_face:` | level も未登録時のデフォルト |
+
+#### 7.2.2 `_build_fields()` の全分岐テスト
+
+| TC | 入力metadata | 期待値 | カバレッジ |
+|----|-------------|--------|-----------|
+| TC-SL-21a | `{"phase": "design"}` | fields に phase のみ | phase のみ分岐 |
+| TC-SL-21b | `{"duration_sec": 45}` | `"45秒"` | 60秒未満（分なし）分岐 |
+| TC-SL-21c | `{"duration_sec": 204}` | `"3分24秒"` | 60秒以上（分あり）分岐 |
+| TC-SL-21d | `{"duration_sec": 60}` | `"1分0秒"` | ちょうど60秒の境界値 |
+| TC-SL-21e | `{"cost_usd": 1.5}` | `"$1.50"` | cost_usd のみ分岐 |
+| TC-SL-21f | `{"phase": "design", "duration_sec": 204, "cost_usd": 1.23}` | 3フィールド | 全フィールド分岐 |
+| TC-SL-21g | `{}` | 空リスト | フィールドなし分岐 |
+| TC-SL-21h | `{"duration_sec": 0}` | `"0秒"` | duration_sec が0（None ではない）分岐 |
+| TC-SL-21i | `{"cost_usd": 0.0}` | `"$0.00"` | cost_usd が0（None ではない）分岐 |
+
+#### 7.2.3 `_build_payload()` の全分岐テスト
+
+| TC | 条件 | 検証内容 | カバレッジ |
+|----|------|---------|-----------|
+| TC-SL-14 | 全19種の notification_type | 各タイプに対応する絵文字がメインテキストに含まれる | 絵文字マッピング全網羅 |
+| TC-SL-15a | header あり | Header ブロックが blocks[0] に含まれる | header 分岐 true |
+| TC-SL-15b | header なし | Header ブロックが含まれない | header 分岐 false |
+| TC-SL-16 | fields 構成パターン | fields セクションの有無と内容 | fields 分岐 |
+| TC-SL-17a | next_action あり | divider + next_action セクションが含まれる | next_action 分岐 true |
+| TC-SL-17b | next_action なし | divider も next_action も含まれない | next_action 分岐 false |
+| TC-SL-18a | error_detail + error_analysis 両方あり | 両セクション含まれる | エラー分岐 both |
+| TC-SL-18b | error_detail のみ | error_detail セクションのみ | エラー分岐 detail only |
+| TC-SL-18c | error_analysis のみ | error_analysis セクションのみ | エラー分岐 analysis only |
+| TC-SL-18d | 両方なし | エラーセクションなし | エラー分岐 none |
+| TC-SL-19a | issue_title あり | メインテキストに `*Issueタイトル*:` が含まれる | issue_title 分岐 true |
+| TC-SL-19b | issue_title なし | メインテキストに `*Issueタイトル*:` が含まれない | issue_title 分岐 false |
+| TC-SL-22a | metadata=None | section + 絵文字のみのシンプル構成 | 後方互換 null |
+| TC-SL-22b | metadata={} | section + 絵文字のみのシンプル構成 | 後方互換 empty |
+| TC-SL-23a | repo のみ | context に repo 表示 | context repo only |
+| TC-SL-23b | repo + issue | context に repo と issue リンク | context repo+issue |
+| TC-SL-23c | repo + issue + pr | context に repo, issue, PR リンク | context 全表示 |
+| TC-SL-23d | 全なし | context ブロックなし | context なし |
+| TC-SL-24a | channel 明示指定 | payload に指定 channel | channel 明示 |
+| TC-SL-24b | channel=None, デフォルトあり | payload にデフォルト channel | channel デフォルト |
+| TC-SL-24c | channel=None, デフォルト=None | payload に channel なし | channel なし |
+| TC-SL-25a | ユーザーアクション要求系フルセット | header + main + fields + divider + next_action + context | カテゴリA全体 |
+| TC-SL-25b | 情報通知系フルセット | main + fields + context（header なし） | カテゴリB全体 |
+| TC-SL-25c | エラー系フルセット | header + main + error_detail + error_analysis + fields + context | カテゴリC全体 |
+
+### 7.3 base.py テスト詳細（test_phases.py）
+
+#### 7.3.1 `_get_repo_str()` の全分岐テスト
+
+| TC | 入力 | 期待値 | カバレッジ |
+|----|------|--------|-----------|
+| TC-PH-03a | owner="org", repo="repo" | `"org/repo"` | 正常パス |
+| TC-PH-03b | owner="", repo="repo" | `""` | owner 欠落 |
+| TC-PH-03c | owner="org", repo="" | `""` | repo 欠落 |
+| TC-PH-03d | owner="", repo="" | `""` | 両方欠落 |
+| TC-PH-03e | owner 属性なし | `""` | getattr フォールバック |
+
+#### 7.3.2 `_get_issue_title()` の全分岐テスト
+
+| TC | 条件 | 期待値 | カバレッジ |
+|----|------|--------|-----------|
+| TC-PH-04a | API正常応答 | Issueタイトル文字列 | 正常パス |
+| TC-PH-04b | API例外発生 | `""` | except パス + logger.warning 呼び出し |
+
+#### 7.3.3 `_analyze_error()` の全分岐テスト
+
+| TC | エラーメッセージ | 期待マッチ | カバレッジ |
+|----|---------------|-----------|-----------|
+| TC-PH-05a | `"No transition defined"` | 遷移定義不足 + 再遷移 | 遷移エラー分岐 |
+| TC-PH-05b | `"transition failed"` | 遷移定義不足 + 再遷移 | 遷移エラー分岐（lower） |
+| TC-PH-05c | `"HTTP 401 Unauthorized"` | トークン期限切れ + credential確認 | 認証エラー 401 |
+| TC-PH-05d | `"HTTP 403 Forbidden"` | トークン期限切れ + credential確認 | 認証エラー 403 |
+| TC-PH-05e | `"auth token invalid"` | トークン期限切れ + credential確認 | 認証エラー auth |
+| TC-PH-05f | `"git push failed"` | Git競合 + worktree | Git 分岐 |
+| TC-PH-05g | `"merge conflict detected"` | Git競合 + worktree | conflict 分岐 |
+| TC-PH-05h | `"operation timeout"` | 制限時間超過 + PHASE_CONFIG | タイムアウト分岐 |
+| TC-PH-05i | `"PR creation failed"` | PR失敗 + ブランチpush | PR 分岐 |
+| TC-PH-05j | `"pull request not found"` | PR失敗 + ブランチpush | pull request 分岐 |
+| TC-PH-05k | `"rate limit exceeded"` | レート制限 + リトライ | レート制限分岐 |
+| TC-PH-05l | `"HTTP 429"` | レート制限 + リトライ | 429 分岐 |
+| TC-PH-05m | `"unexpected error xyz"` | 予期しないエラー + フェーズ情報 | デフォルト分岐 |
+
+#### 7.3.4 `_handle_error()` の全分岐テスト
+
+| TC | 条件 | 検証内容 | カバレッジ |
+|----|------|---------|-----------|
+| TC-PH-06a | 正常系 | suspended 遷移 + コメント + notify の metadata 全キー | メインパス |
+| TC-PH-06b | ラベル更新失敗 | logger.warning + 処理継続 | except 分岐 |
+| TC-PH-07a | スタックトレース 1500文字以下 | 切り詰めなし | len <= 1500 分岐 |
+| TC-PH-07b | スタックトレース 1500文字超 | `"... (truncated)"` 付加 | len > 1500 分岐 |
+
+#### 7.3.5 `_handle_timeout()` の全分岐テスト
+
+| TC | 条件 | 検証内容 | カバレッジ |
+|----|------|---------|-----------|
+| TC-PH-08 | 正常系 | suspended 遷移 + notify の metadata 全キー | メインパス |
+| TC-PH-09 | session_id あり | `_runner.interrupt()` が呼ばれる | session_id 分岐 true |
+| TC-PH-10 | session_id なし | `_runner.interrupt()` が呼ばれない | session_id 分岐 false |
+| TC-PH-12 | ラベル更新失敗 | logger.warning + 処理継続 | except 分岐 |
+
+#### 7.3.6 `execute()` フェーズ開始通知テスト
+
+| TC | 条件 | 検証内容 | カバレッジ |
+|----|------|---------|-----------|
+| TC-PH-01 | 正常実行 | notify に notification_type="phase_start", repo, issue, issue_title, phase が渡される | 開始通知パス |
+| TC-PH-02 | _get_issue_title() 失敗 | issue_title="" で通知が送信される | 例外時フォールバック |
+
+### 7.4 オーケストレーター テスト詳細（test_orchestrator.py）
+
+| TC | 通知箇所 | 検証内容 |
+|----|---------|---------|
+| TC-OR-01 | 起動通知 | メッセージが日本語、notification_type="system_start"、repos リスト、header |
+| TC-OR-02 | イベントルーティングエラー | メッセージが日本語、notification_type="event_error"、header、error_detail |
+| TC-OR-03 | Issue中断 | メッセージが日本語、notification_type="error"、repo、issue、header、error_detail |
+| TC-OR-04 | ヘルスチェック失敗 | メッセージが日本語、notification_type="system_health"、header、error_detail |
+| TC-OR-05 | Issue受付 | メッセージが日本語、notification_type="issue_received"、repo、issue、issue_title、header |
+
+### 7.5 各フェーズ通知テスト詳細（test_phase_notifications.py）
+
+各フェーズの `process_result()` 内の `notify()` 呼び出しで、以下の全キーが正しく設定されることを検証する:
+
+| TC | フェーズ | 検証する metadata キー |
+|----|---------|---------------------|
+| TC-PN-01 | hearing | notification_type, repo, issue, issue_title, phase, cost_usd, duration_sec, header, next_action |
+| TC-PN-02 | analysis | notification_type, repo, issue, issue_title, phase, cost_usd, duration_sec, header, next_action |
+| TC-PN-03 | plan_brief | notification_type, repo, issue, issue_title, phase, cost_usd, duration_sec, header, next_action |
+| TC-PN-04 | design | notification_type, repo, issue, issue_title, pr, pr_url, phase, cost_usd, duration_sec, header, next_action |
+| TC-PN-05 | design_revise | notification_type, repo, issue, issue_title, phase, cost_usd, duration_sec, header, next_action |
+| TC-PN-06 | implement | notification_type, repo, issue, issue_title, pr, pr_url, phase, cost_usd, duration_sec, header, next_action |
+| TC-PN-07 | fix | notification_type, repo, issue, issue_title, pr, pr_url, phase, cost_usd, duration_sec, header, next_action |
+| TC-PN-08 | impl_revise | notification_type, repo, issue, issue_title, phase, cost_usd, duration_sec, header, next_action |
+| TC-PN-09 | split（提案） | notification_type, repo, issue, issue_title, phase, cost_usd, duration_sec, header, next_action |
+| TC-PN-10 | split（完了） | notification_type, repo, issue, issue_title, phase, header |
+| TC-PN-11 | done | notification_type, repo, issue, issue_title, phase, header |
+| TC-PN-12 | done（連鎖） | notification_type="issue_chain", repo, issue, issue_title |
+
+### 7.6 models.py テスト（test_models.py）
+
+| TC | 検証内容 |
+|----|---------|
+| TC-MD-01 | NotificationType の全メンバー数が19であること |
+| TC-MD-02 | 各メンバーの値が文字列として正しいこと（StrEnum の動作検証） |
+| TC-MD-03 | NotificationType が StrEnum を継承していること |
+
+### 7.7 後方互換テスト
+
+- 既存の13テストケース（TC-SL-01〜TC-SL-13）が**すべてそのままパス**することを確認
+- 新テストは既存テストとは独立して追加（既存テストの修正は最小限に留める）
+
+### 7.8 統合テスト
 
 - 実際の Slack Webhook にテストメッセージを送信し、表示を目視確認（手動）
+- 全3カテゴリ（ユーザーアクション要求系・情報通知系・エラー系）のレイアウトを確認
+
+### 7.9 カバレッジ計測
+
+- `pytest --cov=notifications --cov=phases --cov=orchestrator --cov-report=term-missing` で計測
+- カバレッジ率100%未達の場合は、未カバーの行を特定し追加テストを作成
+- CI パイプラインに `--cov-fail-under=100` を設定し、カバレッジ低下を防止
 
 ---
 
