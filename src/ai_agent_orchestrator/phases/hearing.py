@@ -34,7 +34,6 @@ class HearingExecutor(PhaseExecutor):
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
-            branch_prefix="design",
         )
         context = await self._context.build_context(
             str(worktree),
