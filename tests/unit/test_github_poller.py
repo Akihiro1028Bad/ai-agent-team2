@@ -515,7 +515,7 @@ class TestDetectSplitEvents:
         issue = _make_issue(number=5, labels=["ai-agent", "phase:split-proposal"])
         client.get_issues_with_label = AsyncMock(return_value=[issue])
 
-        bot_comment = _make_comment(comment_id=200, body="分割提案", user_type="Bot")
+        bot_comment = _make_comment(comment_id=200, body="<!-- ai-agent-bot -->分割提案", user_type="Bot")
         client.list_comments = AsyncMock(return_value=[bot_comment])
 
         thumbsup = _make_reaction(content="+1")

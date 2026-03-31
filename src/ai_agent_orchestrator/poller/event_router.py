@@ -92,6 +92,9 @@ class EventRouter:
             event.issue.number if event.issue else "N/A",
         )
 
+        # 検知したイベントに👀リアクションを付ける
+        await self._add_eyes_reaction(event)
+
         match event.type:
             case EventType.NEW_ISSUE:
                 await self._handle_new_issue(event)
@@ -119,6 +122,29 @@ class EventRouter:
                 await self._handle_split_modified(event)
             case _:
                 logger.warning("Unknown event type: %s", event.type)
+
+    # ------------------------------------------------------------------
+    # Reaction helper
+    # ------------------------------------------------------------------
+
+    async def _add_eyes_reaction(self, event: PollEvent) -> None:
+        """検知したイベントに👀リアクションを付ける."""
+        try:
+            client = await self._get_client(event.repo)
+            if client is None:
+                return
+            if event.comment is not None:
+                await client.add_comment_reaction(
+                    event.repo, event.comment.id, "eyes",
+                )
+            elif event.issue is not None:
+                await client.add_issue_reaction(
+                    event.repo, event.issue.number, "eyes",
+                )
+        except Exception:
+            logger.debug(
+                "Failed to add reaction for event %s", event.type, exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # Recovery helper

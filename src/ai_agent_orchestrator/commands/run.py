@@ -94,6 +94,7 @@ async def _start_foreground(config_path: str) -> None:
         account_manager=orchestrator.account_manager,
         repos=settings.repositories,
         interval_sec=settings.polling_interval_sec,
+        approve_comment=settings.approve_comment,
     )
     router = EventRouter(
         state_machine=orchestrator.state_machine,

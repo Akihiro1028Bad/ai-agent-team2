@@ -81,19 +81,19 @@ _SUBAGENTS: list[SubAgentDefinition] = [CODE_ANALYZER, TEST_WRITER]
 
 PHASE_CONFIG: dict[str, PhaseConfig] = {
     # キーは Phase enum の .value と一致させる (ハイフン区切り)
-    "type-detection": PhaseConfig(max_budget_usd=0.3, timeout_sec=120, permission_mode="plan"),
-    "hearing": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
+    "type-detection": PhaseConfig(max_budget_usd=0.3, timeout_sec=120, permission_mode="bypassPermissions"),
+    "hearing": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="bypassPermissions"),
     "analysis": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="bypassPermissions"),
-    "plan-brief": PhaseConfig(max_budget_usd=1.0, timeout_sec=300, permission_mode="plan"),
-    "design": PhaseConfig(max_budget_usd=3.0, timeout_sec=1800, permission_mode="plan"),
+    "plan-brief": PhaseConfig(max_budget_usd=1.0, timeout_sec=300, permission_mode="bypassPermissions"),
+    "design": PhaseConfig(max_budget_usd=3.0, timeout_sec=1800, permission_mode="bypassPermissions"),
     "design-revise": PhaseConfig(
         max_budget_usd=2.0,
         timeout_sec=1200,
         permission_mode="bypassPermissions",
         resume=True,
     ),
-    "planning": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
-    "split-proposal": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"),
+    "planning": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="bypassPermissions"),
+    "split-proposal": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="bypassPermissions"),
     "implement": PhaseConfig(max_budget_usd=10.0, timeout_sec=3600, permission_mode="bypassPermissions"),
     "fix": PhaseConfig(max_budget_usd=5.0, timeout_sec=1800, permission_mode="bypassPermissions"),
     "ci-fix": PhaseConfig(max_budget_usd=3.0, timeout_sec=1200, permission_mode="bypassPermissions"),
@@ -105,7 +105,7 @@ PHASE_CONFIG: dict[str, PhaseConfig] = {
     ),
 }
 
-_DEFAULT_PHASE_CONFIG = PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan")
+_DEFAULT_PHASE_CONFIG = PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="bypassPermissions")
 
 
 # ---------------------------------------------------------------------------

@@ -43,6 +43,7 @@ class GitHubPoller:
         repos: list[RepositoryConfig],
         interval_sec: int = 120,
         hearing_timeout_hours: int = 24,
+        approve_comment: str = "LGTM",
     ) -> None:
         """GitHubPoller を初期化する.
 
@@ -51,11 +52,13 @@ class GitHubPoller:
             repos: 監視対象リポジトリのリスト.
             interval_sec: ポーリング間隔 (秒). デフォルト: 120.
             hearing_timeout_hours: ヒアリングタイムアウト (時間). デフォルト: 24.
+            approve_comment: コメントによる承認の完全一致文字列. デフォルト: "LGTM".
         """
         self._account_manager = account_manager
         self._repos = repos
         self._interval_sec = interval_sec
         self._hearing_timeout_hours = hearing_timeout_hours
+        self._approve_comment = approve_comment
         self._last_poll: dict[str, datetime] = {}
         self._running = False
         # BUG #1: Track seen issue numbers to avoid re-detecting as "new"
@@ -437,7 +440,8 @@ class GitHubPoller:
         for issue in issues:
             comments = await client.list_comments(repo, issue.number)
             for comment in comments:
-                if comment.user and comment.user.type == "Bot":
+                body = comment.body or ""
+                if _is_bot_comment(body):
                     # BUG #3: Skip already-processed reactions
                     reaction_key = (issue.number, comment.id)
                     if reaction_key in self._seen_reactions:
@@ -456,9 +460,15 @@ class GitHubPoller:
                         break
 
             # 人間のコメント (修正指示) を確認
+            # 最後の Bot コメント以降の人間コメントのみを対象とする
+            last_bot_time = max(
+                (c.created_at for c in comments if _is_bot_comment(c.body or "")),
+                default=None,
+            )
             human_comments = [
                 c for c in comments
-                if not _is_bot_comment(c.body or "") and (since is None or c.created_at > since)
+                if not _is_bot_comment(c.body or "")
+                and (last_bot_time is None or c.created_at > last_bot_time)
             ]
             for hc in human_comments:
                 # BUG #4: Deduplicate split modified events
@@ -503,11 +513,16 @@ class GitHubPoller:
     ) -> list[dict[str, str]]:
         """PR のレビュー状態を取得する.
 
+        PR レビュー (Approve/Changes Requested) に加え、
+        PR の一般コメントに approve_comment と完全一致するものがあれば承認とみなす。
+        承認が1つでもあれば承認のみ返す（コメントと承認の混在による遷移競合を防止）。
+
         Returns:
             {"state": "approved"|"commented", "body": "review body"} のリスト.
         """
         prs = await client.list_pull_requests(repo)
-        results: list[dict[str, str]] = []
+        approved: list[dict[str, str]] = []
+        commented: list[dict[str, str]] = []
         for pr in prs:
             issue_ref = f"#{issue.number}"
             pr_body = getattr(pr, "body", "") or ""
@@ -518,10 +533,20 @@ class GitHubPoller:
                     state = review.get("state", "")
                     body = review.get("body", "") or ""
                     if state == "APPROVED":
-                        results.append({"state": "approved", "body": body})
+                        approved.append({"state": "approved", "body": body})
                     elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and body):
-                        results.append({"state": "commented", "body": body})
-        return results
+                        commented.append({"state": "commented", "body": body})
+                # コメントによる承認: PR の一般コメントを確認
+                pr_comments = await client.list_comments(repo, pr.number)
+                for comment in pr_comments:
+                    body = comment.body or ""
+                    if _is_bot_comment(body):
+                        continue
+                    if body.strip() == self._approve_comment:
+                        approved.append({"state": "approved", "body": body})
+                        break
+        # 承認があればコメントは無視（遷移競合を防止）
+        return approved if approved else commented
 
     async def _check_ci_status(
         self,

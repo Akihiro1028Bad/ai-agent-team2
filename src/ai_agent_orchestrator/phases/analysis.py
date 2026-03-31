@@ -63,12 +63,15 @@ class AnalysisExecutor(PhaseExecutor):
         if state:
             state.session_id = result.session_id
 
+        from ai_agent_orchestrator.phases.base import next_action_footer
+
         client = await self._get_client(request.repo)
         comment_body = (
             result.output.strip()
             if result.output.strip()
             else ("AI分析を実行しましたが、出力が空でした。再実行が必要です。")
         )
+        comment_body += next_action_footer("analysis")
         await client.create_comment(request.repo, request.issue_number, comment_body)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:plan-review")
         await self._sm.transition(request.issue_number, "plan-review")

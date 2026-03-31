@@ -15,6 +15,43 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Next action footer for bot comments
+# ---------------------------------------------------------------------------
+
+_NEXT_ACTION: dict[str, str] = {
+    "type-detection": "",
+    "hearing": "📝 **次のアクション**: このコメントに**コメントで回答**してください",
+    "analysis": "👍 **次のアクション**: この方針でよければ**コメントに👍リアクション**、修正があれば**コメントで指摘**してください",
+    "plan-brief": "👍 **次のアクション**: この方針でよければ**コメントに👍リアクション**、修正があれば**コメントで指摘**してください",
+    "design": "",
+    "design-review": "",
+    "design-revise": "📋 **次のアクション**: 設計PRで**再レビュー**をお願いします",
+    "planning": "",
+    "implement": "",
+    "impl-review": "",
+    "impl-revise": "📋 **次のアクション**: 実装PRで**再レビュー**をお願いします",
+    "ci-fix": "",
+    "split-proposal": "👍 **次のアクション**: この分割案でよければ**コメントに👍リアクション**、修正があれば**コメントで修正指示**してください",
+    "split-execute": "",
+    "done": "",
+}
+
+
+def next_action_footer(phase: str) -> str:
+    """フェーズに応じた次アクションフッターを返す.
+
+    Args:
+        phase: フェーズ名.
+
+    Returns:
+        フッター文字列。該当なしの場合は空文字列。
+    """
+    action = _NEXT_ACTION.get(phase, "")
+    if not action:
+        return ""
+    return f"\n\n---\n{action}"
+
 
 # ---------------------------------------------------------------------------
 # Protocol stubs for dependencies (avoid circular imports)

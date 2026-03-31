@@ -849,7 +849,7 @@ class TestDoneExecutor:
         mock_context: AsyncMock,
         mock_sm: AsyncMock,
     ) -> None:
-        """PR マージ、Issue クローズ、worktree 削除が全て実行される。"""
+        """Issue クローズ、worktree 削除が実行される（マージはしない）。"""
         mock_sm.get_state.return_value = MagicMock(pr_number=42)
         from ai_agent_orchestrator.phases.done import DoneExecutor
 
@@ -865,7 +865,7 @@ class TestDoneExecutor:
         request = _make_request(phase="done")
         await executor.execute(request)
 
-        mock_github.merge_pull_request.assert_called_once()
+        mock_github.merge_pull_request.assert_not_called()
         mock_github.close_issue.assert_called_once()
         mock_workspace.remove_worktree.assert_called_once()
 
