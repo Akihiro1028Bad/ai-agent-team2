@@ -86,6 +86,9 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
     (Phase.HEARING, Phase.SPLIT_PROPOSAL): "hearing_to_split_proposal",
     (Phase.HEARING, Phase.ANALYSIS): "hearing_to_analysis",
     (Phase.HEARING, Phase.SUSPENDED): "hearing_to_suspended",
+    (Phase.HEARING, Phase.HEARING_WAIT): "hearing_to_hearing_wait",
+    (Phase.HEARING_WAIT, Phase.HEARING): "hearing_wait_to_hearing",
+    (Phase.HEARING_WAIT, Phase.SUSPENDED): "hearing_wait_to_suspended",
     # Feature-M workflow
     (Phase.DESIGN, Phase.DESIGN_REVIEW): "design_to_design_review",
     (Phase.DESIGN, Phase.SUSPENDED): "design_to_suspended",
@@ -192,6 +195,12 @@ class IssueWorkflow(StateMachine):
     hearing_to_split_proposal = hearing.to(split_proposal, cond="is_feature_l")
     hearing_to_analysis = hearing.to(analysis, cond="is_bug")
     hearing_to_suspended = hearing.to(suspended)
+
+    # --- HEARING_WAIT (waiting for user reply) ---
+    hearing_wait = State("Hearing wait")
+    hearing_to_hearing_wait = hearing.to(hearing_wait)
+    hearing_wait_to_hearing = hearing_wait.to(hearing)
+    hearing_wait_to_suspended = hearing_wait.to(suspended)
 
     # --- Feature-M workflow ---
     design_to_design_review = design.to(design_review)

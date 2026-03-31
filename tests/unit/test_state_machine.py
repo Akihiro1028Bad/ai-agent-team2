@@ -584,3 +584,39 @@ class TestTrackerIntegration:
             phase="analysis",
             data={"from": "type-detection", "to": "analysis"},
         )
+
+
+# ---------------------------------------------------------------------------
+# HEARING_WAIT workflow
+# ---------------------------------------------------------------------------
+
+
+class TestHearingWaitWorkflow:
+    """hearing-wait フェーズの遷移テスト."""
+
+    @pytest.fixture
+    def sm(self, mock_persistence, mock_tracker):
+        return StateMachineManager(persistence=mock_persistence, tracker=mock_tracker)
+
+    async def test_hearing_to_hearing_wait(self, sm):
+        sm.register_issue(1, "owner/repo")
+        sm.set_issue_type(1, "feature-m")
+        await sm.transition(1, Phase.HEARING)
+        await sm.transition(1, Phase.HEARING_WAIT)
+        assert sm.get_phase(1) == Phase.HEARING_WAIT
+
+    async def test_hearing_wait_to_hearing(self, sm):
+        sm.register_issue(1, "owner/repo")
+        sm.set_issue_type(1, "feature-m")
+        await sm.transition(1, Phase.HEARING)
+        await sm.transition(1, Phase.HEARING_WAIT)
+        await sm.transition(1, Phase.HEARING)
+        assert sm.get_phase(1) == Phase.HEARING
+
+    async def test_hearing_wait_to_suspended(self, sm):
+        sm.register_issue(1, "owner/repo")
+        sm.set_issue_type(1, "feature-m")
+        await sm.transition(1, Phase.HEARING)
+        await sm.transition(1, Phase.HEARING_WAIT)
+        await sm.transition(1, Phase.SUSPENDED)
+        assert sm.get_phase(1) == Phase.SUSPENDED

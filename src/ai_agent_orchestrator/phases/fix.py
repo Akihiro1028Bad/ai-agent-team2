@@ -18,9 +18,8 @@ class FixExecutor(PhaseExecutor):
 
     承認された修正方針に基づいてバグを修正し、テストを作成して PR を作成する。
 
-    重要: process_result() は IMPL_REVIEW に遷移しない。
-    CI 結果を Poller が検知し、EventRouter が CI_PASSED なら IMPL_REVIEW に、
-    CI_FAILED なら CI_FIX に遷移する。
+    process_result() は IMPL_REVIEW に遷移し、state.json を更新する。
+    これにより再起動時の再実行を防止する。
     """
 
     async def build_prompt(self, request: TaskRequest) -> str:
@@ -66,33 +65,37 @@ class FixExecutor(PhaseExecutor):
         )
 
     async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
-        """修正結果を処理。遷移は行わず CI 結果を待つ。
-
-        FixExecutor は IMPL_REVIEW への遷移を行わない。
-        git push 後に CI が自動実行され、Poller が CI 結果を検知し、
-        EventRouter が適切なフェーズに遷移する。
+        """修正結果を処理し IMPL_REVIEW に遷移する。
 
         Args:
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
-        pr_number = self._extract_pr_number(result.output)
+        # PR番号を確実に取得 (エージェント出力 → 既存PR検索 → API作成)
+        pr_number = await self._ensure_pr_created(
+            request,
+            result.output,
+            branch_prefix="feature",
+            title_prefix="fix: ",
+        )
+
         state = self._sm.get_state(request.issue_number)
         if state:
             state.pr_number = pr_number
             state.session_id = result.session_id
 
-        # CI結果待ちラベルを付与 (遷移は行わない)
+        # IMPL_REVIEW に遷移してラベルを更新
         client = await self._get_client(request.repo)
-        await client.replace_phase_label(request.repo, request.issue_number, "phase:ci-wait")
+        await client.replace_phase_label(request.repo, request.issue_number, "phase:impl-review")
+        await self._sm.transition(request.issue_number, "impl-review")
         await self._tracker.track(
             "fix_complete",
             issue_number=request.issue_number,
             phase="fix",
-            data={"note": "CI結果待ち"},
+            data={"note": "impl-review に遷移", "pr_number": pr_number},
         )
         await self._notifier.notify(
-            f"Issue #{request.issue_number} の修正PRを作成しました。CI結果待ちです",
+            f"Issue #{request.issue_number} の修正PR #{pr_number} を作成しました。レビュー待ちです",
             metadata={
                 "issue": request.issue_number,
                 "pr": pr_number,

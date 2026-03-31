@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_agent_orchestrator.models import EventType, PollEvent
+from ai_agent_orchestrator.models import EventType, Phase, PollEvent
 from ai_agent_orchestrator.orchestrator.task_queue import Priority
 from ai_agent_orchestrator.poller.event_router import EventRouter
 
@@ -369,7 +369,10 @@ class TestEventRouterHearing:
         mock_sm: AsyncMock,
         mock_tq: AsyncMock,
     ) -> None:
-        """ヒアリング回答 -> hearing_continue エンキュー (遷移なし)."""
+        """ヒアリング回答 -> hearing エンキュー (遷移なし)."""
+        from ai_agent_orchestrator.models import Phase
+
+        mock_sm.get_phase.return_value = Phase.HEARING
         comment = MagicMock()
         comment.body = "回答です"
         comment.issue_url = "https://api.github.com/repos/org/app/issues/1"
@@ -381,6 +384,31 @@ class TestEventRouterHearing:
         await router.route(event)
 
         mock_sm.transition.assert_not_called()
+        mock_tq.enqueue.assert_called_once()
+
+    async def test_hearing_reply_resumes_suspended(
+        self,
+        router: EventRouter,
+        mock_sm: AsyncMock,
+        mock_tq: AsyncMock,
+    ) -> None:
+        """SUSPENDED の Issue にヒアリング回答 -> HEARING に復帰してエンキュー."""
+        from ai_agent_orchestrator.models import Phase
+
+        mock_sm.get_phase.return_value = Phase.SUSPENDED
+        comment = MagicMock()
+        comment.body = "回答です"
+        comment.issue_url = "https://api.github.com/repos/org/app/issues/1"
+        event = PollEvent(
+            type=EventType.ISSUE_COMMENT,
+            repo=_make_repo(),
+            comment=comment,
+        )
+        await router.route(event)
+
+        mock_sm.transition.assert_called_once()
+        args = mock_sm.transition.call_args[0]
+        assert args[1] == Phase.HEARING
         mock_tq.enqueue.assert_called_once()
 
 
@@ -406,3 +434,62 @@ class TestEventRouterError:
         await router.route(event)
         mock_sm.transition.assert_not_called()
         mock_tq.enqueue.assert_not_called()
+
+
+class TestEventRouterHearingWait:
+    """hearing-wait フェーズのイベントルーティングテスト."""
+
+    @pytest.fixture
+    def mock_sm(self):
+        sm = MagicMock()
+        sm.transition = AsyncMock()
+        sm.register_issue = MagicMock()
+        sm.get_phase = MagicMock(return_value=Phase.HEARING_WAIT)
+        sm.get_issue_type = MagicMock(return_value="feature-m")
+        sm.set_issue_type = MagicMock()
+        sm.get_ci_retry_count = AsyncMock(return_value=0)
+        return sm
+
+    @pytest.fixture
+    def mock_tq(self):
+        tq = AsyncMock()
+        return tq
+
+    @pytest.fixture
+    def router(self, mock_sm, mock_tq):
+        return EventRouter(state_machine=mock_sm, task_queue=mock_tq)
+
+    async def test_hearing_reply_from_hearing_wait_transitions_to_hearing(self, router, mock_sm, mock_tq):
+        """hearing-wait 中にユーザーコメント → hearing に遷移."""
+        comment = MagicMock()
+        comment.issue_url = "https://api.github.com/repos/o/r/issues/42"
+        comment.body = "回答です"
+        event = PollEvent(
+            type=EventType.ISSUE_COMMENT,
+            repo=_make_repo(),
+            comment=comment,
+        )
+
+        await router.route(event)
+
+        mock_sm.transition.assert_called_once()
+        assert mock_sm.transition.call_args[0][1] == Phase.HEARING
+        mock_tq.enqueue.assert_called_once()
+
+    async def test_hearing_reply_during_hearing_enqueues_without_transition(self, router, mock_sm, mock_tq):
+        """hearing 実行中にユーザーコメント → 遷移せずエンキューのみ."""
+        mock_sm.get_phase.return_value = Phase.HEARING
+
+        comment = MagicMock()
+        comment.issue_url = "https://api.github.com/repos/o/r/issues/42"
+        comment.body = "回答です"
+        event = PollEvent(
+            type=EventType.ISSUE_COMMENT,
+            repo=_make_repo(),
+            comment=comment,
+        )
+
+        await router.route(event)
+
+        mock_sm.transition.assert_not_called()
+        mock_tq.enqueue.assert_called_once()

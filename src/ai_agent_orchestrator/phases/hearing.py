@@ -34,7 +34,6 @@ class HearingExecutor(PhaseExecutor):
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
-            branch_prefix="design",
         )
         context = await self._context.build_context(
             str(worktree),
@@ -102,12 +101,18 @@ class HearingExecutor(PhaseExecutor):
             await self._sm.transition(request.issue_number, "split-proposal")
         else:
             # 質問を Issue コメントとして投稿
+            from ai_agent_orchestrator.phases.base import next_action_footer
+
             comment_body = (
                 result.output.strip()
                 if result.output.strip()
                 else ("ヒアリングを実行しましたが、出力が空でした。再実行が必要です。")
             )
+            comment_body += next_action_footer("hearing")
             await client.create_comment(request.repo, request.issue_number, comment_body)
+            # hearing-wait へ遷移 (user reply待ち)
+            await client.replace_phase_label(request.repo, request.issue_number, "phase:hearing-wait")
+            await self._sm.transition(request.issue_number, "hearing-wait")
             await self._notifier.notify(
                 f"Issue #{request.issue_number} に質問を投稿しました。回答をお願いします",
                 metadata={

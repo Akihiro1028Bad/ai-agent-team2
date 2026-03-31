@@ -46,6 +46,7 @@ class Phase(str, Enum):  # noqa: UP042
 
     # Feature-M/L共通
     HEARING = "hearing"
+    HEARING_WAIT = "hearing-wait"
     DESIGN = "design"
     DESIGN_REVIEW = "design-review"
     DESIGN_REVISE = "design-revise"

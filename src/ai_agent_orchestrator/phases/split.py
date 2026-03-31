@@ -72,12 +72,15 @@ class SplitProposalExecutor(PhaseExecutor):
         if state:
             state.session_id = result.session_id
 
+        from ai_agent_orchestrator.phases.base import next_action_footer
+
         client = await self._get_client(request.repo)
         comment_body = (
             result.output.strip()
             if result.output.strip()
             else ("分割提案を作成しましたが、出力が空でした。再実行が必要です。")
         )
+        comment_body += next_action_footer("split-proposal")
         await client.create_comment(request.repo, request.issue_number, comment_body)
         # 承認待ち (SPLIT_PROPOSAL フェーズのまま)
         await self._notifier.notify(
@@ -121,10 +124,10 @@ class SplitExecuteExecutor(PhaseExecutor):
             f"{getattr(issue, 'body', '') or ''}\n\n"
             f"## 承認された分割案\n{split_proposal}\n\n"
             f"## 指示\n"
-            f"1. 分割案の各サブタスクについて子Issueを作成\n"
-            f"2. 各子Issueにラベルを付与\n"
+            f"1. 分割案の各サブタスクについて子Issueを作成(依存順に番号付与: (#39-1), (#39-2)...)\n"
+            f"2. **最初のIssue(依存なし)だけに `ai-agent` ラベルを付与**。残りの子Issueにはラベルを付けない\n"
             f"3. 親Issueに分割完了コメントを投稿\n"
-            f"4. 作成した子Issue番号のリストを出力"
+            f"4. 作成した子Issue番号のリストを**依存順(実装順序)**で出力"
         )
 
     async def process_result(self, request: TaskRequest, result: AgentResult) -> None:

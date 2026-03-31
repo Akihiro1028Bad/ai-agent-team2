@@ -263,7 +263,7 @@ class _RealPhaseDispatcherAdapter:
 
         request = ModelsTaskRequest(
             issue_number=issue_number,
-            repo=repo,
+            repo=repo,  # type: ignore[arg-type]
             phase=phase_enum,
         )
         await self._concrete.execute(request)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import urllib.parse
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from githubkit import GitHub, TokenAuthStrategy
 from githubkit.exception import RequestFailed
@@ -87,7 +87,7 @@ class GitHubClient:
             owner=repo.owner,
             repo=repo.repo,
             issue_number=issue_number,
-            data={"body": body},
+            data={"body": f"{body}\n\n<!-- ai-agent-bot -->"},
         )
         return response.parsed_data
 
@@ -142,6 +142,48 @@ class GitHubClient:
             per_page=100,
         )
         return list(response.parsed_data)
+
+    _ReactionContent = Literal["+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"]
+
+    async def add_issue_reaction(
+        self,
+        repo: RepositoryConfig,
+        issue_number: int,
+        reaction: _ReactionContent = "eyes",
+    ) -> None:
+        """Issue にリアクションを追加する.
+
+        Args:
+            repo: リポジトリ設定.
+            issue_number: Issue 番号.
+            reaction: リアクション種別.
+        """
+        await self._github.rest.reactions.async_create_for_issue(
+            repo.owner,
+            repo.repo,
+            issue_number,
+            content=reaction,
+        )
+
+    async def add_comment_reaction(
+        self,
+        repo: RepositoryConfig,
+        comment_id: int,
+        reaction: _ReactionContent = "eyes",
+    ) -> None:
+        """Issue コメントにリアクションを追加する.
+
+        Args:
+            repo: リポジトリ設定.
+            comment_id: コメント ID.
+            reaction: リアクション種別.
+        """
+        await self._github.rest.reactions.async_create_for_issue_comment(
+            repo.owner,
+            repo.repo,
+            comment_id,
+            content=reaction,
+        )
 
     # ── ラベル操作 ──────────────────────────────────────
 

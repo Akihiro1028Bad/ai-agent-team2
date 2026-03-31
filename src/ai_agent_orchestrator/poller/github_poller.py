@@ -22,6 +22,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_BOT_MARKER = "<!-- ai-agent-bot -->"
+
+
+def _is_bot_comment(body: str) -> bool:
+    """AI agent が投稿したコメントかどうかを判定する."""
+    return _BOT_MARKER in body
+
 
 class GitHubPoller:
     """GitHub API をポーリングしてイベントを検知する.
@@ -36,6 +43,7 @@ class GitHubPoller:
         repos: list[RepositoryConfig],
         interval_sec: int = 120,
         hearing_timeout_hours: int = 24,
+        approve_comment: str = "LGTM",
     ) -> None:
         """GitHubPoller を初期化する.
 
@@ -44,11 +52,13 @@ class GitHubPoller:
             repos: 監視対象リポジトリのリスト.
             interval_sec: ポーリング間隔 (秒). デフォルト: 120.
             hearing_timeout_hours: ヒアリングタイムアウト (時間). デフォルト: 24.
+            approve_comment: コメントによる承認の完全一致文字列. デフォルト: "LGTM".
         """
         self._account_manager = account_manager
         self._repos = repos
         self._interval_sec = interval_sec
         self._hearing_timeout_hours = hearing_timeout_hours
+        self._approve_comment = approve_comment
         self._last_poll: dict[str, datetime] = {}
         self._running = False
         # BUG #1: Track seen issue numbers to avoid re-detecting as "new"
@@ -207,18 +217,20 @@ class GitHubPoller:
         条件: phase:hearing ラベル付き Issue に since 以降の人間コメント
         (bot コメントは除外).
         """
-        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing")
+        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing-wait")
         replies: list[IssueComment] = []
         for issue in issues:
             since_str = since.isoformat() if since else None
             comments = await client.list_comments(repo, issue.number, since=since_str)
             for comment in comments:
-                if comment.user and comment.user.type != "Bot":
-                    # BUG #4: Deduplicate hearing reply events
-                    event_key = f"hearing_reply:{issue.number}:{comment.id}"
-                    if event_key not in self._seen_events:
-                        self._seen_events.add(event_key)
-                        replies.append(comment)
+                body = comment.body or ""
+                if _is_bot_comment(body):
+                    continue
+                # BUG #4: Deduplicate hearing reply events
+                event_key = f"hearing_reply:{issue.number}:{comment.id}"
+                if event_key not in self._seen_events:
+                    self._seen_events.add(event_key)
+                    replies.append(comment)
         return replies
 
     async def _detect_hearing_timeouts(
@@ -231,7 +243,7 @@ class GitHubPoller:
         条件: phase:hearing ラベル付き Issue で
               最後のコメントから hearing_timeout_hours 以上経過.
         """
-        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing")
+        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing-wait")
         threshold = datetime.now(UTC) - timedelta(hours=self._hearing_timeout_hours)
         timed_out: list[Issue] = []
         for issue in issues:
@@ -265,7 +277,7 @@ class GitHubPoller:
             for comment in comments:
                 body = comment.body or ""
                 is_bot = comment.user and comment.user.type == "Bot"
-                is_plan_comment = any(body.startswith(marker) for marker in plan_markers)
+                is_plan_comment = any(marker in body for marker in plan_markers)
                 if is_bot or is_plan_comment:
                     # BUG #3: Skip already-processed reactions
                     reaction_key = (issue.number, comment.id)
@@ -301,12 +313,14 @@ class GitHubPoller:
             since_str = since.isoformat()
             comments = await client.list_comments(repo, issue.number, since=since_str)
             for comment in comments:
-                if comment.user and comment.user.type != "Bot":
-                    # BUG #4: Deduplicate plan comment events
-                    event_key = f"plan_comment:{issue.number}:{comment.id}"
-                    if event_key not in self._seen_events:
-                        self._seen_events.add(event_key)
-                        feedback.append((issue, comment))
+                body = comment.body or ""
+                if _is_bot_comment(body):
+                    continue
+                # BUG #4: Deduplicate plan comment events
+                event_key = f"plan_comment:{issue.number}:{comment.id}"
+                if event_key not in self._seen_events:
+                    self._seen_events.add(event_key)
+                    feedback.append((issue, comment))
         return feedback
 
     async def _detect_pr_events(
@@ -337,14 +351,16 @@ class GitHubPoller:
             issues = await client.get_issues_with_label(repo, f"{repo.label},phase:{label_suffix}")
             for issue in issues:
                 pr_reviews = await self._get_pr_reviews(client, repo, issue)
-                for review_event in pr_reviews:
-                    event_type = approved_type if review_event == "approved" else commented_type
+                for review_info in pr_reviews:
+                    review_state = review_info["state"]
+                    review_body = review_info["body"]
+                    event_type = approved_type if review_state == "approved" else commented_type
                     # BUG #4: Deduplicate PR review events
                     event_key = f"pr_review:{event_type}:{issue.number}"
                     if event_key in self._seen_events:
                         continue
                     self._seen_events.add(event_key)
-                    if review_event == "approved":
+                    if review_state == "approved":
                         events.append(
                             PollEvent(
                                 type=approved_type,
@@ -352,13 +368,13 @@ class GitHubPoller:
                                 issue=issue,
                             )
                         )
-                    elif review_event == "commented":
+                    else:
                         events.append(
                             PollEvent(
                                 type=commented_type,
                                 repo=repo,
                                 issue=issue,
-                                extra={"comments": review_event},
+                                extra={"comments": review_body},
                             )
                         )
         return events
@@ -424,7 +440,8 @@ class GitHubPoller:
         for issue in issues:
             comments = await client.list_comments(repo, issue.number)
             for comment in comments:
-                if comment.user and comment.user.type == "Bot":
+                body = comment.body or ""
+                if _is_bot_comment(body):
                     # BUG #3: Skip already-processed reactions
                     reaction_key = (issue.number, comment.id)
                     if reaction_key in self._seen_reactions:
@@ -443,8 +460,15 @@ class GitHubPoller:
                         break
 
             # 人間のコメント (修正指示) を確認
+            # 最後の Bot コメント以降の人間コメントのみを対象とする
+            last_bot_time = max(
+                (c.created_at for c in comments if _is_bot_comment(c.body or "")),
+                default=None,
+            )
             human_comments = [
-                c for c in comments if c.user and c.user.type != "Bot" and (since is None or c.created_at > since)
+                c
+                for c in comments
+                if not _is_bot_comment(c.body or "") and (last_bot_time is None or c.created_at > last_bot_time)
             ]
             for hc in human_comments:
                 # BUG #4: Deduplicate split modified events
@@ -486,14 +510,19 @@ class GitHubPoller:
         client: GitHubClient,
         repo: RepositoryConfig,
         issue: Issue,
-    ) -> list[str]:
+    ) -> list[dict[str, str]]:
         """PR のレビュー状態を取得する.
 
+        PR レビュー (Approve/Changes Requested) に加え、
+        PR の一般コメントに approve_comment と完全一致するものがあれば承認とみなす。
+        承認が1つでもあれば承認のみ返す(コメントと承認の混在による遷移競合を防止)。
+
         Returns:
-            "approved" または "commented" のリスト.
+            {"state": "approved"|"commented", "body": "review body"} のリスト.
         """
         prs = await client.list_pull_requests(repo)
-        results: list[str] = []
+        approved: list[dict[str, str]] = []
+        commented: list[dict[str, str]] = []
         for pr in prs:
             issue_ref = f"#{issue.number}"
             pr_body = getattr(pr, "body", "") or ""
@@ -502,11 +531,22 @@ class GitHubPoller:
                 reviews = await client.get_pr_reviews(repo.owner, repo.repo, pr.number)
                 for review in reviews:
                     state = review.get("state", "")
+                    body = review.get("body", "") or ""
                     if state == "APPROVED":
-                        results.append("approved")
-                    elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and review.get("body")):
-                        results.append("commented")
-        return results
+                        approved.append({"state": "approved", "body": body})
+                    elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and body):
+                        commented.append({"state": "commented", "body": body})
+                # コメントによる承認: PR の一般コメントを確認
+                pr_comments = await client.list_comments(repo, pr.number)
+                for comment in pr_comments:
+                    body = comment.body or ""
+                    if _is_bot_comment(body):
+                        continue
+                    if body.strip() == self._approve_comment:
+                        approved.append({"state": "approved", "body": body})
+                        break
+        # 承認があればコメントは無視(遷移競合を防止)
+        return approved if approved else commented
 
     async def _check_ci_status(
         self,

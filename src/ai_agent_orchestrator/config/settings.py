@@ -106,6 +106,7 @@ class AppSettings(BaseSettings):
     cost_limits: CostLimitsConfig = CostLimitsConfig()
     slack: SlackConfig | None = None
     workspace_dir: str = "~/.ai-agent-workspaces"
+    approve_comment: str = "LGTM"
 
     # Env vars (secrets)
     slack_webhook_url: str | None = Field(default=None, alias="SLACK_WEBHOOK_URL")

@@ -81,19 +81,19 @@ _SUBAGENTS: list[SubAgentDefinition] = [CODE_ANALYZER, TEST_WRITER]
 
 PHASE_CONFIG: dict[str, PhaseConfig] = {
     # キーは Phase enum の .value と一致させる (ハイフン区切り)
-    "type-detection": PhaseConfig(max_budget_usd=0.3, timeout_sec=120, permission_mode="plan"),
-    "hearing": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
+    "type-detection": PhaseConfig(max_budget_usd=0.3, timeout_sec=120, permission_mode="bypassPermissions"),
+    "hearing": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="bypassPermissions"),
     "analysis": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="bypassPermissions"),
-    "plan-brief": PhaseConfig(max_budget_usd=1.0, timeout_sec=300, permission_mode="plan"),
-    "design": PhaseConfig(max_budget_usd=3.0, timeout_sec=1800, permission_mode="plan"),
+    "plan-brief": PhaseConfig(max_budget_usd=1.0, timeout_sec=300, permission_mode="bypassPermissions"),
+    "design": PhaseConfig(max_budget_usd=3.0, timeout_sec=1800, permission_mode="bypassPermissions"),
     "design-revise": PhaseConfig(
         max_budget_usd=2.0,
         timeout_sec=1200,
         permission_mode="bypassPermissions",
         resume=True,
     ),
-    "planning": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
-    "split-proposal": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"),
+    "planning": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="bypassPermissions"),
+    "split-proposal": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="bypassPermissions"),
     "implement": PhaseConfig(max_budget_usd=10.0, timeout_sec=3600, permission_mode="bypassPermissions"),
     "fix": PhaseConfig(max_budget_usd=5.0, timeout_sec=1800, permission_mode="bypassPermissions"),
     "ci-fix": PhaseConfig(max_budget_usd=3.0, timeout_sec=1200, permission_mode="bypassPermissions"),
@@ -105,7 +105,7 @@ PHASE_CONFIG: dict[str, PhaseConfig] = {
     ),
 }
 
-_DEFAULT_PHASE_CONFIG = PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan")
+_DEFAULT_PHASE_CONFIG = PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="bypassPermissions")
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +196,7 @@ class ClaudeAgentRunner:
         options = ClaudeAgentOptions(
             cwd=cwd,
             permission_mode=cfg.permission_mode,  # type: ignore[arg-type]
-            hooks=hooks,
+            hooks=hooks,  # type: ignore[arg-type]
         )
         # 実装系フェーズでは allowed_tools を明示的に設定
         if cfg.permission_mode == "bypassPermissions":
@@ -339,8 +339,8 @@ class ClaudeAgentRunner:
 
     def _build_hooks(self) -> dict[HookEvent, list[HookMatcher]]:
         """PreToolUse / PostToolUse フックを構成する."""
-        pre_hook = HookMatcher(hooks=[self._on_pre_tool_use])
-        post_hook = HookMatcher(hooks=[self._on_post_tool_use])
+        pre_hook = HookMatcher(hooks=[self._on_pre_tool_use])  # type: ignore[list-item]
+        post_hook = HookMatcher(hooks=[self._on_post_tool_use])  # type: ignore[list-item]
         return {
             "PreToolUse": [pre_hook],
             "PostToolUse": [post_hook],

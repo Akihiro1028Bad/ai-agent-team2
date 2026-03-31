@@ -202,12 +202,16 @@ class TestDetectHearingReplies:
         assert result[0].body == "回答です"
 
     async def test_detect_hearing_reply_excludes_bot(self) -> None:
-        """Bot コメントはヒアリング回答として検知されない."""
+        """Bot マーカー付きコメントはヒアリング回答として検知されない."""
         client = _make_client()
-        issue = _make_issue(number=1, labels=["ai-agent", "phase:hearing"])
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:hearing-wait"])
         client.get_issues_with_label = AsyncMock(return_value=[issue])
 
-        bot_comment = _make_comment(comment_id=10, body="bot response", user_type="Bot")
+        bot_comment = _make_comment(
+            comment_id=10,
+            body="bot response\n\n<!-- ai-agent-bot -->",
+            user_type="User",
+        )
         client.list_comments = AsyncMock(return_value=[bot_comment])
 
         repo = _make_repo()
@@ -216,6 +220,28 @@ class TestDetectHearingReplies:
 
         result = await poller._detect_hearing_replies(client, repo, None)
         assert len(result) == 0
+
+    async def test_detect_hearing_replies_watches_hearing_wait_label(self):
+        """hearing-wait ラベルの Issue を監視する."""
+        client = _make_client()
+        comment = _make_comment(101, "回答です", "User", issue_url="https://api.github.com/repos/o/r/issues/42")
+        issue = _make_issue(42, labels=["ai-agent", "phase:hearing-wait"])
+        client.get_issues_with_label = AsyncMock(
+            side_effect=lambda repo, labels, **kw: [issue] if "hearing-wait" in labels else [],
+        )
+        client.list_comments = AsyncMock(return_value=[comment])
+
+        repo = _make_repo()
+        am = _make_account_manager(client)
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
+
+        result = await poller._detect_hearing_replies(client, repo, None)
+        assert len(result) == 1
+
+        # Verify the label used for lookup contains hearing-wait
+        client.get_issues_with_label.assert_called()
+        call_labels = client.get_issues_with_label.call_args[0][1]
+        assert "hearing-wait" in call_labels
 
     async def test_hearing_reply_not_re_detected(self) -> None:
         """BUG #4: 同じヒアリング回答が2回目のポーリングで再検知されない."""
@@ -491,7 +517,7 @@ class TestDetectSplitEvents:
         issue = _make_issue(number=5, labels=["ai-agent", "phase:split-proposal"])
         client.get_issues_with_label = AsyncMock(return_value=[issue])
 
-        bot_comment = _make_comment(comment_id=200, body="分割提案", user_type="Bot")
+        bot_comment = _make_comment(comment_id=200, body="<!-- ai-agent-bot -->分割提案", user_type="Bot")
         client.list_comments = AsyncMock(return_value=[bot_comment])
 
         thumbsup = _make_reaction(content="+1")
