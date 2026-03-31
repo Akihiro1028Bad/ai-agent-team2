@@ -6,6 +6,7 @@ StateMachineManager: 複数 Issue の IssueWorkflow を管理し、永続化・�
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -13,6 +14,8 @@ from statemachine import State, StateMachine
 from statemachine.exceptions import TransitionNotAllowed
 
 from ai_agent_orchestrator.models import IssueState, Phase
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.state_persistence import StatePersistence
@@ -387,6 +390,15 @@ class StateMachineManager:
         workflow = self._workflows[issue_number]
         old_phase = state.phase
         target = Phase(new_phase) if isinstance(new_phase, str) else new_phase
+
+        # 同一フェーズへの遷移は no-op (再起動後の重複検出対策)
+        if old_phase == target:
+            logger.info(
+                "Issue #%d is already in %s, skipping no-op transition",
+                issue_number,
+                target.value,
+            )
+            return
 
         try:
             self._execute_transition(workflow, old_phase, target)
