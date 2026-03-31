@@ -1209,3 +1209,96 @@ class TestExtractPrNumber:
         from ai_agent_orchestrator.phases.base import PhaseExecutor
 
         assert PhaseExecutor._extract_pr_number("完了しました") is None
+
+
+# ---------------------------------------------------------------------------
+# HearingWaitTransition
+# ---------------------------------------------------------------------------
+
+
+class TestHearingWaitTransition:
+    """hearing 質問投稿後に hearing-wait へ遷移するテスト."""
+
+    async def test_hearing_question_transitions_to_hearing_wait(
+        self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+    ):
+        """質問投稿後に hearing-wait へ遷移する."""
+        from ai_agent_orchestrator.phases.hearing import HearingExecutor
+
+        mock_sm.get_state.return_value = MagicMock(session_id=None)
+        mock_sm.get_issue_type.return_value = "feature-m"
+
+        executor = HearingExecutor(
+            runner=mock_runner,
+            account_manager=mock_github,
+            notifier=mock_notifier,
+            tracker=mock_tracker,
+            workspace=mock_workspace,
+            context_engine=mock_context,
+            state_machine=mock_sm,
+        )
+
+        request = _make_request("hearing", issue_number=42)
+        result = AgentResult(
+            session_id="sess-001",
+            output="以下の点を確認させてください:\n1. 対象ユーザーは？",
+            tool_uses=[],
+            cost_usd=0.1,
+            duration_sec=10.0,
+        )
+        await executor.process_result(request, result)
+
+        # hearing-wait へ遷移したことを確認
+        mock_sm.transition.assert_called_once_with(42, "hearing-wait")
+        # ラベルが hearing-wait に更新されたことを確認
+        mock_github.replace_phase_label.assert_called_once()
+        label_args = mock_github.replace_phase_label.call_args
+        assert "phase:hearing-wait" in str(label_args)
+
+
+# ---------------------------------------------------------------------------
+# TestDesignPrLookup
+# ---------------------------------------------------------------------------
+
+
+class TestDesignPrLookup:
+    """design フェーズの PR 検索テスト."""
+
+    async def test_ensure_pr_created_finds_feature_branch_pr(
+        self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+    ):
+        """feature/issue-XX ブランチの PR を正しく検索できる."""
+        from ai_agent_orchestrator.phases.design import DesignExecutor
+
+        mock_sm.get_state.return_value = MagicMock(session_id=None, design_pr_number=None)
+
+        mock_pr = MagicMock()
+        mock_pr.number = 99
+        mock_github.list_pull_requests = AsyncMock(return_value=[mock_pr])
+        mock_github.get_issue = AsyncMock(return_value=MagicMock(title="Test", body="body"))
+        mock_github.replace_phase_label = AsyncMock()
+        mock_sm.transition = AsyncMock()
+
+        executor = DesignExecutor(
+            runner=mock_runner,
+            account_manager=mock_github,
+            notifier=mock_notifier,
+            tracker=mock_tracker,
+            workspace=mock_workspace,
+            context_engine=mock_context,
+            state_machine=mock_sm,
+        )
+
+        request = _make_request("design", issue_number=42)
+        result = AgentResult(
+            session_id="sess-001",
+            output="設計書を作成しました。",
+            tool_uses=[],
+            cost_usd=1.0,
+            duration_sec=100.0,
+        )
+        await executor.process_result(request, result)
+
+        # list_pull_requests が feature/issue-42 で検索されたことを確認
+        call_args = mock_github.list_pull_requests.call_args
+        assert "feature/issue-42" in str(call_args)
