@@ -222,7 +222,9 @@ class TestDetectHearingReplies:
         client = _make_client()
         comment = _make_comment(101, "回答です", "User", issue_url="https://api.github.com/repos/o/r/issues/42")
         issue = _make_issue(42, labels=["ai-agent", "phase:hearing-wait"])
-        client.get_issues_with_label = AsyncMock(side_effect=lambda repo, labels, **kw: [issue] if "hearing-wait" in labels else [])
+        client.get_issues_with_label = AsyncMock(
+            side_effect=lambda repo, labels, **kw: [issue] if "hearing-wait" in labels else [],
+        )
         client.list_comments = AsyncMock(return_value=[comment])
 
         repo = _make_repo()

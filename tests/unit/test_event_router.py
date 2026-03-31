@@ -439,7 +439,7 @@ class TestEventRouterError:
 class TestEventRouterHearingWait:
     """hearing-wait フェーズのイベントルーティングテスト."""
 
-    @pytest.fixture()
+    @pytest.fixture
     def mock_sm(self):
         sm = MagicMock()
         sm.transition = AsyncMock()
@@ -450,12 +450,12 @@ class TestEventRouterHearingWait:
         sm.get_ci_retry_count = AsyncMock(return_value=0)
         return sm
 
-    @pytest.fixture()
+    @pytest.fixture
     def mock_tq(self):
         tq = AsyncMock()
         return tq
 
-    @pytest.fixture()
+    @pytest.fixture
     def router(self, mock_sm, mock_tq):
         return EventRouter(state_machine=mock_sm, task_queue=mock_tq)
 

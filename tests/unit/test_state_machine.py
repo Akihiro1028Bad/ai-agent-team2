@@ -594,7 +594,7 @@ class TestTrackerIntegration:
 class TestHearingWaitWorkflow:
     """hearing-wait フェーズの遷移テスト."""
 
-    @pytest.fixture()
+    @pytest.fixture
     def sm(self, mock_persistence, mock_tracker):
         return StateMachineManager(persistence=mock_persistence, tracker=mock_tracker)
 

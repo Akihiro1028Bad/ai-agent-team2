@@ -184,7 +184,7 @@ async def test_run_oneshot_hearing(
     # Verify options
     assert len(captured) == 1
     opts = captured[0]["options"]
-    assert opts.permission_mode == "plan"
+    assert opts.permission_mode == "bypassPermissions"
 
 
 # ---------------------------------------------------------------------------

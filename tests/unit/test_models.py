@@ -30,13 +30,14 @@ from ai_agent_orchestrator.models import (
 
 
 def test_phase_has_19_values() -> None:
-    assert len(Phase) == 19
+    assert len(Phase) == 20
 
 
 def test_phase_values() -> None:
     expected = {
         "type-detection",
         "hearing",
+        "hearing-wait",
         "analysis",
         "plan-brief",
         "plan-review",

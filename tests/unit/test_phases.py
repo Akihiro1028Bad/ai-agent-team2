@@ -1241,7 +1241,7 @@ class TestHearingWaitTransition:
         request = _make_request("hearing", issue_number=42)
         result = AgentResult(
             session_id="sess-001",
-            output="以下の点を確認させてください:\n1. 対象ユーザーは？",
+            output="Please confirm:\n1. Target users?",
             tool_uses=[],
             cost_usd=0.1,
             duration_sec=10.0,

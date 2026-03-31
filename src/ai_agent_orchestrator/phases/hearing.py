@@ -107,7 +107,7 @@ class HearingExecutor(PhaseExecutor):
                 else ("ヒアリングを実行しましたが、出力が空でした。再実行が必要です。")
             )
             await client.create_comment(request.repo, request.issue_number, comment_body)
-            # hearing-wait へ遷移（ユーザー回答待ち）
+            # hearing-wait へ遷移 (user reply待ち)
             await client.replace_phase_label(request.repo, request.issue_number, "phase:hearing-wait")
             await self._sm.transition(request.issue_number, "hearing-wait")
             await self._notifier.notify(
