@@ -100,10 +100,80 @@ else:
 - `claude_runner.py`: `PHASE_CONFIG` に `hearing-wait` エントリ不要 (AI 実行しない待機フェーズ)
 - `state_persistence.py`: Phase enum から自動対応
 
+---
+
+## Bug #2: branch_prefix 不一致による PR 検索失敗
+
+### Problem
+
+`DesignExecutor` が `_ensure_pr_created(branch_prefix="design")` を呼ぶが、
+実際の worktree ブランチは `feature/issue-XX`（最初に `type_detection.py` が
+デフォルトの `feature` で作成し、以降は冪等で同じパスを返すため）。
+
+フォールバック PR 検索が `design/issue-XX` ブランチで検索 → マッチせず → 
+PR 新規作成も 422 エラー（既に `feature/issue-XX` で PR が存在するため）。
+
+### Root Cause
+
+`workspace_manager.create_worktree()` は冪等で、既存の worktree があればそのまま返す。
+`branch_prefix` は初回作成時のみ有効で、2回目以降は無視される。
+しかし `_ensure_pr_created()` は渡された `branch_prefix` でブランチ名を構築するため、
+実際のブランチ名と乖離する。
+
+### Solution
+
+`_ensure_pr_created()` に渡す `branch_prefix` を、実際に使われたブランチ名と一致させる。
+
+具体的には:
+- `hearing.py`: `branch_prefix="design"` を削除（デフォルトの `"feature"` を使用）
+- `design.py`: `_ensure_pr_created` の `branch_prefix` を `"feature"` に変更
+- `_ensure_pr_created` の Step 2 を強化: `branch_prefix` でマッチしない場合に
+  `feature/issue-XX` でもフォールバック検索する
+
+### Changes
+
+#### hearing.py - build_prompt
+
+```python
+# Before
+worktree = await self._workspace.create_worktree(request.repo, request.issue_number, branch_prefix="design")
+# After
+worktree = await self._workspace.create_worktree(request.repo, request.issue_number)
+```
+
+#### design.py - build_prompt + process_result
+
+```python
+# build_prompt: branch_prefix を削除
+worktree = await self._workspace.create_worktree(request.repo, request.issue_number)
+
+# process_result: branch_prefix を "feature" に変更
+pr_number = await self._ensure_pr_created(request, result.output, branch_prefix="feature", title_prefix="docs: ")
+```
+
+#### base.py - _ensure_pr_created Step 2 強化
+
+Step 2 で `branch_prefix/issue-XX` でマッチしない場合、`feature/issue-XX` でもフォールバック検索:
+
+```python
+# Step 2: ブランチ名で既存PRを検索
+branch_name = f"{branch_prefix}/issue-{request.issue_number}"
+pr = search_by_branch(branch_name)
+if not pr and branch_prefix != "feature":
+    pr = search_by_branch(f"feature/issue-{request.issue_number}")
+```
+
+---
+
 ## Testing
 
+### hearing-wait
 - hearing executor が質問投稿後に `hearing-wait` へ遷移することを確認
 - `hearing-wait` 状態の Issue にユーザーがコメントすると `hearing` に戻ることを確認
 - `hearing-wait` が `active_phases` に含まれないことを確認 (再起動時に自動再エンキューされない)
 - `hearing-wait` のタイムアウトで `suspended` に遷移することを確認
 - `hearing` 中に orchestrator が停止 → 再起動後に `hearing` が再実行されることを確認
+
+### branch_prefix fix
+- design フェーズで PR 作成後、`_ensure_pr_created` が正しく PR 番号を取得できることを確認
+- `feature/issue-XX` ブランチで作成された PR が Step 2 のフォールバック検索で見つかることを確認
