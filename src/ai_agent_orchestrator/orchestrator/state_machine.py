@@ -118,6 +118,7 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
     (Phase.CI_FIX, Phase.SUSPENDED): "ci_fix_to_suspended",
     (Phase.IMPL_REVIEW, Phase.DONE): "impl_review_to_done",
     (Phase.IMPL_REVIEW, Phase.IMPL_REVISE): "impl_review_to_impl_revise",
+    (Phase.IMPL_REVIEW, Phase.CI_FIX): "impl_review_to_ci_fix",
     (Phase.IMPL_REVIEW, Phase.SUSPENDED): "impl_review_to_suspended",
     (Phase.IMPL_REVISE, Phase.IMPL_REVIEW): "impl_revise_to_impl_review",
     (Phase.IMPL_REVISE, Phase.SUSPENDED): "impl_revise_to_suspended",
@@ -133,6 +134,10 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
     (Phase.SUSPENDED, Phase.DESIGN): "resume_to_design",
     (Phase.SUSPENDED, Phase.IMPLEMENT): "resume_to_implement",
     (Phase.SUSPENDED, Phase.FIX): "resume_to_fix",
+    (Phase.SUSPENDED, Phase.PLAN_REVIEW): "resume_to_plan_review",
+    (Phase.SUSPENDED, Phase.CI_FIX): "resume_to_ci_fix",
+    (Phase.SUSPENDED, Phase.IMPL_REVIEW): "resume_to_impl_review",
+    (Phase.SUSPENDED, Phase.IMPL_REVISE): "resume_to_impl_revise",
 }
 
 
@@ -239,6 +244,7 @@ class IssueWorkflow(StateMachine):
 
     impl_review_to_done = impl_review.to(done)
     impl_review_to_impl_revise = impl_review.to(impl_revise)
+    impl_review_to_ci_fix = impl_review.to(ci_fix)
     impl_review_to_suspended = impl_review.to(suspended)
 
     impl_revise_to_impl_review = impl_revise.to(impl_review)
@@ -257,6 +263,10 @@ class IssueWorkflow(StateMachine):
     resume_to_design = suspended.to(design)
     resume_to_implement = suspended.to(implement)
     resume_to_fix = suspended.to(fix)
+    resume_to_plan_review = suspended.to(plan_review)
+    resume_to_ci_fix = suspended.to(ci_fix)
+    resume_to_impl_review = suspended.to(impl_review)
+    resume_to_impl_revise = suspended.to(impl_revise)
 
     def __init__(
         self,
