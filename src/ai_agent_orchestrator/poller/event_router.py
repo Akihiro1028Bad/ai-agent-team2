@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ai_agent_orchestrator.models import EventType, Phase, PollEvent
 from ai_agent_orchestrator.orchestrator.task_queue import Priority, TaskRequest
 
 if TYPE_CHECKING:
+    from ai_agent_orchestrator.github.client import GitHubClient
     from ai_agent_orchestrator.orchestrator.state_machine import StateMachineManager
     from ai_agent_orchestrator.orchestrator.task_queue import TaskQueue
 
@@ -46,7 +47,7 @@ class EventRouter:
         self._tq = task_queue
         self._account_manager = account_manager
 
-    async def _get_client(self, repo: object) -> object | None:
+    async def _get_client(self, repo: object) -> GitHubClient | None:
         """リポジトリに対応する GitHubClient を取得する (省略可能).
 
         account_manager が設定されていない場合は None を返す。
@@ -62,7 +63,8 @@ class EventRouter:
         if hasattr(self._account_manager, "get_client_for_repo"):
             owner = getattr(repo, "owner", "")
             repo_name = getattr(repo, "repo", "")
-            return await self._account_manager.get_client_for_repo(owner, repo_name)
+            result: Any = await self._account_manager.get_client_for_repo(owner, repo_name)
+            return result  # type: ignore[no-any-return]
         return None
 
     async def route(self, event: PollEvent) -> None:
@@ -163,7 +165,7 @@ class EventRouter:
             pass
 
         repo_key = f"{event.repo.owner}/{event.repo.repo}"
-        labels = [(lbl.name if hasattr(lbl, "name") else str(lbl)) for lbl in (event.issue.labels or [])]
+        labels = [str(lbl.name) if hasattr(lbl, "name") else str(lbl) for lbl in (event.issue.labels or [])]
 
         # タイプをラベルから推定
         issue_type = "bug"  # デフォルト

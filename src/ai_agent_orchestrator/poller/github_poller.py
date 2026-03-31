@@ -515,7 +515,7 @@ class GitHubPoller:
 
         PR レビュー (Approve/Changes Requested) に加え、
         PR の一般コメントに approve_comment と完全一致するものがあれば承認とみなす。
-        承認が1つでもあれば承認のみ返す（コメントと承認の混在による遷移競合を防止）。
+        承認が1つでもあれば承認のみ返す(コメントと承認の混在による遷移競合を防止)。
 
         Returns:
             {"state": "approved"|"commented", "body": "review body"} のリスト.
@@ -545,7 +545,7 @@ class GitHubPoller:
                     if body.strip() == self._approve_comment:
                         approved.append({"state": "approved", "body": body})
                         break
-        # 承認があればコメントは無視（遷移競合を防止）
+        # 承認があればコメントは無視(遷移競合を防止)
         return approved if approved else commented
 
     async def _check_ci_status(

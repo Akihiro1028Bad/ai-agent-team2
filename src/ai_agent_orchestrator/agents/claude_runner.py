@@ -196,7 +196,7 @@ class ClaudeAgentRunner:
         options = ClaudeAgentOptions(
             cwd=cwd,
             permission_mode=cfg.permission_mode,  # type: ignore[arg-type]
-            hooks=hooks,
+            hooks=hooks,  # type: ignore[arg-type]
         )
         # 実装系フェーズでは allowed_tools を明示的に設定
         if cfg.permission_mode == "bypassPermissions":
@@ -339,8 +339,8 @@ class ClaudeAgentRunner:
 
     def _build_hooks(self) -> dict[HookEvent, list[HookMatcher]]:
         """PreToolUse / PostToolUse フックを構成する."""
-        pre_hook = HookMatcher(hooks=[self._on_pre_tool_use])
-        post_hook = HookMatcher(hooks=[self._on_post_tool_use])
+        pre_hook = HookMatcher(hooks=[self._on_pre_tool_use])  # type: ignore[list-item]
+        post_hook = HookMatcher(hooks=[self._on_post_tool_use])  # type: ignore[list-item]
         return {
             "PreToolUse": [pre_hook],
             "PostToolUse": [post_hook],

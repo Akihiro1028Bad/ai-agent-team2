@@ -61,7 +61,6 @@ class DoneExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果 (使用しない)。
         """
-        state = self._sm.get_state(request.issue_number)
         client = await self._get_client(request.repo)
 
         # フェーズラベルを更新

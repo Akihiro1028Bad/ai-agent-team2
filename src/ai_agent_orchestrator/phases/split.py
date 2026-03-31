@@ -124,10 +124,10 @@ class SplitExecuteExecutor(PhaseExecutor):
             f"{getattr(issue, 'body', '') or ''}\n\n"
             f"## 承認された分割案\n{split_proposal}\n\n"
             f"## 指示\n"
-            f"1. 分割案の各サブタスクについて子Issueを作成（依存順に番号付与: (#39-1), (#39-2)...）\n"
-            f"2. **最初のIssue（依存なし）だけに `ai-agent` ラベルを付与**。残りの子Issueにはラベルを付けない\n"
+            f"1. 分割案の各サブタスクについて子Issueを作成(依存順に番号付与: (#39-1), (#39-2)...)\n"
+            f"2. **最初のIssue(依存なし)だけに `ai-agent` ラベルを付与**。残りの子Issueにはラベルを付けない\n"
             f"3. 親Issueに分割完了コメントを投稿\n"
-            f"4. 作成した子Issue番号のリストを**依存順（実装順序）**で出力"
+            f"4. 作成した子Issue番号のリストを**依存順(実装順序)**で出力"
         )
 
     async def process_result(self, request: TaskRequest, result: AgentResult) -> None:

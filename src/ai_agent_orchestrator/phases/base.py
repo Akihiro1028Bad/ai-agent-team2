@@ -19,11 +19,20 @@ logger = logging.getLogger(__name__)
 # Next action footer for bot comments
 # ---------------------------------------------------------------------------
 
+_APPROVE_ACTION = (
+    "👍 **次のアクション**: この方針でよければ"
+    "**コメントに👍リアクション**、修正があれば**コメントで指摘**してください"
+)
+_SPLIT_APPROVE_ACTION = (
+    "👍 **次のアクション**: この分割案でよければ"
+    "**コメントに👍リアクション**、修正があれば**コメントで修正指示**してください"
+)
+
 _NEXT_ACTION: dict[str, str] = {
     "type-detection": "",
     "hearing": "📝 **次のアクション**: このコメントに**コメントで回答**してください",
-    "analysis": "👍 **次のアクション**: この方針でよければ**コメントに👍リアクション**、修正があれば**コメントで指摘**してください",
-    "plan-brief": "👍 **次のアクション**: この方針でよければ**コメントに👍リアクション**、修正があれば**コメントで指摘**してください",
+    "analysis": _APPROVE_ACTION,
+    "plan-brief": _APPROVE_ACTION,
     "design": "",
     "design-review": "",
     "design-revise": "📋 **次のアクション**: 設計PRで**再レビュー**をお願いします",
@@ -32,7 +41,7 @@ _NEXT_ACTION: dict[str, str] = {
     "impl-review": "",
     "impl-revise": "📋 **次のアクション**: 実装PRで**再レビュー**をお願いします",
     "ci-fix": "",
-    "split-proposal": "👍 **次のアクション**: この分割案でよければ**コメントに👍リアクション**、修正があれば**コメントで修正指示**してください",
+    "split-proposal": _SPLIT_APPROVE_ACTION,
     "split-execute": "",
     "done": "",
 }
