@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from ai_agent_orchestrator.phases.base import PhaseExecutor
 
@@ -31,7 +31,33 @@ class ImplReviseExecutor(PhaseExecutor):
         """
         extra = getattr(request, "extra", {}) or {}
         comments = extra.get("comments", "")
-        return f"以下のレビュー指摘に対応してください:\n{comments}"
+
+        client = await self._get_client(request.repo)
+        issue = await client.get_issue(request.repo, request.issue_number)
+
+        # PR 番号を取得 (state から、なければ API 検索)
+        state = self._sm.get_state(request.issue_number)
+        pr_info = ""
+        if state and state.pr_number:
+            pr_info = f"PR #{state.pr_number}"
+        else:
+            repo_any = cast("Any", request.repo)
+            prs = await client.list_pull_requests(
+                request.repo,
+                head=f"{repo_any.owner}:feature/issue-{request.issue_number}",
+            )
+            if prs:
+                pr_info = f"PR #{cast('Any', prs[0]).number}"
+
+        return (
+            f"## Issue #{request.issue_number}: {issue.title}\n\n"
+            f"{pr_info} に対するレビュー指摘に対応してください。\n\n"
+            f"## レビュー指摘内容\n{comments}\n\n"
+            f"## 指示\n"
+            f"1. レビュー指摘に基づいてコードを修正する\n"
+            f"2. テスト・lint・ビルドを実行して確認する\n"
+            f"3. git commit して push する\n"
+        )
 
     async def run_agent(self, request: TaskRequest, prompt: str) -> AgentResult:
         """セッション継続で実行する。

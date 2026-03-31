@@ -105,6 +105,20 @@ async def _setup(
     config_file.write_text(yaml.dump(config_data, allow_unicode=True, default_flow_style=False))
     console.print(f"[green]4/4[/green] 設定ファイルを保存しました: {config_path}")
 
+    # Step 5: ラベルの確認・作成
+    label_name = repo_config.get("label", "ai-agent")
+    console.print(f"[bold]ラベル '{label_name}' を確認中...[/bold]")
+    try:
+        await _ensure_label(account, config_data.get("accounts", {}), owner, name, label_name)
+        console.print(f"[green]✓[/green] ラベル '{label_name}' を確認しました")
+    except Exception as e:
+        console.print(
+            f"[yellow]警告: ラベル '{label_name}' の自動作成に失敗しました: {e}[/yellow]"
+        )
+        console.print(
+            f"  手動で作成してください: gh label create {label_name} --repo {owner}/{name}"
+        )
+
     # サマリ表示
     table = Table(title="セットアップ完了")
     table.add_column("項目", style="cyan")
@@ -179,3 +193,45 @@ async def _unregister(repo: str, purge: bool, config_path: str) -> None:
                 console.print("削除をキャンセルしました。")
 
     console.print(f"[bold green]unregister完了: {repo}[/bold green]")
+
+
+async def _ensure_label(
+    account_name: str,
+    accounts_data: dict[str, Any],
+    owner: str,
+    repo: str,
+    label_name: str,
+) -> None:
+    """リポジトリにラベルが存在することを確認し、なければ作成する.
+
+    Args:
+        account_name: 使用するアカウント名.
+        accounts_data: config の accounts セクション.
+        owner: リポジトリオーナー.
+        repo: リポジトリ名.
+        label_name: 確認・作成するラベル名.
+    """
+    from ai_agent_orchestrator.config.settings import AccountConfig, RepositoryConfig
+    from ai_agent_orchestrator.credential import CredentialResolver
+    from ai_agent_orchestrator.github.client import GitHubClient
+
+    # アカウント設定を構築
+    acct_data = accounts_data.get(account_name, {})
+    account = AccountConfig(
+        name=account_name,
+        token_env=acct_data.get("token_env"),
+        token_command=acct_data.get("token_command"),
+        default=acct_data.get("default", False),
+    )
+
+    resolver = CredentialResolver()
+    token = await resolver.resolve(account)
+    client = GitHubClient(token=token)
+
+    repo_config = RepositoryConfig(owner=owner, repo=repo, label=label_name)
+    await client.create_label(
+        repo=repo_config,
+        name=label_name,
+        color="0E8A16",
+        description="AI Agent が処理する Issue",
+    )

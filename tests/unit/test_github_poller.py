@@ -421,8 +421,8 @@ class TestDetectCIResults:
         """CI 失敗が検知される."""
         client = _make_client()
         issue = _make_issue(number=1, labels=["ai-agent", "phase:implement"])
-        # First call (implement) returns issue, second call (ci-fix) returns empty
-        client.get_issues_with_label = AsyncMock(side_effect=[[issue], []])
+        # implement returns issue, ci-fix and impl-review return empty
+        client.get_issues_with_label = AsyncMock(side_effect=[[issue], [], []])
 
         pr = MagicMock()
         pr.number = 10
@@ -450,8 +450,8 @@ class TestDetectCIResults:
         """CI 成功が検知される."""
         client = _make_client()
         issue = _make_issue(number=1, labels=["ai-agent", "phase:implement"])
-        # First call (implement) returns issue, second call (ci-fix) returns empty
-        client.get_issues_with_label = AsyncMock(side_effect=[[issue], []])
+        # implement returns issue, ci-fix and impl-review return empty
+        client.get_issues_with_label = AsyncMock(side_effect=[[issue], [], []])
 
         pr = MagicMock()
         pr.number = 10
@@ -478,7 +478,7 @@ class TestDetectCIResults:
         """BUG #4: 同じ CI 結果が2回目のポーリングで再検知されない."""
         client = _make_client()
         issue = _make_issue(number=1, labels=["ai-agent", "phase:implement"])
-        client.get_issues_with_label = AsyncMock(side_effect=[[issue], [], [issue], []])
+        client.get_issues_with_label = AsyncMock(side_effect=[[issue], [], [], [issue], [], []])
 
         pr = MagicMock()
         pr.number = 10
@@ -568,7 +568,7 @@ class TestPollRepo:
         """BUG #1: _poll_repo を2回呼んでも同じ Issue は再検知されない."""
         client = _make_client()
         issue = _make_issue(number=42, labels=["ai-agent"])
-        # 10 calls per poll, 2 polls = 20 calls
+        # 11 calls per poll, 2 polls = 22 calls
         side_effects = [
             [issue],
             [],
@@ -580,7 +580,9 @@ class TestPollRepo:
             [],
             [],
             [],
+            [],
             [issue],
+            [],
             [],
             [],
             [],

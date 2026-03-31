@@ -272,11 +272,12 @@ class GitHubPoller:
         approved_issues: list[Issue] = []
         # 方針コメントを識別するパターン (Markdown 見出し)
         plan_markers = ("## 修正方針", "## 方針", "## Analysis", "## Plan", "## 分析結果")
+        bot_marker = "<!-- ai-agent-bot -->"
         for issue in issues:
             comments = await client.list_comments(repo, issue.number)
             for comment in comments:
                 body = comment.body or ""
-                is_bot = comment.user and comment.user.type == "Bot"
+                is_bot = (comment.user and comment.user.type == "Bot") or bot_marker in body
                 is_plan_comment = any(marker in body for marker in plan_markers)
                 if is_bot or is_plan_comment:
                     # BUG #3: Skip already-processed reactions
@@ -354,9 +355,10 @@ class GitHubPoller:
                 for review_info in pr_reviews:
                     review_state = review_info["state"]
                     review_body = review_info["body"]
+                    review_id = review_info.get("id", "")
                     event_type = approved_type if review_state == "approved" else commented_type
                     # BUG #4: Deduplicate PR review events
-                    event_key = f"pr_review:{event_type}:{issue.number}"
+                    event_key = f"pr_review:{event_type}:{issue.number}:{review_id}"
                     if event_key in self._seen_events:
                         continue
                     self._seen_events.add(event_key)
@@ -390,7 +392,7 @@ class GitHubPoller:
         CI ステータスを確認する。
         """
         events: list[PollEvent] = []
-        for label_suffix in ("implement", "ci-fix"):
+        for label_suffix in ("implement", "ci-fix", "impl-review"):
             issues = await client.get_issues_with_label(repo, f"{repo.label},phase:{label_suffix}")
             for issue in issues:
                 ci_status = await self._check_ci_status(client, repo, issue)
@@ -532,10 +534,11 @@ class GitHubPoller:
                 for review in reviews:
                     state = review.get("state", "")
                     body = review.get("body", "") or ""
+                    review_id = str(review.get("id", ""))
                     if state == "APPROVED":
-                        approved.append({"state": "approved", "body": body})
+                        approved.append({"state": "approved", "body": body, "id": review_id})
                     elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and body):
-                        commented.append({"state": "commented", "body": body})
+                        commented.append({"state": "commented", "body": body, "id": review_id})
                 # コメントによる承認: PR の一般コメントを確認
                 pr_comments = await client.list_comments(repo, pr.number)
                 for comment in pr_comments:
@@ -543,7 +546,7 @@ class GitHubPoller:
                     if _is_bot_comment(body):
                         continue
                     if body.strip() == self._approve_comment:
-                        approved.append({"state": "approved", "body": body})
+                        approved.append({"state": "approved", "body": body, "id": str(comment.id)})
                         break
         # 承認があればコメントは無視(遷移競合を防止)
         return approved if approved else commented

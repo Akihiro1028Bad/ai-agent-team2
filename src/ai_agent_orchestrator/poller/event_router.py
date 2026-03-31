@@ -297,6 +297,19 @@ class EventRouter:
         issue_type = self._sm.get_issue_type(event.issue.number)
         next_phase = Phase.FIX if issue_type == "bug" else Phase.IMPLEMENT
 
+        # 既に遷移先フェーズにいる場合はスキップ (再起動後の重複検出対策)
+        current_phase = self._sm.get_phase(event.issue.number)
+        if current_phase == next_phase:
+            logger.info(
+                "Issue #%d is already in %s, skipping duplicate plan reaction",
+                event.issue.number,
+                next_phase.value,
+            )
+            return
+
+        # 承認検出を通知: Issue に🚀リアクション + コメント
+        await self._notify_plan_approved(event, next_phase)
+
         await self._sm.transition(event.issue.number, next_phase)
         await self._tq.enqueue(
             TaskRequest(
@@ -306,6 +319,27 @@ class EventRouter:
                 priority=Priority.NORMAL,
             )
         )
+
+    async def _notify_plan_approved(self, event: PollEvent, next_phase: Phase) -> None:
+        """方針承認を検出したことを Issue 上で通知する."""
+        assert event.issue is not None
+        try:
+            client = await self._get_client(event.repo)
+            if client is None:
+                return
+            await client.add_issue_reaction(event.repo, event.issue.number, "rocket")
+            phase_label = "修正" if next_phase == Phase.FIX else "実装"
+            await client.create_comment(
+                event.repo,
+                event.issue.number,
+                f"👍 方針承認を確認しました。{phase_label}を開始します。",
+            )
+        except Exception:
+            logger.debug(
+                "Failed to notify plan approval for issue #%d",
+                event.issue.number,
+                exc_info=True,
+            )
 
     async def _handle_plan_comment(self, event: PollEvent) -> None:
         """方針指摘コメント: タイプ別に修正フェーズへ遷移.
@@ -397,6 +431,20 @@ class EventRouter:
     async def _handle_impl_pr_commented(self, event: PollEvent) -> None:
         """実装 PR コメント (指摘): IMPL_REVISE へ遷移してエンキュー."""
         assert event.issue is not None
+
+        # 既に修正中の場合はスキップ (重複検出対策)
+        current_phase = self._sm.get_phase(event.issue.number)
+        if current_phase == Phase.IMPL_REVISE:
+            logger.info(
+                "Issue #%d is already in impl-revise, skipping duplicate PR comment",
+                event.issue.number,
+            )
+            return
+
+        # レビュー指摘を検出したことを Issue コメントで通知
+        review_comments = (event.extra or {}).get("comments", "")
+        await self._notify_review_received(event, review_comments)
+
         await self._sm.transition(event.issue.number, Phase.IMPL_REVISE)
         await self._tq.enqueue(
             TaskRequest(
@@ -404,9 +452,31 @@ class EventRouter:
                 repo=event.repo,
                 phase=Phase.IMPL_REVISE.value,
                 priority=Priority.CRITICAL,
-                extra={"comments": event.extra or {}},
+                extra={"comments": review_comments},
             )
         )
+
+    async def _notify_review_received(self, event: PollEvent, comments: str) -> None:
+        """PR レビュー指摘を検出したことを Issue 上で通知する."""
+        assert event.issue is not None
+        try:
+            client = await self._get_client(event.repo)
+            if client is None:
+                return
+            await client.add_issue_reaction(event.repo, event.issue.number, "eyes")
+            await client.create_comment(
+                event.repo,
+                event.issue.number,
+                f"PR のレビュー指摘を確認しました。修正を開始します。\n\n"
+                f"> {comments[:500]}" if comments else
+                "PR のレビュー指摘を確認しました。修正を開始します。",
+            )
+        except Exception:
+            logger.debug(
+                "Failed to notify review received for issue #%d",
+                event.issue.number,
+                exc_info=True,
+            )
 
     async def _handle_ci_result(self, event: PollEvent) -> None:
         """CI 結果: extra の ci_status に応じて分岐.
@@ -445,7 +515,9 @@ class EventRouter:
                 except Exception:
                     logger.warning("Failed to update phase label to suspended for issue #%d", event.issue.number)
         elif ci_status == "success":
-            await self._sm.transition(event.issue.number, Phase.IMPL_REVIEW)
+            current = self._sm.get_phase(event.issue.number)
+            if current != Phase.IMPL_REVIEW:
+                await self._sm.transition(event.issue.number, Phase.IMPL_REVIEW)
             # IMPL_REVIEW はポーリングで PR approve/comment を待つため、エンキュー不要
 
     async def _handle_split_approved(self, event: PollEvent) -> None:
