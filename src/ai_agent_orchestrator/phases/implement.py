@@ -50,8 +50,8 @@ class ImplementExecutor(PhaseExecutor):
             f"1. 実装計画の順序に従ってコードを実装\n"
             f"2. テストコードも作成\n"
             f"3. テスト・lint・ビルドを実行して確認\n"
-            f"4. git commit して Push\n"
-            f"5. PRを作成\n"
+            f"4. git commit して Push (コミットメッセージは日本語で)\n"
+            f"5. PRを作成 (タイトル・本文は日本語で)\n"
             f"6. PR descriptionに変更概要を含める"
         )
 
@@ -67,7 +67,7 @@ class ImplementExecutor(PhaseExecutor):
             request,
             result.output,
             branch_prefix="feature",
-            title_prefix="feat: ",
+            title_prefix="機能: ",
         )
 
         state = self._sm.get_state(request.issue_number)

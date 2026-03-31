@@ -56,7 +56,7 @@ class ImplReviseExecutor(PhaseExecutor):
             f"## 指示\n"
             f"1. レビュー指摘に基づいてコードを修正する\n"
             f"2. テスト・lint・ビルドを実行して確認する\n"
-            f"3. git commit して push する\n"
+            f"3. git commit して push する (コミットメッセージは日本語で)\n"
         )
 
     async def run_agent(self, request: TaskRequest, prompt: str) -> AgentResult:

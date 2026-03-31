@@ -58,8 +58,8 @@ class DesignExecutor(PhaseExecutor):
             f"## コンテキスト\n{context}\n\n"
             f"## 指示\n"
             f"1. docs/designs/issue-{request.issue_number}.md に設計書を作成\n"
-            f"2. git commit して Push\n"
-            f"3. PRを作成\n"
+            f"2. git commit して Push (コミットメッセージは日本語で)\n"
+            f"3. PRを作成 (タイトル・本文は日本語で)\n"
             f"4. PRのURLを出力"
         )
 
@@ -75,7 +75,7 @@ class DesignExecutor(PhaseExecutor):
             request,
             result.output,
             branch_prefix="feature",
-            title_prefix="docs: ",
+            title_prefix="設計: ",
         )
 
         state = self._sm.get_state(request.issue_number)

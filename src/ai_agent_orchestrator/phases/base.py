@@ -425,7 +425,7 @@ class PhaseExecutor(ABC):
             request: タスクリクエスト。
             agent_output: エージェントの出力テキスト。
             branch_prefix: worktreeブランチのプレフィックス。
-            title_prefix: PRタイトルのプレフィックス (例: "fix:", "feat:")。
+            title_prefix: PRタイトルのプレフィックス (例: "修正:", "機能:")。
 
         Returns:
             PR 番号。

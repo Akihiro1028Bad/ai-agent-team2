@@ -42,7 +42,7 @@ class DesignReviseExecutor(PhaseExecutor):
             f"## レビュー指摘内容\n{comments}\n\n"
             f"## 指示\n"
             f"1. 設計書を修正する\n"
-            f"2. git add && git commit\n"
+            f"2. git add && git commit (コミットメッセージは日本語で)\n"
             f"3. git push origin feature/issue-{request.issue_number}\n"
         )
 

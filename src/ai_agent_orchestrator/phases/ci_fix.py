@@ -46,7 +46,7 @@ class CiFixExecutor(PhaseExecutor):
             f"1. CI失敗ログを分析して原因を特定\n"
             f"2. コードを修正\n"
             f"3. テスト・lint・ビルドをローカルで再実行して確認\n"
-            f"4. git commit して Push"
+            f"4. git commit して Push (コミットメッセージは日本語で)"
         )
 
     async def process_result(self, request: TaskRequest, result: AgentResult) -> None:

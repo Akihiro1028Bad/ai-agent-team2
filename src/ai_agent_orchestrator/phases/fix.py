@@ -59,8 +59,8 @@ class FixExecutor(PhaseExecutor):
             f"1. 修正方針に従ってコードを修正\n"
             f"2. 再現テスト・リグレッションテストを作成\n"
             f"3. テスト・lint を実行して確認\n"
-            f"4. git commit して Push\n"
-            f"5. PRを作成\n"
+            f"4. git commit して Push (コミットメッセージは日本語で)\n"
+            f"5. PRを作成 (タイトル・本文は日本語で)\n"
             f"6. PR descriptionに修正方針を再掲"
         )
 
@@ -76,7 +76,7 @@ class FixExecutor(PhaseExecutor):
             request,
             result.output,
             branch_prefix="feature",
-            title_prefix="fix: ",
+            title_prefix="修正: ",
         )
 
         state = self._sm.get_state(request.issue_number)
