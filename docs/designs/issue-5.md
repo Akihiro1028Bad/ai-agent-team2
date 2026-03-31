@@ -2,32 +2,35 @@
 
 ## 1. 概要
 
-Slack通知のタイミング・フォーマット・内容を全面的にアップグレードする。
-現在のシンプルな section + context の2ブロック構成を、Header Block + Section + Fields を用いた
-リッチフォーマットに刷新し、通知タイミングの追加、言語の日本語統一、エラー時の詳細情報表示を実現する。
+Slack通知メッセージのタイミング・フォーマット・内容を全面的にアップグレードする。
 
-### 1.1 スコープ
+### 1.1 確定要件（ヒアリング結果）
 
-| 項目 | 内容 |
-|------|------|
-| 通知タイミング | フェーズ開始・完了・エラー・Issue受付を追加 |
-| フォーマット | リッチフォーマット（Header + Section + Fields） |
-| メッセージ内容 | コスト・フェーズ名・アクション案内・Issueタイトル・エラー詳細 |
-| 言語 | すべて日本語に統一 |
-| スレッド対応 | 不要（現行Webhook方式を維持） |
-| リマインド通知 | 不要 |
+| # | 項目 | 決定事項 |
+|---|------|---------|
+| 1 | 通知タイミング | フェーズ開始・Issue受付を追加（リマインドは不要） |
+| 2 | フォーマット | リッチフォーマット（Header Block + Section + Fields） |
+| 3 | メッセージ内容 | コスト・フェーズ名・アクション案内・Issueタイトル・エラー詳細を含める |
+| 4 | 言語統一 | すべて日本語 |
+| 5 | Slackスレッド | 不要（Webhook方式を維持） |
+| 6 | フェーズ進捗 | フェーズ名のみ表示 |
+| 7 | コスト表示 | フェーズ完了時のみ |
+| 8 | エラー詳細 | 詳細表示＋考えられる原因の分析を含める |
 
 ### 1.2 スコープ外
 
 - Slack Bot Token (`xoxb-`) への移行
 - Slackスレッド対応（Issue単位のスレッドまとめ）
 - 承認待ちリマインド通知
+- Issue タイトルのキャッシュ機構
+- 通知のON/OFF設定（設定ファイルで通知タイプ別に制御）
+- DM通知（チャンネルではなく担当者への直接通知）
 
 ---
 
 ## 2. 現状分析
 
-### 2.1 現在の通知アーキテクチャ
+### 2.1 現在のアーキテクチャ
 
 ```
 PhaseExecutor / Orchestrator
@@ -36,7 +39,7 @@ PhaseExecutor / Orchestrator
   NotifierProtocol.notify(message, level, metadata)
         │
         ▼
-  SlackNotifier._build_payload()
+  SlackNotifier._build_payload()   ← section + context の2ブロック構成
         │
         ▼
   SlackNotifier.send() → Slack Webhook POST
@@ -44,741 +47,507 @@ PhaseExecutor / Orchestrator
 
 ### 2.2 現在の通知箇所（全18箇所）
 
-| # | ファイル | タイミング | メッセージ例 | 言語 |
-|---|---------|-----------|------------|------|
-| 1 | `orchestrator.py` | オーケストレーター起動 | `Orchestrator started` | 英語 |
-| 2 | `orchestrator.py` | イベントルーティングエラー | `Event routing error: {exc}` | 英語 |
-| 3 | `orchestrator.py` | Issueエラー停止 | `Issue #{n} suspended due to error: {e}` | 英語 |
-| 4 | `orchestrator.py` | ヘルスチェック失敗 | `Health check failures: {names}` | 英語 |
-| 5 | `base.py` | タイムアウト | `Issue #{n} がタイムアウトしました (phase: {p})` | 日本語 |
-| 6 | `base.py` | フェーズエラー | `Issue #{n} でエラー: {e} (phase: {p})` | 日本語 |
-| 7 | `hearing.py` | ヒアリング質問投稿 | `Issue #{n} に質問を投稿しました。回答をお願いします` | 日本語 |
-| 8 | `analysis.py` | 修正方針投稿 | `Issue #{n} の修正方針を投稿しました。thumbsup で承認をお願いします` | 日本語 |
-| 9 | `plan_brief.py` | 実装方針投稿 | `Issue #{n} の実装方針を投稿しました。thumbsup で承認をお願いします` | 日本語 |
-| 10 | `design.py` | 設計PR作成 | `Issue #{n} の設計PR #{pr} を作成しました。レビューをお願いします` | 日本語 |
-| 11 | `implement.py` | 実装PR作成 | `Issue #{n} の実装PR #{pr} を作成しました` | 日本語 |
-| 12 | `fix.py` | 修正PR作成 | `Issue #{n} の修正PR #{pr} を作成しました。レビュー待ちです` | 日本語 |
-| 13 | `design_revise.py` | 設計修正完了 | `Issue #{n} の設計書を修正しました` | 日本語 |
-| 14 | `impl_revise.py` | 実装修正完了 | `Issue #{n} の実装を修正しました` | 日本語 |
-| 15 | `split.py` | 分割提案 | `Issue #{n} の分割を提案しました。判断をお願いします` | 日本語 |
-| 16 | `split.py` | 分割完了 | `Issue #{n} の分割が完了しました` | 日本語 |
-| 17 | `done.py` | Issue完了 | `Issue #{n} 完了しました` | 日本語 |
-| 18 | `done.py` | 連鎖Issue開始 | `Issue #{n} の処理を開始します (#{m} 完了による連鎖)` | 日本語 |
+| # | ファイル | タイミング | メッセージ | 問題点 |
+|---|---------|-----------|-----------|--------|
+| 1 | `orchestrator.py` | 起動時 | `"Orchestrator started"` | 英語 |
+| 2 | `orchestrator.py` | イベントルーティングエラー | `"Event routing error: {exc}"` | 英語 |
+| 3 | `orchestrator.py` | Issue中断時 | `"Issue #{n} suspended due to error: {error}"` | 英語 |
+| 4 | `orchestrator.py` | ヘルスチェック失敗 | `"Health check failures: {names}"` | 英語 |
+| 5 | `base.py` | タイムアウト | `"Issue #{n} がタイムアウトしました (phase: {p})"` | repo未設定 |
+| 6 | `base.py` | エラー | `"Issue #{n} でエラー: {e} (phase: {p})"` | repo未設定、原因分析なし |
+| 7 | `hearing.py` | 質問投稿後 | `"Issue #{n} に質問を投稿しました..."` | 開始通知なし |
+| 8 | `analysis.py` | 方針投稿後 | `"Issue #{n} の修正方針を投稿しました..."` | 開始通知なし |
+| 9 | `plan_brief.py` | 方針投稿後 | `"Issue #{n} の実装方針を投稿しました..."` | 開始通知なし |
+| 10 | `design.py` | 設計PR作成後 | `"Issue #{n} の設計PR #{pr} を作成しました..."` | 開始通知なし |
+| 11 | `design_revise.py` | 設計修正後 | `"Issue #{n} の設計書を修正しました"` | 開始通知なし |
+| 12 | `implement.py` | 実装PR作成後 | `"Issue #{n} の実装PR #{pr} を作成しました"` | 開始通知なし |
+| 13 | `fix.py` | 修正PR作成後 | `"Issue #{n} の修正PR #{pr} を作成しました..."` | 開始通知なし |
+| 14 | `impl_revise.py` | 実装修正後 | `"Issue #{n} の実装を修正しました"` | 開始通知なし |
+| 15 | `split.py` | 分割提案後 | `"Issue #{n} の分割を提案しました..."` | 開始通知なし |
+| 16 | `split.py` | 分割完了 | `"Issue #{n} の分割が完了しました"` | |
+| 17 | `done.py` | Issue完了 | `"Issue #{n} 完了しました"` | コスト情報なし |
+| 18 | `done.py` | 連鎖開始 | `"Issue #{n} の処理を開始します (連鎖)"` | |
 
-### 2.3 現在のペイロード構造
+### 2.3 現状の課題まとめ
 
-```json
-{
-    "channel": "#ai-agent",
-    "blocks": [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": ":robot_face: Issue #42 の実装 PR を作成しました"
-            }
-        },
-        {
-            "type": "context",
-            "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": ":package: `org/repo` | :page_facing_up: <url|Issue #42> | :memo: phase:implement"
-                }
-            ]
-        }
-    ]
-}
-```
-
-### 2.4 現在の課題
-
-1. **絵文字が3種類のみ**（`info`→🤖、`error`→❌、`critical`→🚨）で通知タイプが区別できない
-2. **フェーズ開始時の通知がない**（完了時のみ）
-3. **Issue受付時の通知がない**
-4. **言語が混在**（オーケストレーター系：英語、フェーズ系：日本語）
-5. **repo情報がmetadataに含まれない通知が多い**
-6. **コスト・所要時間がメッセージに含まれない**
-7. **Issueタイトルが通知に含まれない**
-8. **ユーザーアクション案内が不統一**
-9. **エラー時の情報が不十分**（エラーメッセージ1行のみ）
+1. **絵文字が未活用**: 仕様書定義の `notification_type` 別絵文字（📋💬✏️🚀✅等）が未使用。3種類のレベル絵文字のみ
+2. **フェーズ開始通知がない**: 完了時のみ通知。ユーザーは進捗が見えない
+3. **Issue受付通知がない**: 新規Issue検出時の通知がない
+4. **repo情報の欠落**: 多くのフェーズ通知で `repo` が metadata に含まれていない
+5. **言語混在**: オーケストレーターは英語、フェーズは日本語
+6. **アクション案内の不統一**: 次アクション（👍承認、レビュー等）が通知に含まれたり含まれなかったり
+7. **コスト・所要時間なし**: 実行コスト情報がメッセージに含まれない
+8. **Issueタイトル未表示**: Issue番号のみでタイトルが不明
+9. **フォーマットが簡素**: section + context の2ブロック構成のみ
+10. **エラー詳細が不十分**: エラーメッセージ1行のみで原因分析がない
 
 ---
 
 ## 3. 設計方針
 
-### 3.1 通知カテゴリの定義
+### 3.1 設計原則
 
-通知を以下の3カテゴリに分類し、カテゴリごとにフォーマットを定義する。
+1. **後方互換性**: `notify()` の既存シグネチャは変更しない。新機能は metadata のキー追加で対応
+2. **段階的改善**: まず `_build_payload()` のリッチ化 → 各呼び出し元のメッセージ・metadata 改善
+3. **DRY**: 通知タイプ別のフォーマットロジックを `SlackNotifier` に集約
+4. **best-effort維持**: 通知失敗は引き続きログのみ。例外は発生させない
 
-| カテゴリ | 説明 | 例 |
-|---------|------|-----|
-| **アクション要求** | ユーザーの操作が必要 | ヒアリング回答、方針承認、PRレビュー |
-| **情報通知** | 進捗の報告 | フェーズ開始、フェーズ完了、Issue完了 |
-| **エラー通知** | 異常の報告 | タイムアウト、フェーズエラー、ヘルスチェック失敗 |
+### 3.2 変更対象ファイル
 
-### 3.2 通知タイプ（notification_type）の定義
+| ファイル | 変更内容 | 影響度 |
+|---------|---------|--------|
+| `notifications/slack.py` | フォーマット全面改修、通知タイプ別絵文字、リッチブロック構築 | **大** |
+| `models.py` | `NotificationType` Enum 追加 | 小 |
+| `phases/base.py` | フェーズ開始通知追加、エラー詳細改善、repo情報追加、ヘルパー追加 | 中 |
+| `phases/hearing.py` | メッセージ改善、metadata充実 | 小 |
+| `phases/analysis.py` | メッセージ改善、metadata充実 | 小 |
+| `phases/plan_brief.py` | メッセージ改善、metadata充実 | 小 |
+| `phases/design.py` | メッセージ改善、metadata充実 | 小 |
+| `phases/design_revise.py` | メッセージ改善、metadata充実 | 小 |
+| `phases/implement.py` | メッセージ改善、metadata充実 | 小 |
+| `phases/fix.py` | メッセージ改善、metadata充実 | 小 |
+| `phases/impl_revise.py` | メッセージ改善、metadata充実 | 小 |
+| `phases/split.py` | メッセージ改善、metadata充実 | 小 |
+| `phases/done.py` | メッセージ改善、metadata充実 | 小 |
+| `orchestrator/orchestrator.py` | メッセージ日本語化、metadata充実、Issue受付通知追加 | 中 |
+| `tests/unit/test_slack.py` | テスト全面更新 | 中 |
+| `tests/unit/test_phases.py` | フェーズ開始通知のテスト追加 | 小 |
+| `docs/specs/slack.md` | 仕様書更新 | 小 |
+
+---
+
+## 4. 詳細設計
+
+### 4.1 NotificationType Enum 追加（models.py）
 
 ```python
 class NotificationType(StrEnum):
     """Slack通知タイプ."""
 
     # システム系
-    SYSTEM_START = "system_start"          # オーケストレーター起動
-    SYSTEM_HEALTH = "system_health"        # ヘルスチェック失敗
+    SYSTEM_START = "system_start"           # オーケストレーター起動
+    SYSTEM_HEALTH = "system_health"         # ヘルスチェック失敗
 
     # Issue ライフサイクル
-    ISSUE_RECEIVED = "issue_received"      # Issue受付（NEW）
-    ISSUE_COMPLETE = "issue_complete"      # Issue完了
+    ISSUE_RECEIVED = "issue_received"       # Issue受付
+    ISSUE_DONE = "issue_done"               # Issue完了
+    ISSUE_CHAIN = "issue_chain"             # 連鎖Issue開始
 
     # フェーズ進行
-    PHASE_START = "phase_start"            # フェーズ開始
-    PHASE_COMPLETE = "phase_complete"      # フェーズ完了
+    PHASE_START = "phase_start"             # フェーズ開始
+    PHASE_COMPLETE = "phase_complete"       # フェーズ完了
 
-    # アクション要求
-    ACTION_HEARING = "action_hearing"      # ヒアリング回答要求
-    ACTION_APPROVE = "action_approve"      # 方針承認要求（Bug/Feature-S）
-    ACTION_REVIEW = "action_review"        # PRレビュー要求（Feature-M）
-    ACTION_SPLIT = "action_split"          # 分割判断要求
+    # ユーザーアクション要求
+    HEARING_QUESTION = "hearing_question"   # ヒアリング質問投稿
+    PLAN_POSTED = "plan_posted"             # 方針投稿（承認待ち）
+    DESIGN_PR_CREATED = "design_pr_created" # 設計PR作成（レビュー待ち）
+    IMPL_PR_CREATED = "impl_pr_created"     # 実装PR作成（レビュー待ち）
+    FIX_PR_CREATED = "fix_pr_created"       # 修正PR作成（レビュー待ち）
+    SPLIT_PROPOSED = "split_proposed"       # 分割提案（承認待ち）
+    DESIGN_REVISED = "design_revised"       # 設計修正（再レビュー待ち）
+    IMPL_REVISED = "impl_revised"           # 実装修正（再レビュー待ち）
+    SPLIT_DONE = "split_done"               # 分割完了
 
     # エラー系
-    ERROR_TIMEOUT = "error_timeout"        # タイムアウト
-    ERROR_PHASE = "error_phase"            # フェーズ実行エラー
-    ERROR_ROUTING = "error_routing"        # イベントルーティングエラー
-    ERROR_SUSPENDED = "error_suspended"    # Issue停止
+    ERROR = "error"                         # 処理中エラー
+    TIMEOUT = "timeout"                     # タイムアウト
+    EVENT_ERROR = "event_error"             # イベントルーティングエラー
 ```
 
-### 3.3 通知タイプ別 絵文字マッピング
+### 4.2 通知タイプ別絵文字マッピング（slack.py）
 
 ```python
-_NOTIFICATION_EMOJI: dict[str, str] = {
+_NOTIFICATION_TYPE_EMOJI: dict[str, str] = {
     # システム系
     "system_start": ":rocket:",
     "system_health": ":warning:",
 
     # Issue ライフサイクル
-    "issue_received": ":eyes:",
-    "issue_complete": ":white_check_mark:",
+    "issue_received": ":new:",
+    "issue_done": ":white_check_mark:",
+    "issue_chain": ":link:",
 
     # フェーズ進行
     "phase_start": ":arrow_forward:",
     "phase_complete": ":ballot_box_with_check:",
 
-    # アクション要求
-    "action_hearing": ":speech_balloon:",
-    "action_approve": ":thumbsup:",
-    "action_review": ":mag:",
-    "action_split": ":scissors:",
+    # ユーザーアクション要求
+    "hearing_question": ":speech_balloon:",
+    "plan_posted": ":clipboard:",
+    "design_pr_created": ":pencil:",
+    "impl_pr_created": ":rocket:",
+    "fix_pr_created": ":wrench:",
+    "split_proposed": ":scissors:",
+    "design_revised": ":pencil:",
+    "impl_revised": ":hammer_and_wrench:",
+    "split_done": ":white_check_mark:",
 
     # エラー系
-    "error_timeout": ":hourglass:",
-    "error_phase": ":x:",
-    "error_routing": ":warning:",
-    "error_suspended": ":rotating_light:",
+    "error": ":x:",
+    "timeout": ":hourglass:",
+    "event_error": ":rotating_light:",
 }
 ```
 
----
+### 4.3 リッチフォーマット設計
 
-## 4. リッチフォーマット設計
+#### 4.3.1 通知カテゴリ別レイアウト
 
-### 4.1 新しいペイロード構造
+通知を3つのカテゴリに分け、それぞれ異なるレイアウトを適用する。
 
-全通知タイプで統一的に以下の構造を使用する:
+**A. ユーザーアクション要求系**（ヒアリング回答、方針承認、PRレビュー等）
 
 ```
 ┌─────────────────────────────────────────┐
-│ 📝 Header Block                         │
-│   「Issue #42: ユーザー認証の改善」       │
+│ 📝 Header: "Issue #42: 設計PR作成"       │
 ├─────────────────────────────────────────┤
-│ 📄 Section Block (メインメッセージ)       │
-│   「implement フェーズが完了しました」    │
+│ ✏️ Issue #42 の設計PR #10 を作成しました   │
+│                                         │
+│ *Issueタイトル*: ログイン画面のリデザイン    │
 ├─────────────────────────────────────────┤
-│ 📊 Fields Block (メタ情報)               │
-│   リポジトリ: org/repo                   │
-│   フェーズ: implement                    │
-│   コスト: $0.45                          │
-│   所要時間: 3分24秒                      │
+│ 📋 フェーズ: design                      │
+│ ⏱️ 所要時間: 3分24秒                     │
+│ 💰 コスト: $1.23                         │
 ├─────────────────────────────────────────┤
-│ 🔗 Context Block (リンク)                │
-│   Issue #42 | PR #11                     │
+│ ─────────── divider ────────────         │
+│ 👉 *次のアクション*: 設計PRをレビューして    │
+│    approve してください                   │
+├─────────────────────────────────────────┤
+│ 📦 org/repo | 📄 Issue #42 | 📝 PR #10  │
 └─────────────────────────────────────────┘
 ```
 
-### 4.2 新しいペイロード JSON 例
+**B. 情報通知系**（フェーズ開始、完了、連鎖等）
 
-#### 情報通知（フェーズ完了）
-
-```json
-{
-    "channel": "#ai-agent",
-    "blocks": [
-        {
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": "☑️ フェーズ完了: Issue #42",
-                "emoji": true
-            }
-        },
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "implement フェーズが完了しました"
-            }
-        },
-        {
-            "type": "section",
-            "fields": [
-                { "type": "mrkdwn", "text": "*リポジトリ:*\n`org/repo`" },
-                { "type": "mrkdwn", "text": "*フェーズ:*\nimlement" },
-                { "type": "mrkdwn", "text": "*コスト:*\n$0.45" },
-                { "type": "mrkdwn", "text": "*所要時間:*\n3分24秒" }
-            ]
-        },
-        {
-            "type": "context",
-            "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": ":page_facing_up: <https://github.com/org/repo/issues/42|Issue #42> | :memo: <https://github.com/org/repo/pull/11|PR #11>"
-                }
-            ]
-        }
-    ]
-}
+```
+┌─────────────────────────────────────────┐
+│ ▶️ Issue #42: implement フェーズ開始      │
+│                                         │
+│ *Issueタイトル*: ログイン画面のリデザイン    │
+├─────────────────────────────────────────┤
+│ 📋 フェーズ: implement                   │
+├─────────────────────────────────────────┤
+│ 📦 org/repo | 📄 Issue #42              │
+└─────────────────────────────────────────┘
 ```
 
-#### アクション要求通知（ヒアリング回答要求）
+**C. エラー系**（エラー、タイムアウト）
 
-```json
-{
-    "channel": "#ai-agent",
-    "blocks": [
-        {
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": "💬 回答をお願いします: Issue #42",
-                "emoji": true
-            }
-        },
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "Issue #42 「ユーザー認証の改善」にヒアリング質問を投稿しました。\nIssueコメントで回答をお願いします。"
-            }
-        },
-        {
-            "type": "section",
-            "fields": [
-                { "type": "mrkdwn", "text": "*リポジトリ:*\n`org/repo`" },
-                { "type": "mrkdwn", "text": "*フェーズ:*\nhearing" }
-            ]
-        },
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": { "type": "plain_text", "text": "Issue を開く" },
-                    "url": "https://github.com/org/repo/issues/42"
-                }
-            ]
-        }
-    ]
-}
+```
+┌──────────────────────────────────────────┐
+│ ❌ Header: "Issue #42: エラー発生"        │
+├──────────────────────────────────────────┤
+│ ❌ Issue #42 でエラーが発生しました         │
+│                                          │
+│ *Issueタイトル*: ログイン画面のリデザイン     │
+├──────────────────────────────────────────┤
+│ *エラー内容*:                              │
+│ ```                                       │
+│ No transition defined from Phase.DESIGN   │
+│ to Phase.DESIGN                           │
+│ ```                                       │
+├──────────────────────────────────────────┤
+│ *考えられる原因*:                           │
+│ • ステートマシンの遷移定義に不足がある        │
+│ • 同一フェーズへの再遷移ガードが必要          │
+├──────────────────────────────────────────┤
+│ 📋 フェーズ: design                        │
+├──────────────────────────────────────────┤
+│ 📦 org/repo | 📄 Issue #42               │
+└──────────────────────────────────────────┘
 ```
 
-#### エラー通知（フェーズエラー）
-
-```json
-{
-    "channel": "#ai-agent",
-    "blocks": [
-        {
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": "❌ エラー発生: Issue #42",
-                "emoji": true
-            }
-        },
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "implement フェーズでエラーが発生しました"
-            }
-        },
-        {
-            "type": "section",
-            "fields": [
-                { "type": "mrkdwn", "text": "*リポジトリ:*\n`org/repo`" },
-                { "type": "mrkdwn", "text": "*フェーズ:*\nimplement" },
-                { "type": "mrkdwn", "text": "*エラー種別:*\nRuntimeError" },
-                { "type": "mrkdwn", "text": "*ステータス:*\nsuspended" }
-            ]
-        },
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "*エラー詳細:*\n```No transition defined from Phase.DESIGN to Phase.DESIGN```"
-            }
-        },
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "*考えられる原因:*\n• ステートマシンの遷移定義に DESIGN → DESIGN が含まれていない\n• 同一フェーズへの再遷移が試行された可能性\n• 前のフェーズからの遷移先が正しく設定されていない可能性"
-            }
-        },
-        {
-            "type": "context",
-            "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": ":page_facing_up: <https://github.com/org/repo/issues/42|Issue #42>"
-                }
-            ]
-        }
-    ]
-}
-```
-
----
-
-## 5. notify() インターフェースの拡張
-
-### 5.1 現在のインターフェース
+#### 4.3.2 Block Kit ペイロード構築（_build_payload 改修）
 
 ```python
-async def notify(
+def _build_payload(
     self,
     message: str,
     *,
-    channel: str | None = None,
-    level: str = "info",
-    metadata: dict[str, Any] | None = None,
-) -> None:
-```
+    channel: str | None,
+    level: str,
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """リッチフォーマットの Block Kit ペイロードを構築する."""
+    metadata = metadata or {}
+    notification_type = metadata.get("notification_type", "")
+    emoji = self._resolve_emoji(notification_type, level)
 
-### 5.2 新しいインターフェース
+    blocks: list[dict[str, Any]] = []
 
-**後方互換性を維持**しつつ、`metadata` に新しいキーを追加する。
-`notify()` のシグネチャ自体は変更しない。
+    # 1. Header Block（ユーザーアクション要求系・エラー系のみ）
+    header_text = metadata.get("header")
+    if header_text:
+        blocks.append({
+            "type": "header",
+            "text": {"type": "plain_text", "text": header_text, "emoji": True},
+        })
 
-```python
-async def notify(
-    self,
-    message: str,
-    *,
-    channel: str | None = None,
-    level: str = "info",
-    metadata: dict[str, Any] | None = None,
-) -> None:
-```
+    # 2. メインメッセージ Section
+    main_text = f"{emoji} {message}"
+    issue_title = metadata.get("issue_title")
+    if issue_title:
+        main_text += f"\n\n*Issueタイトル*: {issue_title}"
+    blocks.append({
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": main_text},
+    })
 
-### 5.3 metadata の拡張キー
+    # 3. エラー詳細 Section（エラー系のみ）
+    error_detail = metadata.get("error_detail")
+    if error_detail:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*エラー内容*:\n```{error_detail}```"},
+        })
+    error_analysis = metadata.get("error_analysis")
+    if error_analysis:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*考えられる原因*:\n{error_analysis}"},
+        })
 
-| キー | 型 | 説明 | 必須 |
-|------|-----|------|------|
-| `repo` | `str` | リポジトリ名（`owner/repo`形式） | 推奨 |
-| `issue` | `int` | Issue番号 | 推奨 |
-| `issue_title` | `str` | Issueタイトル | 推奨 |
-| `pr` | `int` | PR番号 | 任意 |
-| `pr_url` | `str` | PR URL | 任意 |
-| `phase` | `str` | 現在のフェーズ名 | 推奨 |
-| `notification_type` | `str` | 通知タイプ（§3.2 参照） | 推奨 |
-| `cost_usd` | `float` | フェーズ実行コスト（USD） | 任意 |
-| `duration_sec` | `float` | フェーズ実行時間（秒） | 任意 |
-| `error` | `str` | エラーメッセージ | エラー時 |
-| `error_type` | `str` | エラークラス名 | エラー時 |
-| `error_detail` | `str` | エラー詳細（トレースバック等） | エラー時 |
-| `error_cause` | `str` | 推定原因 | エラー時（任意） |
-| `next_action` | `str` | ユーザーに求めるアクション | アクション通知時 |
-
----
-
-## 6. SlackNotifier クラスの改修設計
-
-### 6.1 変更ファイル
-
-`src/ai_agent_orchestrator/notifications/slack.py`
-
-### 6.2 新しいクラス構造
-
-```python
-"""SlackNotifier (Webhook 通知)."""
-
-from __future__ import annotations
-
-import logging
-import traceback
-from typing import Any
-
-import httpx
-
-logger = logging.getLogger(__name__)
-
-
-# ── 通知タイプ別絵文字マッピング ──
-
-_NOTIFICATION_EMOJI: dict[str, str] = {
-    "system_start": ":rocket:",
-    "system_health": ":warning:",
-    "issue_received": ":eyes:",
-    "issue_complete": ":white_check_mark:",
-    "phase_start": ":arrow_forward:",
-    "phase_complete": ":ballot_box_with_check:",
-    "action_hearing": ":speech_balloon:",
-    "action_approve": ":thumbsup:",
-    "action_review": ":mag:",
-    "action_split": ":scissors:",
-    "error_timeout": ":hourglass:",
-    "error_phase": ":x:",
-    "error_routing": ":warning:",
-    "error_suspended": ":rotating_light:",
-}
-
-# フォールバック（notification_type 未指定時の level ベース）
-_LEVEL_EMOJI: dict[str, str] = {
-    "info": ":robot_face:",
-    "error": ":x:",
-    "critical": ":rotating_light:",
-}
-
-
-class SlackNotifier:
-    """Slack Webhook による通知送信."""
-
-    def __init__(
-        self,
-        webhook_url: str,
-        default_channel: str | None = None,
-    ) -> None: ...
-
-    async def notify(
-        self,
-        message: str,
-        *,
-        channel: str | None = None,
-        level: str = "info",
-        metadata: dict[str, Any] | None = None,
-    ) -> None: ...
-
-    async def send(self, payload: dict[str, Any]) -> bool: ...
-
-    async def close(self) -> None: ...
-
-    # ── internal ──
-
-    def _build_payload(
-        self,
-        message: str,
-        *,
-        channel: str | None,
-        level: str,
-        metadata: dict[str, Any] | None,
-    ) -> dict[str, Any]:
-        """リッチフォーマットのペイロードを構築する."""
-        ...
-
-    def _build_header_block(
-        self, emoji: str, message: str, metadata: dict[str, Any] | None
-    ) -> dict[str, Any]:
-        """Header Block を構築する."""
-        ...
-
-    def _build_message_block(self, message: str) -> dict[str, Any]:
-        """メインメッセージの Section Block を構築する."""
-        ...
-
-    def _build_fields_block(self, metadata: dict[str, Any]) -> dict[str, Any] | None:
-        """Fields 付き Section Block を構築する."""
-        ...
-
-    def _build_error_detail_block(self, metadata: dict[str, Any]) -> list[dict[str, Any]]:
-        """エラー詳細ブロックを構築する."""
-        ...
-
-    def _build_action_block(self, metadata: dict[str, Any]) -> dict[str, Any] | None:
-        """Actions Block（リンクボタン）を構築する."""
-        ...
-
-    def _build_context_block(self, metadata: dict[str, Any]) -> dict[str, Any] | None:
-        """Context Block（リンク集）を構築する."""
-        ...
-
-    @staticmethod
-    def _resolve_emoji(level: str, metadata: dict[str, Any] | None) -> str:
-        """notification_type → level の優先順位で絵文字を解決する."""
-        ...
-
-    @staticmethod
-    def _format_duration(seconds: float) -> str:
-        """秒数を「X分Y秒」形式にフォーマットする."""
-        ...
-
-    @staticmethod
-    def _format_cost(cost_usd: float) -> str:
-        """コストを「$X.XX」形式にフォーマットする."""
-        ...
-```
-
-### 6.3 `_build_payload()` の詳細ロジック
-
-```python
-def _build_payload(self, message, *, channel, level, metadata):
-    meta = metadata or {}
-    emoji = self._resolve_emoji(level, metadata)
-    blocks = []
-
-    # 1. Header Block
-    blocks.append(self._build_header_block(emoji, message, meta))
-
-    # 2. Message Section Block
-    blocks.append(self._build_message_block(message))
-
-    # 3. Fields Block（metadata がある場合）
-    fields = self._build_fields_block(meta)
+    # 4. Fields Section（コスト・所要時間・フェーズ）
+    fields = self._build_fields(metadata)
     if fields:
-        blocks.append(fields)
+        blocks.append({
+            "type": "section",
+            "fields": fields,
+        })
 
-    # 4. エラー詳細ブロック（エラー系通知の場合）
-    error_blocks = self._build_error_detail_block(meta)
-    blocks.extend(error_blocks)
+    # 5. アクション案内 Section（ユーザーアクション要求系のみ）
+    next_action = metadata.get("next_action")
+    if next_action:
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"👉 *次のアクション*: {next_action}"},
+        })
 
-    # 5. Actions Block（アクション要求通知の場合）
-    actions = self._build_action_block(meta)
-    if actions:
-        blocks.append(actions)
-
-    # 6. Context Block（リンク）
-    context = self._build_context_block(meta)
-    if context:
-        blocks.append(context)
+    # 6. Context Block（共通: repo, issue, PR リンク）
+    context_text = self._build_context_text(metadata)
+    if context_text:
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": context_text}],
+        })
 
     resolved_channel = channel or self._default_channel
-    payload = {"blocks": blocks}
+    payload: dict[str, Any] = {"blocks": blocks}
     if resolved_channel is not None:
         payload["channel"] = resolved_channel
     return payload
 ```
 
-### 6.4 Header Block のフォーマットルール
-
-| notification_type | ヘッダーテキスト |
-|-------------------|-----------------|
-| `system_start` | `🚀 オーケストレーター起動` |
-| `system_health` | `⚠️ ヘルスチェック異常` |
-| `issue_received` | `👀 Issue受付: Issue #{n}` |
-| `issue_complete` | `✅ 完了: Issue #{n}` |
-| `phase_start` | `▶️ {phase} 開始: Issue #{n}` |
-| `phase_complete` | `☑️ {phase} 完了: Issue #{n}` |
-| `action_hearing` | `💬 回答をお願いします: Issue #{n}` |
-| `action_approve` | `👍 承認をお願いします: Issue #{n}` |
-| `action_review` | `🔍 レビューをお願いします: Issue #{n}` |
-| `action_split` | `✂️ 分割判断をお願いします: Issue #{n}` |
-| `error_timeout` | `⏳ タイムアウト: Issue #{n}` |
-| `error_phase` | `❌ エラー発生: Issue #{n}` |
-| `error_routing` | `⚠️ ルーティングエラー` |
-| `error_suspended` | `🚨 Issue停止: Issue #{n}` |
-
-`notification_type` が未指定の場合は `level` ベースのフォールバック:
-- `info`: `🤖 通知`
-- `error`: `❌ エラー`
-- `critical`: `🚨 重大エラー`
-
-### 6.5 Fields Block の構成
-
-metadata に含まれるキーに応じて動的にフィールドを構築する:
+#### 4.3.3 新規メソッド: 絵文字解決
 
 ```python
-def _build_fields_block(self, metadata: dict[str, Any]) -> dict[str, Any] | None:
-    fields = []
+def _resolve_emoji(self, notification_type: str, level: str) -> str:
+    """notification_type を優先し、fallback として level ベースの絵文字を返す.
 
-    if "repo" in metadata:
-        fields.append({"type": "mrkdwn", "text": f"*リポジトリ:*\n`{metadata['repo']}`"})
+    Args:
+        notification_type: 通知タイプ文字列。
+        level: 通知レベル ("info" | "error" | "critical")。
 
-    if "phase" in metadata:
-        fields.append({"type": "mrkdwn", "text": f"*フェーズ:*\n{metadata['phase']}"})
-
-    if "cost_usd" in metadata:
-        fields.append({"type": "mrkdwn", "text": f"*コスト:*\n{self._format_cost(metadata['cost_usd'])}"})
-
-    if "duration_sec" in metadata:
-        fields.append({"type": "mrkdwn", "text": f"*所要時間:*\n{self._format_duration(metadata['duration_sec'])}"})
-
-    if "error_type" in metadata:
-        fields.append({"type": "mrkdwn", "text": f"*エラー種別:*\n{metadata['error_type']}"})
-
-    if not fields:
-        return None
-
-    return {"type": "section", "fields": fields}
+    Returns:
+        Slack 絵文字コード。
+    """
+    if notification_type and notification_type in _NOTIFICATION_TYPE_EMOJI:
+        return _NOTIFICATION_TYPE_EMOJI[notification_type]
+    return _LEVEL_EMOJI.get(level, ":robot_face:")
 ```
 
-### 6.6 エラー詳細ブロック
-
-エラー系通知の場合、追加のブロックを生成する:
+#### 4.3.4 新規メソッド: Fields 構築
 
 ```python
-def _build_error_detail_block(self, metadata: dict[str, Any]) -> list[dict[str, Any]]:
-    blocks = []
+@staticmethod
+def _build_fields(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    """metadata からフィールドブロック用のフィールドリストを構築する.
 
-    # エラーメッセージ
-    error = metadata.get("error")
-    if error:
-        blocks.append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*エラー詳細:*\n```{error}```",
-            },
+    Args:
+        metadata: 付加情報辞書。
+
+    Returns:
+        Slack Block Kit fields 用の辞書リスト。空の場合もある。
+    """
+    fields: list[dict[str, Any]] = []
+
+    phase = metadata.get("phase")
+    if phase:
+        fields.append({
+            "type": "mrkdwn",
+            "text": f"*フェーズ*\n{phase}",
         })
 
-    # エラー詳細（スタックトレース等）
-    error_detail = metadata.get("error_detail")
-    if error_detail:
-        # Slackのブロックテキスト上限(3000文字)を考慮して切り詰め
-        truncated = error_detail[:2500]
-        if len(error_detail) > 2500:
-            truncated += "\n... (truncated)"
-        blocks.append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*スタックトレース:*\n```{truncated}```",
-            },
+    duration_sec = metadata.get("duration_sec")
+    if duration_sec is not None:
+        minutes, seconds = divmod(int(duration_sec), 60)
+        time_str = f"{minutes}分{seconds}秒" if minutes else f"{seconds}秒"
+        fields.append({
+            "type": "mrkdwn",
+            "text": f"*所要時間*\n⏱️ {time_str}",
         })
 
-    # 推定原因
-    error_cause = metadata.get("error_cause")
-    if error_cause:
-        blocks.append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*考えられる原因:*\n{error_cause}",
-            },
+    cost_usd = metadata.get("cost_usd")
+    if cost_usd is not None:
+        fields.append({
+            "type": "mrkdwn",
+            "text": f"*コスト*\n💰 ${cost_usd:.2f}",
         })
 
-    return blocks
+    return fields
 ```
 
----
+### 4.4 metadata キーの拡張
 
-## 7. 通知呼び出し側の改修設計
+現在の metadata キーに加え、以下を新規追加する:
 
-### 7.1 PhaseExecutor 基底クラス (`base.py`)
+| キー | 型 | 説明 | 使用場面 |
+|------|-----|------|---------|
+| `notification_type` | `str` | 通知タイプ（既存だが未活用→活用開始） | 全通知 |
+| `issue_title` | `str` | Issueタイトル | 全Issue関連通知 |
+| `header` | `str` | Headerブロック用テキスト | アクション要求系・エラー系 |
+| `next_action` | `str` | 次アクション案内テキスト | アクション要求系 |
+| `cost_usd` | `float` | 実行コスト（USD） | フェーズ完了時 |
+| `duration_sec` | `float` | 所要時間（秒） | フェーズ完了時 |
+| `error_detail` | `str` | エラーの詳細情報 | エラー系 |
+| `error_analysis` | `str` | 考えられる原因の分析 | エラー系 |
 
-#### 7.1.1 フェーズ開始通知の追加
+既存キー（`repo`, `issue`, `pr`, `pr_url`, `phase`, `error`）は引き続き利用。
 
-`execute()` メソッドにフェーズ開始通知を追加する:
+### 4.5 フェーズ開始通知の追加（base.py）
+
+`PhaseExecutor.execute()` テンプレートメソッド内に開始通知を追加:
 
 ```python
 async def execute(self, request: TaskRequest) -> None:
     try:
-        # ★ 新規: フェーズ開始通知
-        await self._notify_phase_start(request)
-
         await self._tracker.track(
             "phase_start",
             issue_number=request.issue_number,
             phase=str(request.phase),
         )
 
+        # ★ 新規: フェーズ開始通知
+        repo_str = self._get_repo_str(request.repo)
+        issue_title = await self._get_issue_title(request)
+        await self._notifier.notify(
+            f"Issue #{request.issue_number}: {request.phase} フェーズを開始しました",
+            metadata={
+                "notification_type": "phase_start",
+                "repo": repo_str,
+                "issue": request.issue_number,
+                "issue_title": issue_title,
+                "phase": str(request.phase),
+            },
+        )
+
         prompt = await self.build_prompt(request)
         result = await self.run_agent(request, prompt)
         await self.process_result(request, result)
-
-        # ★ 新規: フェーズ完了通知（コスト・時間付き）
-        await self._notify_phase_complete(request, result)
-
-        await self._tracker.track(
-            "phase_end",
-            issue_number=request.issue_number,
-            phase=str(request.phase),
-            data={
-                "cost_usd": result.cost_usd,
-                "duration_sec": result.duration_sec,
-            },
-        )
-    except TimeoutError:
-        await self._handle_timeout(request)
-    except Exception as exc:
-        await self._handle_error(request, exc)
+        # ... (以降は既存のまま)
 ```
 
-#### 7.1.2 新規ヘルパーメソッド
+### 4.6 ヘルパーメソッドの追加（base.py）
 
 ```python
+def _get_repo_str(self, repo: object) -> str:
+    """リポジトリオブジェクトから 'owner/repo' 文字列を取得する.
+
+    Args:
+        repo: リポジトリ設定オブジェクト。
+
+    Returns:
+        'owner/repo' 形式の文字列。取得できない場合は空文字列。
+    """
+    owner = getattr(repo, "owner", "")
+    repo_name = getattr(repo, "repo", "")
+    if owner and repo_name:
+        return f"{owner}/{repo_name}"
+    return ""
+
 async def _get_issue_title(self, request: TaskRequest) -> str:
-    """Issue タイトルを取得する（取得失敗時は空文字列）."""
+    """Issue タイトルを取得する.
+
+    Args:
+        request: タスクリクエスト。
+
+    Returns:
+        Issueタイトル。取得失敗時は空文字列。
+    """
     try:
         client = await self._get_client(request.repo)
         issue = await client.get_issue(request.repo, request.issue_number)
         return issue.title
     except Exception:
+        logger.warning("Failed to get issue title for #%d", request.issue_number)
         return ""
-
-def _build_repo_str(self, request: TaskRequest) -> str:
-    """リポジトリ文字列（owner/repo）を構築する."""
-    owner = getattr(request.repo, "owner", "")
-    repo_name = getattr(request.repo, "repo", "")
-    return f"{owner}/{repo_name}" if owner and repo_name else ""
-
-async def _notify_phase_start(self, request: TaskRequest) -> None:
-    """フェーズ開始通知を送信する."""
-    title = await self._get_issue_title(request)
-    repo_str = self._build_repo_str(request)
-    phase = str(request.phase)
-    issue_num = request.issue_number
-
-    title_part = f"「{title}」" if title else ""
-    await self._notifier.notify(
-        f"Issue #{issue_num} {title_part}の {phase} フェーズを開始します",
-        level="info",
-        metadata={
-            "repo": repo_str,
-            "issue": issue_num,
-            "issue_title": title,
-            "phase": phase,
-            "notification_type": "phase_start",
-        },
-    )
-
-async def _notify_phase_complete(
-    self, request: TaskRequest, result: AgentResult
-) -> None:
-    """フェーズ完了通知を送信する（コスト・時間付き）."""
-    repo_str = self._build_repo_str(request)
-    phase = str(request.phase)
-    issue_num = request.issue_number
-
-    await self._notifier.notify(
-        f"Issue #{issue_num} の {phase} フェーズが完了しました",
-        level="info",
-        metadata={
-            "repo": repo_str,
-            "issue": issue_num,
-            "phase": phase,
-            "notification_type": "phase_complete",
-            "cost_usd": result.cost_usd,
-            "duration_sec": result.duration_sec,
-        },
-    )
 ```
 
-#### 7.1.3 エラー処理の改善
+### 4.7 エラー原因分析ロジック（base.py）
+
+```python
+@staticmethod
+def _analyze_error(error: Exception, phase: str) -> str:
+    """エラーの考えられる原因を分析する.
+
+    Args:
+        error: 発生した例外。
+        phase: エラー発生時のフェーズ。
+
+    Returns:
+        考えられる原因のマークダウンテキスト（箇条書き）。
+    """
+    error_str = str(error)
+    causes: list[str] = []
+
+    # ステートマシン遷移エラー
+    if "No transition defined" in error_str or "transition" in error_str.lower():
+        causes.append("ステートマシンの遷移定義に不足がある可能性があります")
+        causes.append("同一フェーズへの再遷移が試行されている可能性があります")
+
+    # 認証エラー
+    elif "401" in error_str or "403" in error_str or "auth" in error_str.lower():
+        causes.append("GitHub トークンが期限切れまたは権限不足の可能性があります")
+        causes.append("`credential` の設定を確認してください")
+
+    # Git 関連
+    elif "git" in error_str.lower() or "conflict" in error_str.lower():
+        causes.append("Gitの競合が発生している可能性があります")
+        causes.append("worktreeのクリーンアップが必要な可能性があります")
+
+    # タイムアウト関連
+    elif "timeout" in error_str.lower():
+        causes.append("エージェント実行が制限時間を超過しました")
+        causes.append(f"`PHASE_CONFIG['{phase}'].timeout_sec` の調整を検討してください")
+
+    # PR関連
+    elif "pr" in error_str.lower() or "pull request" in error_str.lower():
+        causes.append("PR作成/検索に失敗しています")
+        causes.append("ブランチが正しくpushされていない可能性があります")
+
+    # API レート制限
+    elif "rate limit" in error_str.lower() or "429" in error_str:
+        causes.append("GitHub API のレート制限に達しています")
+        causes.append("しばらく待ってからリトライしてください")
+
+    # デフォルト
+    if not causes:
+        causes.append("予期しないエラーです。ログを確認してください")
+        causes.append(f"フェーズ `{phase}` の実行中に発生しました")
+
+    return "\n".join(f"• {c}" for c in causes)
+```
+
+### 4.8 エラー通知の改善（base.py）
+
+#### _handle_error 改修
 
 ```python
 async def _handle_error(self, request: TaskRequest, error: Exception) -> None:
-    """エラー処理: SUSPENDED 遷移 + Issue コメント + 詳細通知."""
+    """エラー処理: SUSPENDED 遷移 + Issue コメント + リッチ通知."""
+    import traceback
+
     await self._sm.transition(request.issue_number, "suspended")
     client = await self._get_client(request.repo)
     try:
@@ -796,68 +565,37 @@ async def _handle_error(self, request: TaskRequest, error: Exception) -> None:
         f"エラーが発生しました: {error}",
     )
 
-    # ★ 改善: エラー詳細情報を含む通知
-    repo_str = self._build_repo_str(request)
-    error_detail = traceback.format_exception(type(error), error, error.__traceback__)
-    error_detail_str = "".join(error_detail)
-    error_cause = self._analyze_error_cause(error)
+    repo_str = self._get_repo_str(request.repo)
+    issue_title = await self._get_issue_title(request)
+    error_detail = "".join(
+        traceback.format_exception(type(error), error, error.__traceback__)
+    )
+    # スタックトレースが長すぎる場合は末尾を切り詰め
+    if len(error_detail) > 1500:
+        error_detail = error_detail[:1500] + "\n... (truncated)"
+    error_analysis = self._analyze_error(error, str(request.phase))
 
     await self._notifier.notify(
-        f"Issue #{request.issue_number} の {request.phase} フェーズでエラーが発生しました",
+        f"Issue #{request.issue_number} でエラーが発生しました",
         level="error",
         metadata={
+            "notification_type": "error",
             "repo": repo_str,
             "issue": request.issue_number,
+            "issue_title": issue_title,
             "phase": str(request.phase),
-            "notification_type": "error_phase",
-            "error": str(error),
-            "error_type": type(error).__name__,
-            "error_detail": error_detail_str,
-            "error_cause": error_cause,
+            "header": f"Issue #{request.issue_number}: エラー発生",
+            "error_detail": str(error),
+            "error_analysis": error_analysis,
         },
     )
-
-@staticmethod
-def _analyze_error_cause(error: Exception) -> str:
-    """エラーの推定原因を分析する."""
-    error_msg = str(error).lower()
-
-    if "no transition defined" in error_msg:
-        return (
-            "• ステートマシンの遷移定義に該当の遷移が含まれていない\n"
-            "• 同一フェーズへの再遷移が試行された可能性\n"
-            "• 前のフェーズからの遷移先が正しく設定されていない可能性"
-        )
-    if "timeout" in error_msg:
-        return (
-            "• エージェント実行が制限時間を超過した\n"
-            "• 対象コードベースが大きすぎる可能性\n"
-            "• APIレート制限に到達した可能性"
-        )
-    if "rate limit" in error_msg or "429" in error_msg:
-        return (
-            "• GitHub API または Claude API のレート制限に到達した\n"
-            "• しばらく待ってからリトライしてください"
-        )
-    if "auth" in error_msg or "401" in error_msg or "403" in error_msg:
-        return (
-            "• 認証トークンが無効または期限切れ\n"
-            "• トークンの権限が不足している可能性"
-        )
-    if "conflict" in error_msg or "merge" in error_msg:
-        return (
-            "• Gitのマージコンフリクトが発生した\n"
-            "• ベースブランチが更新されている可能性"
-        )
-
-    return "• 詳細はスタックトレースを確認してください"
 ```
 
-#### 7.1.4 タイムアウト処理の改善
+#### _handle_timeout 改修
 
 ```python
 async def _handle_timeout(self, request: TaskRequest) -> None:
-    """タイムアウト処理: セッション中断 + SUSPENDED 遷移 + 詳細通知."""
+    """タイムアウト処理: セッション中断 + SUSPENDED 遷移 + リッチ通知."""
     state = self._sm.get_state(request.issue_number)
     if state and state.session_id:
         await self._runner.interrupt(state.session_id)
@@ -874,286 +612,87 @@ async def _handle_timeout(self, request: TaskRequest) -> None:
             request.issue_number,
         )
 
-    repo_str = self._build_repo_str(request)
+    repo_str = self._get_repo_str(request.repo)
+    issue_title = await self._get_issue_title(request)
+
     await self._notifier.notify(
         f"Issue #{request.issue_number} の {request.phase} フェーズがタイムアウトしました",
         level="error",
         metadata={
+            "notification_type": "timeout",
             "repo": repo_str,
             "issue": request.issue_number,
+            "issue_title": issue_title,
             "phase": str(request.phase),
-            "notification_type": "error_timeout",
-            "error": f"{request.phase} フェーズが制限時間内に完了しませんでした",
-            "error_type": "TimeoutError",
-            "error_cause": (
-                "• エージェント実行が制限時間を超過した\n"
-                "• 対象コードベースが大きすぎる可能性\n"
-                "• APIレート制限に到達した可能性"
+            "header": f"Issue #{request.issue_number}: タイムアウト",
+            "error_detail": f"{request.phase} フェーズが制限時間を超過しました",
+            "error_analysis": (
+                f"• エージェント実行が制限時間を超過しました\n"
+                f"• `PHASE_CONFIG['{request.phase}'].timeout_sec` の調整を検討してください"
             ),
         },
     )
 ```
 
-### 7.2 各フェーズファイルの改修
+### 4.9 各フェーズの通知メッセージ改善
 
-フェーズ個別の通知（アクション要求系）は、`notification_type` と追加メタデータを付与する形で改修する。
-**フェーズ開始・完了通知は `base.py` で一括処理**するため、個別フェーズでは削除する。
+#### 4.9.1 共通パターン
 
-#### 7.2.1 hearing.py
-
-```python
-# Before:
-await self._notifier.notify(
-    f"Issue #{request.issue_number} に質問を投稿しました。回答をお願いします",
-    metadata={"issue": request.issue_number},
-)
-
-# After:
-repo_str = self._build_repo_str(request)
-title = await self._get_issue_title(request)
-await self._notifier.notify(
-    f"Issue #{request.issue_number} 「{title}」にヒアリング質問を投稿しました。\n"
-    f"Issueコメントで回答をお願いします。",
-    level="info",
-    metadata={
-        "repo": repo_str,
-        "issue": request.issue_number,
-        "issue_title": title,
-        "phase": "hearing",
-        "notification_type": "action_hearing",
-        "next_action": "Issueコメントで回答してください",
-    },
-)
-```
-
-#### 7.2.2 analysis.py
+全フェーズで以下のパターンに統一する。`process_result()` 内の `notify()` 呼び出しで
+repo, issue_title, notification_type, cost_usd, duration_sec, header, next_action を設定する。
 
 ```python
-# After:
-repo_str = self._build_repo_str(request)
-title = await self._get_issue_title(request)
+# process_result() 内の共通パターン例
+repo_str = self._get_repo_str(request.repo)
+issue_title = await self._get_issue_title(request)
+
 await self._notifier.notify(
-    f"Issue #{request.issue_number} 「{title}」の修正方針を投稿しました。\n"
-    f"👍リアクションで承認をお願いします。",
-    level="info",
+    f"Issue #{request.issue_number} の設計PR #{pr_number} を作成しました。レビューをお願いします",
     metadata={
+        "notification_type": "design_pr_created",
         "repo": repo_str,
         "issue": request.issue_number,
-        "issue_title": title,
-        "phase": "analysis",
-        "notification_type": "action_approve",
-        "next_action": "コメントに👍リアクションで承認してください",
-    },
-)
-```
-
-#### 7.2.3 plan_brief.py
-
-```python
-# After:
-repo_str = self._build_repo_str(request)
-title = await self._get_issue_title(request)
-await self._notifier.notify(
-    f"Issue #{request.issue_number} 「{title}」の実装方針を投稿しました。\n"
-    f"👍リアクションで承認をお願いします。",
-    level="info",
-    metadata={
-        "repo": repo_str,
-        "issue": request.issue_number,
-        "issue_title": title,
-        "phase": "plan-brief",
-        "notification_type": "action_approve",
-        "next_action": "コメントに👍リアクションで承認してください",
-    },
-)
-```
-
-#### 7.2.4 design.py
-
-```python
-# After:
-repo_str = self._build_repo_str(request)
-title = await self._get_issue_title(request)
-await self._notifier.notify(
-    f"Issue #{request.issue_number} 「{title}」の設計PR #{pr_number} を作成しました。\n"
-    f"PRをレビューして approve をお願いします。",
-    level="info",
-    metadata={
-        "repo": repo_str,
-        "issue": request.issue_number,
-        "issue_title": title,
+        "issue_title": issue_title,
         "pr": pr_number,
         "pr_url": f"https://github.com/{repo_str}/pull/{pr_number}",
-        "phase": "design",
-        "notification_type": "action_review",
-        "next_action": "設計PRをレビューしてapproveしてください",
+        "phase": str(request.phase),
+        "cost_usd": result.cost_usd,
+        "duration_sec": result.duration_sec,
+        "header": f"Issue #{request.issue_number}: 設計PR作成",
+        "next_action": "設計PRをレビューして approve してください",
     },
 )
 ```
 
-#### 7.2.5 implement.py
+#### 4.9.2 各フェーズの通知定義一覧
+
+| フェーズ | notification_type | メッセージ | next_action | header |
+|---------|------------------|-----------|-------------|--------|
+| hearing | `hearing_question` | `Issue #{n} に質問を投稿しました。回答をお願いします` | `Issueコメントで回答してください` | `Issue #{n}: ヒアリング質問` |
+| analysis | `plan_posted` | `Issue #{n} の修正方針を投稿しました` | `👍リアクションで承認、修正はコメントで指摘してください` | `Issue #{n}: 修正方針投稿` |
+| plan_brief | `plan_posted` | `Issue #{n} の実装方針を投稿しました` | `👍リアクションで承認、修正はコメントで指摘してください` | `Issue #{n}: 実装方針投稿` |
+| design | `design_pr_created` | `Issue #{n} の設計PR #{pr} を作成しました` | `設計PRをレビューして approve してください` | `Issue #{n}: 設計PR作成` |
+| design_revise | `design_revised` | `Issue #{n} の設計書を修正しました` | `設計PRで再レビューをお願いします` | `Issue #{n}: 設計修正` |
+| implement | `impl_pr_created` | `Issue #{n} の実装PR #{pr} を作成しました` | `実装PRをレビューして approve してください` | `Issue #{n}: 実装PR作成` |
+| fix | `fix_pr_created` | `Issue #{n} の修正PR #{pr} を作成しました` | `修正PRをレビューして approve してください` | `Issue #{n}: 修正PR作成` |
+| impl_revise | `impl_revised` | `Issue #{n} の実装を修正しました` | `実装PRで再レビューをお願いします` | `Issue #{n}: 実装修正` |
+| split (提案) | `split_proposed` | `Issue #{n} の分割を提案しました` | `👍リアクションで承認、修正はコメントで指示してください` | `Issue #{n}: 分割提案` |
+| split (完了) | `split_done` | `Issue #{n} の分割が完了しました` | _(なし)_ | `Issue #{n}: 分割完了` |
+| done | `issue_done` | `Issue #{n} が完了しました` | _(なし)_ | `Issue #{n}: 完了` |
+
+### 4.10 オーケストレーターの通知改善（orchestrator.py）
+
+すべてのメッセージを日本語に統一し、metadata を充実させる。
 
 ```python
-# After:
-repo_str = self._build_repo_str(request)
-title = await self._get_issue_title(request)
+# 起動時
 await self._notifier.notify(
-    f"Issue #{request.issue_number} 「{title}」の実装PR #{pr_number} を作成しました。\n"
-    f"PRをレビューして approve をお願いします。",
-    level="info",
-    metadata={
-        "repo": repo_str,
-        "issue": request.issue_number,
-        "issue_title": title,
-        "pr": pr_number,
-        "pr_url": f"https://github.com/{repo_str}/pull/{pr_number}",
-        "phase": "implement",
-        "notification_type": "action_review",
-        "next_action": "実装PRをレビューしてapproveしてください",
-    },
-)
-```
-
-#### 7.2.6 fix.py
-
-```python
-# After:
-repo_str = self._build_repo_str(request)
-title = await self._get_issue_title(request)
-await self._notifier.notify(
-    f"Issue #{request.issue_number} 「{title}」の修正PR #{pr_number} を作成しました。\n"
-    f"PRをレビューして approve をお願いします。",
-    level="info",
-    metadata={
-        "repo": repo_str,
-        "issue": request.issue_number,
-        "issue_title": title,
-        "pr": pr_number,
-        "pr_url": f"https://github.com/{repo_str}/pull/{pr_number}",
-        "phase": "fix",
-        "notification_type": "action_review",
-        "next_action": "修正PRをレビューしてapproveしてください",
-    },
-)
-```
-
-#### 7.2.7 design_revise.py / impl_revise.py
-
-フェーズ完了通知は `base.py` の `_notify_phase_complete()` で処理されるため、
-個別の notify 呼び出しは **再レビュー要求通知** に変更する:
-
-```python
-# design_revise.py
-repo_str = self._build_repo_str(request)
-title = await self._get_issue_title(request)
-await self._notifier.notify(
-    f"Issue #{request.issue_number} 「{title}」の設計書を修正しました。\n"
-    f"再レビューをお願いします。",
-    level="info",
-    metadata={
-        "repo": repo_str,
-        "issue": request.issue_number,
-        "issue_title": title,
-        "phase": "design-revise",
-        "notification_type": "action_review",
-        "next_action": "設計PRを再レビューしてapproveしてください",
-    },
-)
-
-# impl_revise.py
-repo_str = self._build_repo_str(request)
-title = await self._get_issue_title(request)
-await self._notifier.notify(
-    f"Issue #{request.issue_number} 「{title}」の実装を修正しました。\n"
-    f"再レビューをお願いします。",
-    level="info",
-    metadata={
-        "repo": repo_str,
-        "issue": request.issue_number,
-        "issue_title": title,
-        "phase": "impl-revise",
-        "notification_type": "action_review",
-        "next_action": "実装PRを再レビューしてapproveしてください",
-    },
-)
-```
-
-#### 7.2.8 split.py
-
-```python
-# 分割提案
-repo_str = self._build_repo_str(request)
-title = await self._get_issue_title(request)
-await self._notifier.notify(
-    f"Issue #{request.issue_number} 「{title}」の分割を提案しました。\n"
-    f"判断をお願いします。",
-    level="info",
-    metadata={
-        "repo": repo_str,
-        "issue": request.issue_number,
-        "issue_title": title,
-        "phase": "split-proposal",
-        "notification_type": "action_split",
-        "next_action": "分割案を確認し、👍リアクションで承認してください",
-    },
-)
-
-# 分割完了
-await self._notifier.notify(
-    f"Issue #{request.issue_number} 「{title}」の分割が完了しました",
-    level="info",
-    metadata={
-        "repo": repo_str,
-        "issue": request.issue_number,
-        "issue_title": title,
-        "phase": "split-execute",
-        "notification_type": "phase_complete",
-    },
-)
-```
-
-#### 7.2.9 done.py
-
-```python
-# Issue 完了
-repo_str = self._build_repo_str(request)
-title = await self._get_issue_title(request)
-await self._notifier.notify(
-    f"Issue #{request.issue_number} 「{title}」が完了しました 🎉",
-    level="info",
-    metadata={
-        "repo": repo_str,
-        "issue": request.issue_number,
-        "issue_title": title,
-        "phase": "done",
-        "notification_type": "issue_complete",
-    },
-)
-
-# 連鎖Issue開始
-await self._notifier.notify(
-    f"Issue #{candidate.number} の処理を開始します（#{request.issue_number} 完了による連鎖）",
-    level="info",
-    metadata={
-        "repo": repo_str,
-        "issue": candidate.number,
-        "notification_type": "issue_received",
-    },
-)
-```
-
-### 7.3 Orchestrator の改修
-
-`orchestrator.py` の通知呼び出しを日本語化し、`notification_type` を付与する:
-
-```python
-# 起動通知
-await self._notifier.notify(
-    "オーケストレーターが起動しました",
+    "オーケストレーターを起動しました",
     level="info",
     metadata={
         "notification_type": "system_start",
         "repos": [f"{r.owner}/{r.repo}" for r in self._settings.repositories],
+        "header": "オーケストレーター起動",
     },
 )
 
@@ -1162,198 +701,321 @@ await self._notifier.notify(
     f"イベントルーティングでエラーが発生しました: {exc}",
     level="error",
     metadata={
-        "notification_type": "error_routing",
-        "error": str(exc),
-        "error_type": type(exc).__name__,
+        "notification_type": "event_error",
+        "header": "イベントルーティングエラー",
+        "error_detail": str(exc),
     },
 )
 
-# Issue停止
+# Issue中断時
 await self._notifier.notify(
-    f"Issue #{issue_number} がエラーにより停止しました",
+    f"Issue #{issue_number} をエラーにより中断しました",
     level="error",
     metadata={
+        "notification_type": "error",
+        "repo": repo_str,
         "issue": issue_number,
-        "phase": task.phase,
-        "notification_type": "error_suspended",
-        "error": str(error),
-        "error_type": type(error).__name__,
+        "header": f"Issue #{issue_number}: 中断",
+        "error_detail": str(error),
     },
 )
 
 # ヘルスチェック失敗
 await self._notifier.notify(
-    f"ヘルスチェックに失敗しました: {', '.join(unhealthy)}",
+    f"ヘルスチェック失敗: {', '.join(unhealthy)}",
     level="error",
     metadata={
         "notification_type": "system_health",
-        "error": f"異常コンポーネント: {', '.join(unhealthy)}",
+        "header": "ヘルスチェック失敗",
+        "error_detail": f"異常検知: {', '.join(unhealthy)}",
     },
 )
 ```
 
-### 7.4 EventRouter での Issue 受付通知
+### 4.11 Issue受付通知の追加（orchestrator.py）
 
-`event_router.py` の `NEW_ISSUE` イベント処理に Issue 受付通知を追加:
+`EventRouter` で `NEW_ISSUE` イベント処理時に通知を追加:
 
 ```python
-# NEW_ISSUE 処理内
+# NEW_ISSUE イベント処理内
 await self._notifier.notify(
-    f"Issue #{issue_number} 「{issue_title}」を受け付けました。処理を開始します。",
-    level="info",
+    f"Issue #{issue_number} を受け付けました",
     metadata={
+        "notification_type": "issue_received",
         "repo": f"{repo.owner}/{repo.repo}",
         "issue": issue_number,
         "issue_title": issue_title,
-        "notification_type": "issue_received",
+        "header": f"Issue #{issue_number}: 新規Issue受付",
     },
 )
 ```
 
 ---
 
-## 8. 変更対象ファイル一覧
+## 5. ペイロード例
 
-| # | ファイル | 変更内容 | 影響度 |
-|---|---------|---------|--------|
-| 1 | `notifications/slack.py` | リッチフォーマット対応、全面改修 | **大** |
-| 2 | `phases/base.py` | フェーズ開始/完了通知追加、エラー詳細改善、ヘルパーメソッド追加 | **大** |
-| 3 | `orchestrator/orchestrator.py` | 通知の日本語化、notification_type追加 | **中** |
-| 4 | `poller/event_router.py` | Issue受付通知追加 | **小** |
-| 5 | `phases/hearing.py` | 通知メタデータ拡充 | **小** |
-| 6 | `phases/analysis.py` | 通知メタデータ拡充 | **小** |
-| 7 | `phases/plan_brief.py` | 通知メタデータ拡充 | **小** |
-| 8 | `phases/design.py` | 通知メタデータ拡充 | **小** |
-| 9 | `phases/implement.py` | 通知メタデータ拡充 | **小** |
-| 10 | `phases/fix.py` | 通知メタデータ拡充 | **小** |
-| 11 | `phases/design_revise.py` | 通知メタデータ拡充 | **小** |
-| 12 | `phases/impl_revise.py` | 通知メタデータ拡充 | **小** |
-| 13 | `phases/split.py` | 通知メタデータ拡充 | **小** |
-| 14 | `phases/done.py` | 通知メタデータ拡充 | **小** |
-| 15 | `tests/unit/test_slack.py` | リッチフォーマット対応のテスト更新・追加 | **大** |
-| 16 | `tests/unit/test_phases.py` | フェーズ開始/完了通知のテスト追加 | **中** |
+### 5.1 フェーズ開始通知（情報通知系）
+
+```json
+{
+    "channel": "#ai-agent",
+    "blocks": [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": ":arrow_forward: Issue #42: implement フェーズを開始しました\n\n*Issueタイトル*: ログイン画面のリデザイン"
+            }
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": "*フェーズ*\nimplement"}
+            ]
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": ":package: `org/repo` | :page_facing_up: <https://github.com/org/repo/issues/42|Issue #42>"
+                }
+            ]
+        }
+    ]
+}
+```
+
+### 5.2 設計PR作成通知（ユーザーアクション要求系）
+
+```json
+{
+    "channel": "#ai-agent",
+    "blocks": [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "Issue #42: 設計PR作成", "emoji": true}
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": ":pencil: Issue #42 の設計PR #10 を作成しました。レビューをお願いします\n\n*Issueタイトル*: ログイン画面のリデザイン"
+            }
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": "*フェーズ*\ndesign"},
+                {"type": "mrkdwn", "text": "*所要時間*\n⏱️ 3分24秒"},
+                {"type": "mrkdwn", "text": "*コスト*\n💰 $1.23"}
+            ]
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "👉 *次のアクション*: 設計PRをレビューして approve してください"
+            }
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": ":package: `org/repo` | :page_facing_up: <https://github.com/org/repo/issues/42|Issue #42> | :memo: <https://github.com/org/repo/pull/10|PR #10>"
+                }
+            ]
+        }
+    ]
+}
+```
+
+### 5.3 エラー通知（エラー系）
+
+```json
+{
+    "channel": "#ai-agent",
+    "blocks": [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "Issue #42: エラー発生", "emoji": true}
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": ":x: Issue #42 でエラーが発生しました\n\n*Issueタイトル*: ログイン画面のリデザイン"
+            }
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "*エラー内容*:\n```No transition defined from Phase.DESIGN to Phase.DESIGN```"
+            }
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "*考えられる原因*:\n• ステートマシンの遷移定義に不足がある可能性があります\n• 同一フェーズへの再遷移が試行されている可能性があります"
+            }
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": "*フェーズ*\ndesign"}
+            ]
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": ":package: `org/repo` | :page_facing_up: <https://github.com/org/repo/issues/42|Issue #42>"
+                }
+            ]
+        }
+    ]
+}
+```
+
+### 5.4 Issue完了通知
+
+```json
+{
+    "channel": "#ai-agent",
+    "blocks": [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "Issue #42: 完了", "emoji": true}
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": ":white_check_mark: Issue #42 が完了しました\n\n*Issueタイトル*: ログイン画面のリデザイン"
+            }
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": ":package: `org/repo` | :page_facing_up: <https://github.com/org/repo/issues/42|Issue #42>"
+                }
+            ]
+        }
+    ]
+}
+```
+
+### 5.5 後方互換（metadata なし）
+
+```json
+{
+    "blocks": [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": ":robot_face: シンプルなメッセージ"
+            }
+        }
+    ]
+}
+```
 
 ---
 
-## 9. テスト計画
+## 6. 実装計画
 
-### 9.1 SlackNotifier テスト更新 (`tests/unit/test_slack.py`)
+### ステップ1: SlackNotifier コア改修（slack.py）
+1. `_NOTIFICATION_TYPE_EMOJI` 辞書を追加
+2. `_resolve_emoji()` メソッドを追加
+3. `_build_fields()` メソッドを追加
+4. `_build_payload()` をリッチフォーマット対応に改修
+5. `_build_context_text()` は既存ロジックを維持（後方互換）
 
-#### 既存テストの更新
+### ステップ2: models.py に NotificationType 追加
+1. `NotificationType` StrEnum を追加
 
-| テスト | 変更内容 |
-|--------|---------|
-| TC-SL-01 | Header Block の存在を検証に追加 |
-| TC-SL-02 | `notification_type` ベースの絵文字解決を検証 |
-| TC-SL-04 | Fields Block の構造を検証 |
+### ステップ3: base.py 改修
+1. `_get_repo_str()` ヘルパーメソッド追加
+2. `_get_issue_title()` ヘルパーメソッド追加
+3. `_analyze_error()` 静的メソッド追加
+4. `execute()` にフェーズ開始通知を追加
+5. `_handle_error()` をリッチ通知に改修
+6. `_handle_timeout()` をリッチ通知に改修
 
-#### 新規テスト
+### ステップ4: 各フェーズの通知改善
+1. `hearing.py` - notification_type, repo, issue_title, next_action, cost_usd, duration_sec 追加
+2. `analysis.py` - 同上
+3. `plan_brief.py` - 同上
+4. `design.py` - 同上
+5. `design_revise.py` - 同上
+6. `implement.py` - 同上
+7. `fix.py` - 同上
+8. `impl_revise.py` - 同上
+9. `split.py` - 同上
+10. `done.py` - 同上
 
-| テスト ID | テスト内容 |
-|----------|-----------|
-| TC-SL-14 | `notification_type` 指定時に正しい絵文字が使用される |
-| TC-SL-15 | `notification_type` 未指定時に `level` ベースのフォールバックが動作する |
-| TC-SL-16 | Header Block のテキストが `notification_type` に応じて正しい |
-| TC-SL-17 | Fields Block に `repo`, `phase`, `cost_usd`, `duration_sec` が含まれる |
-| TC-SL-18 | エラー通知時にエラー詳細ブロックが含まれる |
-| TC-SL-19 | エラー通知時に推定原因ブロックが含まれる |
-| TC-SL-20 | エラー詳細が3000文字を超える場合に切り詰められる |
-| TC-SL-21 | Actions Block にリンクボタンが含まれる（アクション通知時） |
-| TC-SL-22 | `_format_duration()` が正しいフォーマットを返す |
-| TC-SL-23 | `_format_cost()` が正しいフォーマットを返す |
-| TC-SL-24 | metadata が空の場合でも Header + Message の最小構成で送信される |
+### ステップ5: orchestrator.py 改修
+1. 起動メッセージを日本語化
+2. イベントルーティングエラーを日本語化
+3. Issue中断メッセージを日本語化
+4. ヘルスチェック失敗メッセージを日本語化
+5. Issue受付通知を追加
 
-### 9.2 PhaseExecutor テスト更新 (`tests/unit/test_phases.py`)
+### ステップ6: テスト更新
+1. `test_slack.py` - リッチフォーマットのテスト追加
+   - TC-SL-14: notification_type 別絵文字テスト
+   - TC-SL-15: Header ブロックが含まれることのテスト
+   - TC-SL-16: Fields ブロック（コスト・所要時間）テスト
+   - TC-SL-17: next_action セクションテスト
+   - TC-SL-18: error_detail + error_analysis テスト
+   - TC-SL-19: issue_title がメインテキストに含まれるテスト
+   - TC-SL-20: _resolve_emoji の優先度テスト
+   - TC-SL-21: _build_fields のテスト
+   - TC-SL-22: metadata なしの後方互換テスト
+2. `test_phases.py` - フェーズ開始通知が送信されることのテスト追加
 
-| テスト ID | テスト内容 |
-|----------|-----------|
-| TC-PH-XX | フェーズ開始時に `phase_start` 通知が送信される |
-| TC-PH-XX | フェーズ完了時に `phase_complete` 通知が送信される（コスト・時間付き） |
-| TC-PH-XX | エラー時に `error_phase` 通知が送信される（詳細情報付き） |
-| TC-PH-XX | タイムアウト時に `error_timeout` 通知が送信される |
-| TC-PH-XX | `_analyze_error_cause()` が各エラーパターンを正しく分析する |
-
----
-
-## 10. 実装手順
-
-### Step 1: SlackNotifier の改修（`notifications/slack.py`）
-
-1. `_NOTIFICATION_EMOJI` マッピングを追加
-2. `_resolve_emoji()` メソッドを実装
-3. `_build_header_block()` メソッドを実装
-4. `_build_fields_block()` メソッドを実装
-5. `_build_error_detail_block()` メソッドを実装
-6. `_build_action_block()` メソッドを実装
-7. `_build_context_block()` メソッドを既存の `_build_context_text()` から移行
-8. `_format_duration()` / `_format_cost()` ユーティリティを実装
-9. `_build_payload()` を新構造で再実装
-10. テスト更新・追加
-
-### Step 2: PhaseExecutor 基底クラスの改修（`phases/base.py`）
-
-1. `_build_repo_str()` ヘルパーを追加
-2. `_get_issue_title()` ヘルパーを追加
-3. `_notify_phase_start()` を追加
-4. `_notify_phase_complete()` を追加
-5. `_analyze_error_cause()` を追加
-6. `_handle_error()` を改善
-7. `_handle_timeout()` を改善
-8. `execute()` にフェーズ開始/完了通知を追加
-9. テスト更新・追加
-
-### Step 3: 各フェーズファイルの改修
-
-1. `hearing.py` の通知改修
-2. `analysis.py` の通知改修
-3. `plan_brief.py` の通知改修
-4. `design.py` の通知改修
-5. `implement.py` の通知改修
-6. `fix.py` の通知改修
-7. `design_revise.py` の通知改修
-8. `impl_revise.py` の通知改修
-9. `split.py` の通知改修
-10. `done.py` の通知改修
-
-### Step 4: Orchestrator / EventRouter の改修
-
-1. `orchestrator.py` の通知日本語化 + metadata拡充
-2. `event_router.py` に Issue受付通知を追加
-
-### Step 5: テスト実行・検証
-
-1. `uv run pytest tests/unit/test_slack.py -v`
-2. `uv run pytest tests/unit/test_phases.py -v`
-3. `uv run pytest tests/ -v`（全テスト）
-4. `uv run mypy src/`（型チェック）
-5. `uv run ruff check src/ tests/`（lint）
+### ステップ7: 仕様書更新
+1. `docs/specs/slack.md` を新フォーマットに合わせて更新
 
 ---
 
-## 11. 後方互換性
+## 7. テスト方針
 
-### 11.1 互換性を維持する設計
+### 7.1 ユニットテスト
 
-- `notify()` メソッドのシグネチャは変更しない
-- `metadata` に新しいキーを追加する形で拡張（既存キーはそのまま）
-- `notification_type` 未指定の場合は従来通り `level` ベースのフォールバック動作
-- `NullNotifier` は変更不要（`notify()` シグネチャが同じ）
+- **SlackNotifier**: `_build_payload()` の出力を JSON 構造で検証
+- **PhaseExecutor**: フェーズ開始通知が `_notifier.notify()` に正しい引数で渡されることを検証
+- **_analyze_error()**: 各エラーパターンに対する原因分析結果を検証
+- **_resolve_emoji()**: notification_type 優先、level フォールバックの動作を検証
+- **_build_fields()**: phase, duration_sec, cost_usd の各パターンを検証
 
-### 11.2 破壊的変更
+### 7.2 後方互換テスト
 
-- ペイロード構造の変更（`section` + `context` → `header` + `section` + `fields` + `context`）
-  - ※ Slack Webhook の受信側（Slack）は Block Kit の任意構造を受け入れるため、受信側への影響なし
-- テストでペイロード構造をアサートしている箇所は更新が必要
+- metadata が空/None の場合に既存と同等の出力になることを検証
+- `notification_type` 未指定時に `level` ベースの絵文字にフォールバックすることを検証
+- 既存の13テストケース（TC-SL-01〜TC-SL-13）が引き続きパスすることを確認
+
+### 7.3 統合テスト
+
+- 実際の Slack Webhook にテストメッセージを送信し、表示を目視確認（手動）
 
 ---
 
-## 12. 見積もり
+## 8. リスクと対策
 
-| ステップ | 作業内容 | 見積もり |
-|---------|---------|---------|
-| Step 1 | SlackNotifier 改修 + テスト | 中 |
-| Step 2 | PhaseExecutor 基底クラス改修 + テスト | 中 |
-| Step 3 | 各フェーズファイル改修（10ファイル） | 小〜中 |
-| Step 4 | Orchestrator / EventRouter 改修 | 小 |
-| Step 5 | 統合テスト・検証 | 小 |
-| **合計** | | **feature-m 相当** |
+| リスク | 影響 | 対策 |
+|-------|------|------|
+| `_get_issue_title()` のAPI呼び出しが通知速度を低下させる | 通知遅延 | best-effort で失敗時は空文字列。キャッシュは将来対応 |
+| Block Kit のブロック数制限に抵触 | 通知失敗 | Slack制限は最大50ブロック。本設計では最大7ブロック程度のため問題なし |
+| エラー原因分析が的外れな場合がある | ユーザー混乱 | 「考えられる原因」として可能性を列挙。断定しない表現を使用 |
+| 既存テストの破損 | CI失敗 | `_build_payload()` の後方互換を維持。新フィールドは追加のみ |
+| フェーズ開始通知で通知量が倍増 | Slackチャンネルのノイズ増加 | 開始通知はシンプルなレイアウト（Header なし）で情報量を抑制 |
+| スタックトレースがSlackメッセージ長制限を超える | 通知失敗 | 1500文字で切り詰め処理を入れる |
