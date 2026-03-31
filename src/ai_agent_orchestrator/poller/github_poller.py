@@ -466,9 +466,9 @@ class GitHubPoller:
                 default=None,
             )
             human_comments = [
-                c for c in comments
-                if not _is_bot_comment(c.body or "")
-                and (last_bot_time is None or c.created_at > last_bot_time)
+                c
+                for c in comments
+                if not _is_bot_comment(c.body or "") and (last_bot_time is None or c.created_at > last_bot_time)
             ]
             for hc in human_comments:
                 # BUG #4: Deduplicate split modified events

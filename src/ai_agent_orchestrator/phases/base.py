@@ -20,8 +20,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _APPROVE_ACTION = (
-    "👍 **次のアクション**: この方針でよければ"
-    "**コメントに👍リアクション**、修正があれば**コメントで指摘**してください"
+    "👍 **次のアクション**: この方針でよければ**コメントに👍リアクション**、修正があれば**コメントで指摘**してください"
 )
 _SPLIT_APPROVE_ACTION = (
     "👍 **次のアクション**: この分割案でよければ"
@@ -485,9 +484,7 @@ class PhaseExecutor(ABC):
             issue = await client.get_issue(request.repo, request.issue_number)
             title = f"{title_prefix}#{request.issue_number} {issue.title}".strip()
             body = (
-                f"Closes #{request.issue_number}\n\n"
-                f"## 概要\n"
-                f"Issue #{request.issue_number} に対する自動生成PRです。\n"
+                f"Closes #{request.issue_number}\n\n## 概要\nIssue #{request.issue_number} に対する自動生成PRです。\n"
             )
             base_branch = getattr(request.repo, "base_branch", "main")
 

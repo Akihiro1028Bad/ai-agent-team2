@@ -103,16 +103,15 @@ class DoneExecutor(PhaseExecutor):
         # リポジトリの open Issue から次の子Issueを探す
         try:
             open_issues = await client.get_issues_with_label(  # type: ignore[attr-defined]
-                request.repo, "", state="open",
+                request.repo,
+                "",
+                state="open",
             )
             for candidate in open_issues:
                 candidate_title = getattr(candidate, "title", "") or ""
                 if next_suffix in candidate_title:
                     # ai-agent ラベルがまだなければ付与
-                    labels = [
-                        getattr(lbl, "name", str(lbl))
-                        for lbl in (getattr(candidate, "labels", []) or [])
-                    ]
+                    labels = [getattr(lbl, "name", str(lbl)) for lbl in (getattr(candidate, "labels", []) or [])]
                     if "ai-agent" not in labels:
                         await client.add_label(request.repo, candidate.number, "ai-agent")  # type: ignore[attr-defined]
                         logger.info(

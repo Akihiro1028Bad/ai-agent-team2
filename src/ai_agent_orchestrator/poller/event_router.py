@@ -137,15 +137,21 @@ class EventRouter:
                 return
             if event.comment is not None:
                 await client.add_comment_reaction(
-                    event.repo, event.comment.id, "eyes",
+                    event.repo,
+                    event.comment.id,
+                    "eyes",
                 )
             elif event.issue is not None:
                 await client.add_issue_reaction(
-                    event.repo, event.issue.number, "eyes",
+                    event.repo,
+                    event.issue.number,
+                    "eyes",
                 )
         except Exception:
             logger.debug(
-                "Failed to add reaction for event %s", event.type, exc_info=True,
+                "Failed to add reaction for event %s",
+                event.type,
+                exc_info=True,
             )
 
     # ------------------------------------------------------------------

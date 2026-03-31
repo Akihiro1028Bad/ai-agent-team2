@@ -208,7 +208,9 @@ class TestDetectHearingReplies:
         client.get_issues_with_label = AsyncMock(return_value=[issue])
 
         bot_comment = _make_comment(
-            comment_id=10, body="bot response\n\n<!-- ai-agent-bot -->", user_type="User",
+            comment_id=10,
+            body="bot response\n\n<!-- ai-agent-bot -->",
+            user_type="User",
         )
         client.list_comments = AsyncMock(return_value=[bot_comment])
 
