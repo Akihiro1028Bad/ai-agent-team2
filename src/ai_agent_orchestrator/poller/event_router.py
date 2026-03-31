@@ -467,9 +467,9 @@ class EventRouter:
             await client.create_comment(
                 event.repo,
                 event.issue.number,
-                f"PR のレビュー指摘を確認しました。修正を開始します。\n\n"
-                f"> {comments[:500]}" if comments else
-                "PR のレビュー指摘を確認しました。修正を開始します。",
+                f"PR のレビュー指摘を確認しました。修正を開始します。\n\n> {comments[:500]}"
+                if comments
+                else "PR のレビュー指摘を確認しました。修正を開始します。",
             )
         except Exception:
             logger.debug(

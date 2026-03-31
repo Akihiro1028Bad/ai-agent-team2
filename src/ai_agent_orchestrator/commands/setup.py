@@ -112,12 +112,8 @@ async def _setup(
         await _ensure_label(account, config_data.get("accounts", {}), owner, name, label_name)
         console.print(f"[green]✓[/green] ラベル '{label_name}' を確認しました")
     except Exception as e:
-        console.print(
-            f"[yellow]警告: ラベル '{label_name}' の自動作成に失敗しました: {e}[/yellow]"
-        )
-        console.print(
-            f"  手動で作成してください: gh label create {label_name} --repo {owner}/{name}"
-        )
+        console.print(f"[yellow]警告: ラベル '{label_name}' の自動作成に失敗しました: {e}[/yellow]")
+        console.print(f"  手動で作成してください: gh label create {label_name} --repo {owner}/{name}")
 
     # サマリ表示
     table = Table(title="セットアップ完了")
