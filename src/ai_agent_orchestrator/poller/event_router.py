@@ -197,7 +197,7 @@ class EventRouter:
         )
 
     async def _handle_hearing_reply(self, event: PollEvent) -> None:
-        """ヒアリング回答: HEARING フェーズを再開 (SUSPENDED なら復帰)."""
+        """ヒアリング回答: HEARING_WAIT → HEARING 遷移して再実行."""
         assert event.comment is not None
         issue_number = int(str(event.comment.issue_url).split("/")[-1])
 
@@ -208,12 +208,25 @@ class EventRouter:
             logger.warning("Issue #%d is not registered, skipping hearing reply", issue_number)
             return
 
-        # SUSPENDED なら HEARING に復帰してからエンキュー
-        if current_phase == Phase.SUSPENDED:
+        if current_phase == Phase.HEARING_WAIT:
+            # 回答待ち → hearing に遷移して再実行
+            await self._sm.transition(issue_number, Phase.HEARING)
+            # ラベル更新
+            try:
+                client = await self._get_client(event.repo)
+                if client:
+                    await client.replace_phase_label(event.repo, issue_number, "phase:hearing")
+            except Exception:
+                logger.warning("Failed to update phase label to hearing for issue #%d", issue_number)
+        elif current_phase == Phase.HEARING:
+            # AI 実行中にユーザーが回答 → 遷移せずキューイングのみ
+            pass
+        elif current_phase == Phase.SUSPENDED:
+            # SUSPENDED → HEARING に復帰
             await self._sm.transition(issue_number, Phase.HEARING)
             logger.info("Issue #%d resumed from SUSPENDED to HEARING", issue_number)
-        elif current_phase != Phase.HEARING:
-            # HEARING 以外のフェーズ (例: DESIGN) なら hearing reply は無視
+        else:
+            # HEARING/HEARING_WAIT 以外のフェーズなら無視
             logger.info("Issue #%d is in phase %s, ignoring hearing reply", issue_number, current_phase)
             return
 
