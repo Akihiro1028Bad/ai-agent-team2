@@ -202,12 +202,14 @@ class TestDetectHearingReplies:
         assert result[0].body == "回答です"
 
     async def test_detect_hearing_reply_excludes_bot(self) -> None:
-        """Bot コメントはヒアリング回答として検知されない."""
+        """Bot マーカー付きコメントはヒアリング回答として検知されない."""
         client = _make_client()
-        issue = _make_issue(number=1, labels=["ai-agent", "phase:hearing"])
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:hearing-wait"])
         client.get_issues_with_label = AsyncMock(return_value=[issue])
 
-        bot_comment = _make_comment(comment_id=10, body="bot response", user_type="Bot")
+        bot_comment = _make_comment(
+            comment_id=10, body="bot response\n\n<!-- ai-agent-bot -->", user_type="User",
+        )
         client.list_comments = AsyncMock(return_value=[bot_comment])
 
         repo = _make_repo()

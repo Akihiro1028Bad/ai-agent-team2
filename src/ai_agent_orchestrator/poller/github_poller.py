@@ -22,6 +22,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_BOT_MARKER = "<!-- ai-agent-bot -->"
+
+
+def _is_bot_comment(body: str) -> bool:
+    """AI agent が投稿したコメントかどうかを判定する."""
+    return _BOT_MARKER in body
+
 
 class GitHubPoller:
     """GitHub API をポーリングしてイベントを検知する.
@@ -213,12 +220,14 @@ class GitHubPoller:
             since_str = since.isoformat() if since else None
             comments = await client.list_comments(repo, issue.number, since=since_str)
             for comment in comments:
-                if comment.user and comment.user.type != "Bot":
-                    # BUG #4: Deduplicate hearing reply events
-                    event_key = f"hearing_reply:{issue.number}:{comment.id}"
-                    if event_key not in self._seen_events:
-                        self._seen_events.add(event_key)
-                        replies.append(comment)
+                body = comment.body or ""
+                if _is_bot_comment(body):
+                    continue
+                # BUG #4: Deduplicate hearing reply events
+                event_key = f"hearing_reply:{issue.number}:{comment.id}"
+                if event_key not in self._seen_events:
+                    self._seen_events.add(event_key)
+                    replies.append(comment)
         return replies
 
     async def _detect_hearing_timeouts(
@@ -301,12 +310,14 @@ class GitHubPoller:
             since_str = since.isoformat()
             comments = await client.list_comments(repo, issue.number, since=since_str)
             for comment in comments:
-                if comment.user and comment.user.type != "Bot":
-                    # BUG #4: Deduplicate plan comment events
-                    event_key = f"plan_comment:{issue.number}:{comment.id}"
-                    if event_key not in self._seen_events:
-                        self._seen_events.add(event_key)
-                        feedback.append((issue, comment))
+                body = comment.body or ""
+                if _is_bot_comment(body):
+                    continue
+                # BUG #4: Deduplicate plan comment events
+                event_key = f"plan_comment:{issue.number}:{comment.id}"
+                if event_key not in self._seen_events:
+                    self._seen_events.add(event_key)
+                    feedback.append((issue, comment))
         return feedback
 
     async def _detect_pr_events(
@@ -444,7 +455,8 @@ class GitHubPoller:
 
             # 人間のコメント (修正指示) を確認
             human_comments = [
-                c for c in comments if c.user and c.user.type != "Bot" and (since is None or c.created_at > since)
+                c for c in comments
+                if not _is_bot_comment(c.body or "") and (since is None or c.created_at > since)
             ]
             for hc in human_comments:
                 # BUG #4: Deduplicate split modified events

@@ -87,7 +87,7 @@ class GitHubClient:
             owner=repo.owner,
             repo=repo.repo,
             issue_number=issue_number,
-            data={"body": body},
+            data={"body": f"{body}\n\n<!-- ai-agent-bot -->"},
         )
         return response.parsed_data
 
