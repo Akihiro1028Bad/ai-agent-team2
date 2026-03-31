@@ -31,7 +31,11 @@ class DesignReviseExecutor(PhaseExecutor):
         """
         extra = getattr(request, "extra", {}) or {}
         comments = extra.get("comments", "")
-        return f"以下のレビュー指摘に対応してください:\n{comments}"
+        return (
+            f"以下のレビュー指摘に対応してください:\n\n"
+            f"{comments}\n\n"
+            f"修正後、git commit して git push してください。"
+        )
 
     async def run_agent(self, request: TaskRequest, prompt: str) -> AgentResult:
         """セッション継続で実行する。
@@ -47,7 +51,6 @@ class DesignReviseExecutor(PhaseExecutor):
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
-            branch_prefix="design",
         )
         return await self._runner.run(
             prompt=prompt,

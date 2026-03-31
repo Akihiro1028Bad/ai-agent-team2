@@ -348,14 +348,16 @@ class GitHubPoller:
             issues = await client.get_issues_with_label(repo, f"{repo.label},phase:{label_suffix}")
             for issue in issues:
                 pr_reviews = await self._get_pr_reviews(client, repo, issue)
-                for review_event in pr_reviews:
-                    event_type = approved_type if review_event == "approved" else commented_type
+                for review_info in pr_reviews:
+                    review_state = review_info["state"]
+                    review_body = review_info["body"]
+                    event_type = approved_type if review_state == "approved" else commented_type
                     # BUG #4: Deduplicate PR review events
                     event_key = f"pr_review:{event_type}:{issue.number}"
                     if event_key in self._seen_events:
                         continue
                     self._seen_events.add(event_key)
-                    if review_event == "approved":
+                    if review_state == "approved":
                         events.append(
                             PollEvent(
                                 type=approved_type,
@@ -363,13 +365,13 @@ class GitHubPoller:
                                 issue=issue,
                             )
                         )
-                    elif review_event == "commented":
+                    else:
                         events.append(
                             PollEvent(
                                 type=commented_type,
                                 repo=repo,
                                 issue=issue,
-                                extra={"comments": review_event},
+                                extra={"comments": review_body},
                             )
                         )
         return events
@@ -498,14 +500,14 @@ class GitHubPoller:
         client: GitHubClient,
         repo: RepositoryConfig,
         issue: Issue,
-    ) -> list[str]:
+    ) -> list[dict[str, str]]:
         """PR のレビュー状態を取得する.
 
         Returns:
-            "approved" または "commented" のリスト.
+            {"state": "approved"|"commented", "body": "review body"} のリスト.
         """
         prs = await client.list_pull_requests(repo)
-        results: list[str] = []
+        results: list[dict[str, str]] = []
         for pr in prs:
             issue_ref = f"#{issue.number}"
             pr_body = getattr(pr, "body", "") or ""
@@ -514,10 +516,11 @@ class GitHubPoller:
                 reviews = await client.get_pr_reviews(repo.owner, repo.repo, pr.number)
                 for review in reviews:
                     state = review.get("state", "")
+                    body = review.get("body", "") or ""
                     if state == "APPROVED":
-                        results.append("approved")
-                    elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and review.get("body")):
-                        results.append("commented")
+                        results.append({"state": "approved", "body": body})
+                    elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and body):
+                        results.append({"state": "commented", "body": body})
         return results
 
     async def _check_ci_status(
