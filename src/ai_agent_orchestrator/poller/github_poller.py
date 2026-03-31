@@ -207,7 +207,7 @@ class GitHubPoller:
         条件: phase:hearing ラベル付き Issue に since 以降の人間コメント
         (bot コメントは除外).
         """
-        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing")
+        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing-wait")
         replies: list[IssueComment] = []
         for issue in issues:
             since_str = since.isoformat() if since else None
@@ -231,7 +231,7 @@ class GitHubPoller:
         条件: phase:hearing ラベル付き Issue で
               最後のコメントから hearing_timeout_hours 以上経過.
         """
-        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing")
+        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing-wait")
         threshold = datetime.now(UTC) - timedelta(hours=self._hearing_timeout_hours)
         timed_out: list[Issue] = []
         for issue in issues:
@@ -265,7 +265,7 @@ class GitHubPoller:
             for comment in comments:
                 body = comment.body or ""
                 is_bot = comment.user and comment.user.type == "Bot"
-                is_plan_comment = any(body.startswith(marker) for marker in plan_markers)
+                is_plan_comment = any(marker in body for marker in plan_markers)
                 if is_bot or is_plan_comment:
                     # BUG #3: Skip already-processed reactions
                     reaction_key = (issue.number, comment.id)
