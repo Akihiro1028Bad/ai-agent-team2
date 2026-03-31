@@ -487,7 +487,9 @@ class EventRouter:
         ci_status == "success":
             -> IMPL_REVIEW 遷移 (エンキュー不要、PR approve/comment をポーリングで待つ)
         """
-        assert event.issue is not None
+        if event.issue is None:
+            logger.warning("CI result event has no issue, skipping")
+            return
         ci_status = (event.extra or {}).get("ci_status", "")
 
         if ci_status == "failure":
