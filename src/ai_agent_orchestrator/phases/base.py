@@ -403,26 +403,36 @@ class PhaseExecutor(ABC):
 
         # Step 2: ブランチ名で既存PRを検索
         branch_name = f"{branch_prefix}/issue-{request.issue_number}"
+        search_branches = [branch_name]
+        # branch_prefix が "feature" 以外の場合、feature/issue-XX でもフォールバック検索
+        if branch_prefix != "feature":
+            search_branches.append(f"feature/issue-{request.issue_number}")
+
         owner = getattr(request.repo, "owner", "")
-        head_filter = f"{owner}:{branch_name}"
-        try:
-            existing_prs = await client.list_pull_requests(
-                request.repo,
-                state="open",
-                head=head_filter,
-            )
-            if existing_prs:
-                found_pr = getattr(existing_prs[0], "number", None)
-                if found_pr is not None:
-                    logger.info(
-                        "Found existing PR #%d for branch %s (issue #%d)",
-                        found_pr,
-                        branch_name,
-                        request.issue_number,
-                    )
-                    return int(found_pr)
-        except Exception:
-            logger.warning("Failed to search existing PRs for issue #%d", request.issue_number)
+        for search_branch in search_branches:
+            head_filter = f"{owner}:{search_branch}"
+            try:
+                existing_prs = await client.list_pull_requests(
+                    request.repo,
+                    state="open",
+                    head=head_filter,
+                )
+                if existing_prs:
+                    found_pr = getattr(existing_prs[0], "number", None)
+                    if found_pr is not None:
+                        logger.info(
+                            "Found existing PR #%d for branch %s (issue #%d)",
+                            found_pr,
+                            search_branch,
+                            request.issue_number,
+                        )
+                        return int(found_pr)
+            except Exception:
+                logger.warning(
+                    "Failed to search existing PRs for branch %s (issue #%d)",
+                    search_branch,
+                    request.issue_number,
+                )
 
         # Step 3: GitHub API で新規PR作成
         try:

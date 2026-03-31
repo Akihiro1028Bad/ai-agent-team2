@@ -1302,3 +1302,40 @@ class TestDesignPrLookup:
         # list_pull_requests が feature/issue-42 で検索されたことを確認
         call_args = mock_github.list_pull_requests.call_args
         assert "feature/issue-42" in str(call_args)
+
+
+class TestEnsurePrCreatedFallback:
+    """_ensure_pr_created の feature ブランチフォールバック検索テスト."""
+
+    async def test_fallback_to_feature_branch_when_prefix_differs(
+        self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+    ):
+        """branch_prefix が feature 以外のとき、feature/issue-XX でもフォールバック検索する."""
+        mock_pr = MagicMock()
+        mock_pr.number = 55
+
+        # 1st call (design/issue-42): not found → []
+        # 2nd call (feature/issue-42): found → [mock_pr]
+        mock_github.list_pull_requests = AsyncMock(side_effect=[[], [mock_pr]])
+        mock_github.get_issue = AsyncMock(return_value=MagicMock(title="Test"))
+
+        from ai_agent_orchestrator.phases.design import DesignExecutor
+
+        executor = DesignExecutor(
+            runner=mock_runner,
+            account_manager=mock_github,
+            notifier=mock_notifier,
+            tracker=mock_tracker,
+            workspace=mock_workspace,
+            context_engine=mock_context,
+            state_machine=mock_sm,
+        )
+
+        request = _make_request("design", issue_number=42)
+        pr_number = await executor._ensure_pr_created(
+            request,
+            "no PR number here",
+            branch_prefix="design",
+            title_prefix="docs: ",
+        )
+        assert pr_number == 55
