@@ -64,6 +64,8 @@ def mock_workspace() -> AsyncMock:
     """Mock WorkspaceManager."""
     ws = AsyncMock()
     ws.create_worktree.return_value = "/tmp/worktree/issue-1"
+    # _run_git: デフォルトは成功 (rc=0, stdout="", stderr="")
+    ws._run_git = AsyncMock(return_value=(0, "", ""))
     return ws
 
 
@@ -91,6 +93,7 @@ def mock_sm() -> MagicMock:
         session_id=None,
         pr_number=None,
         design_pr_number=None,
+        branch_head_sha=None,
     )
     sm.get_issue_type.return_value = "feature-m"
     sm.transition = AsyncMock()
@@ -716,7 +719,12 @@ class TestImplReviseExecutor:
         mock_sm: AsyncMock,
     ) -> None:
         """セッション継続で実行され IMPL_REVIEW に遷移する。"""
-        mock_sm.get_state.return_value = MagicMock(session_id="prev-impl-session")
+        mock_sm.get_state.return_value = MagicMock(
+            session_id="prev-impl-session",
+            pr_number=10,
+            design_pr_number=10,
+            branch_head_sha=None,
+        )
         from ai_agent_orchestrator.phases.impl_revise import (
             ImplReviseExecutor,
         )
@@ -1272,7 +1280,9 @@ class TestDesignPrLookup:
         """feature/issue-XX ブランチの PR を正しく検索できる."""
         from ai_agent_orchestrator.phases.design import DesignExecutor
 
-        mock_sm.get_state.return_value = MagicMock(session_id=None, design_pr_number=None)
+        mock_sm.get_state.return_value = MagicMock(
+            session_id=None, design_pr_number=None, pr_number=None, branch_head_sha=None,
+        )
 
         mock_pr = MagicMock()
         mock_pr.number = 99

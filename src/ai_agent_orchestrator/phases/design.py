@@ -74,6 +74,8 @@ class DesignExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
+        await self._recover_uncommitted_work(request, branch_prefix="feature")
+
         # PR番号を確実に取得 (エージェント出力 → 既存PR検索 → API作成)
         # 設計・実装は同一ブランチ (feature/) の同一PR
         pr_number = await self._ensure_pr_created(

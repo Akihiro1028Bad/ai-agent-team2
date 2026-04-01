@@ -81,6 +81,8 @@ class DesignReviseExecutor(PhaseExecutor):
         if state:
             state.session_id = result.session_id
 
+        await self._recover_uncommitted_work(request, branch_prefix="feature")
+
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:design-review")
         await self._sm.transition(request.issue_number, "design-review")

@@ -95,6 +95,8 @@ class ImplementExecutor(PhaseExecutor):
             )
             raise RuntimeError(msg)
 
+        await self._recover_uncommitted_work(request, branch_prefix="feature")
+
         # PR番号を確実に取得 (エージェント出力 → 既存PR検索 → API作成)
         pr_number = await self._ensure_pr_created(
             request,

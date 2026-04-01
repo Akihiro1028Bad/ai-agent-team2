@@ -6,6 +6,7 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -81,6 +82,7 @@ class IssueStateData(Protocol):
     session_id: str | None
     pr_number: int | None
     design_pr_number: int | None
+    branch_head_sha: str | None
 
 
 @runtime_checkable
@@ -202,6 +204,14 @@ class WorkspaceProtocol:
         """Create or get a worktree path."""
         return ""  # pragma: no cover
 
+    async def _run_git(
+        self,
+        *args: str,
+        cwd: str | Path | None = None,
+    ) -> tuple[int, str, str]:
+        """Run a git command."""
+        return (0, "", "")  # pragma: no cover
+
     async def remove_worktree(self, repo: object, issue_number: int) -> None:
         """Remove a worktree."""
         ...  # pragma: no cover
@@ -292,6 +302,7 @@ class PhaseExecutor(ABC):
             )
 
             prompt = await self.build_prompt(request)
+            await self._record_branch_baseline(request)
             result = await self.run_agent(request, prompt)
             await self.process_result(request, result)
 
@@ -407,6 +418,150 @@ class PhaseExecutor(ABC):
                 "phase": str(request.phase),
             },
         )
+
+    # ------------------------------------------------------------------
+    # Git state validation & recovery
+    # ------------------------------------------------------------------
+
+    async def _record_branch_baseline(self, request: TaskRequest) -> None:
+        """エージェント実行前のブランチ HEAD SHA を記録する。
+
+        設計コミットと実装コミットを区別するための基準点。
+        build_prompt() 後に呼ばれる (worktree 作成済みを保証)。
+
+        Args:
+            request: タスクリクエスト。
+        """
+        state = self._sm.get_state(request.issue_number)
+        if state is None:
+            return
+        try:
+            worktree = await self._workspace.create_worktree(
+                request.repo,
+                request.issue_number,
+                branch_prefix=self._branch_prefix,
+            )
+            rc, stdout, _ = await self._workspace._run_git(
+                "rev-parse", "HEAD",
+                cwd=str(worktree),
+            )
+            if rc == 0 and stdout.strip():
+                state.branch_head_sha = stdout.strip()
+        except Exception:
+            logger.debug("Failed to record branch baseline for issue #%d", request.issue_number)
+
+    async def _recover_uncommitted_work(
+        self,
+        request: TaskRequest,
+        *,
+        branch_prefix: str = "feature",
+    ) -> None:
+        """未コミット・未プッシュの作業を自動回復する。
+
+        エージェントがコミット・プッシュを完了せずに終了した場合に、
+        システムが代わりに実行する。feature ブランチへのプッシュなので
+        main は汚染されず、impl-review / CI が品質ゲートとして機能する。
+
+        失敗時は RuntimeError を送出し、呼び出し元の execute() が
+        _handle_error() 経由で SUSPENDED に遷移する。
+
+        Args:
+            request: タスクリクエスト。
+            branch_prefix: ブランチプレフィックス。
+        """
+        worktree = await self._workspace.create_worktree(
+            request.repo,
+            request.issue_number,
+            branch_prefix=branch_prefix,
+        )
+        wt = str(worktree)
+        branch_name = f"{branch_prefix}/issue-{request.issue_number}"
+
+        # 1. 未コミットファイルの確認
+        rc, stdout, _ = await self._workspace._run_git("status", "--porcelain", cwd=wt)
+        has_uncommitted = rc == 0 and stdout.strip() != ""
+
+        # 2. 未プッシュコミットの確認
+        rc, stdout, _ = await self._workspace._run_git(
+            "log", f"origin/{branch_name}..HEAD", "--oneline",
+            cwd=wt,
+        )
+        has_unpushed = rc == 0 and stdout.strip() != ""
+
+        if not has_uncommitted and not has_unpushed:
+            # 3. baseline SHA があれば、新コミットが remote に存在するか確認
+            state = self._sm.get_state(request.issue_number)
+            baseline = state.branch_head_sha if state else None
+            if baseline:
+                rc, stdout, _ = await self._workspace._run_git(
+                    "log", f"{baseline}..origin/{branch_name}", "--oneline",
+                    cwd=wt,
+                )
+                new_commits = rc == 0 and stdout.strip() != ""
+                if not new_commits:
+                    msg = (
+                        f"Issue #{request.issue_number}: "
+                        "エージェントがコードの変更・コミット・プッシュを行いませんでした。"
+                    )
+                    raise RuntimeError(msg)
+            return  # 正常: コミット・プッシュ済み
+
+        # --- 自動回復 ---
+        recovered_actions: list[str] = []
+
+        if has_uncommitted:
+            logger.warning(
+                "Issue #%d: uncommitted files detected, auto-committing",
+                request.issue_number,
+            )
+            # git add -A
+            rc, _, stderr = await self._workspace._run_git("add", "-A", cwd=wt)
+            if rc != 0:
+                msg = f"Issue #{request.issue_number}: git add 失敗: {stderr}"
+                raise RuntimeError(msg)
+
+            # git commit
+            commit_msg = f"feat: #{request.issue_number} 自動コミット (エージェント未コミット分)"
+            rc, _, stderr = await self._workspace._run_git("commit", "-m", commit_msg, cwd=wt)
+            if rc != 0:
+                msg = f"Issue #{request.issue_number}: git commit 失敗: {stderr}"
+                raise RuntimeError(msg)
+            recovered_actions.append("auto-commit")
+
+        # push
+        rc_push, _, stderr = await self._workspace._run_git(
+            "push", "origin", branch_name, cwd=wt,
+        )
+        if rc_push != 0:
+            msg = f"Issue #{request.issue_number}: git push 失敗: {stderr}"
+            raise RuntimeError(msg)
+        recovered_actions.append("auto-push")
+
+        # 回復ログ
+        actions_str = " + ".join(recovered_actions)
+        logger.info(
+            "Issue #%d: auto-recovery succeeded (%s)",
+            request.issue_number,
+            actions_str,
+        )
+        await self._tracker.track(
+            "uncommitted_work_recovered",
+            issue_number=request.issue_number,
+            phase=str(request.phase),
+            data={"actions": recovered_actions},
+        )
+
+        # Issue コメントで通知
+        try:
+            client = await self._get_client(request.repo)
+            await client.create_comment(
+                request.repo,
+                request.issue_number,
+                f"⚠️ エージェントが変更をコミット/プッシュせずに終了したため、"
+                f"システムが自動回復しました ({actions_str})。",
+            )
+        except Exception:
+            logger.debug("Failed to post recovery comment for issue #%d", request.issue_number)
 
     # ------------------------------------------------------------------
     # Utility helpers

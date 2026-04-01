@@ -58,6 +58,8 @@ class CiFixExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
+        await self._recover_uncommitted_work(request, branch_prefix="feature")
+
         state = self._sm.get_state(request.issue_number)
         if state:
             state.session_id = result.session_id
