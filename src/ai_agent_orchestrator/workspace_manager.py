@@ -219,6 +219,21 @@ class WorkspaceManager:
             msg = f"Failed to create worktree for issue-{issue_number}: {stderr}"
             raise WorkspaceError(msg)
 
+        # Configure git credential helper in worktree
+        await self._run_git(
+            "config",
+            "credential.helper",
+            "!gh auth git-credential",
+            cwd=str(worktree_path),
+        )
+        await self._run_git("config", "user.name", "ai-agent-bot", cwd=str(worktree_path))
+        await self._run_git(
+            "config",
+            "user.email",
+            "ai-agent-bot@users.noreply.github.com",
+            cwd=str(worktree_path),
+        )
+
         return worktree_path
 
     async def remove_worktree(

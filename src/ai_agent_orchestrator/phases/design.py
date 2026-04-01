@@ -33,6 +33,7 @@ class DesignExecutor(PhaseExecutor):
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
+            branch_prefix="docs",
         )
         context = await self._context.build_context(
             str(worktree),
@@ -75,8 +76,8 @@ class DesignExecutor(PhaseExecutor):
         pr_number = await self._ensure_pr_created(
             request,
             result.output,
-            branch_prefix="feature",
-            title_prefix="設計: ",
+            branch_prefix="docs",
+            title_prefix="docs: ",
         )
 
         state = self._sm.get_state(request.issue_number)

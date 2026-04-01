@@ -43,7 +43,7 @@ class DesignReviseExecutor(PhaseExecutor):
             f"## 指示\n"
             f"1. 設計書を修正する\n"
             f"2. git add && git commit (コミットメッセージは日本語で)\n"
-            f"3. git push origin feature/issue-{request.issue_number}\n"
+            f"3. git push origin docs/issue-{request.issue_number}\n"
         )
 
     async def run_agent(self, request: TaskRequest, prompt: str) -> AgentResult:
@@ -60,6 +60,7 @@ class DesignReviseExecutor(PhaseExecutor):
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
+            branch_prefix="docs",
         )
         return await self._runner.run(
             prompt=prompt,
