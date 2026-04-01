@@ -321,6 +321,11 @@ class PhaseExecutor(ABC):
         """
         ...
 
+    @property
+    def _branch_prefix(self) -> str:
+        """worktree のブランチプレフィックス。サブクラスでオーバーライド可能。"""
+        return "feature"
+
     async def run_agent(self, request: TaskRequest, prompt: str) -> AgentResult:
         """エージェントを実行する。
 
@@ -336,6 +341,7 @@ class PhaseExecutor(ABC):
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
+            branch_prefix=self._branch_prefix,
         )
         return await self._runner.run(
             prompt=prompt,

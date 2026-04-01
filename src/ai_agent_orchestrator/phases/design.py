@@ -19,6 +19,11 @@ class DesignExecutor(PhaseExecutor):
     設計書を docs/designs/issue-XX.md に作成し、設計 PR を作成する。
     """
 
+    @property
+    def _branch_prefix(self) -> str:
+        """設計PRは docs/ ブランチを使用。"""
+        return "docs"
+
     async def build_prompt(self, request: TaskRequest) -> str:
         """設計書作成プロンプトを構築する。
 

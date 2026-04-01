@@ -20,6 +20,11 @@ class DesignReviseExecutor(PhaseExecutor):
     DESIGN_REVIEW に再遷移する。
     """
 
+    @property
+    def _branch_prefix(self) -> str:
+        """設計PRは docs/ ブランチを使用。"""
+        return "docs"
+
     async def build_prompt(self, request: TaskRequest) -> str:
         """レビュー指摘対応プロンプトを構築する。
 
