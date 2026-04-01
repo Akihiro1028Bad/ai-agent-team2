@@ -221,9 +221,6 @@ class ClaudeAgentRunner:
             self._run_query(
                 prompt=prompt,
                 options=options,
-                budget=budget,
-                subagents=subagents,
-                phase=phase,
             ),
             timeout=effective_timeout,
         )
@@ -247,9 +244,6 @@ class ClaudeAgentRunner:
         *,
         prompt: str,
         options: ClaudeAgentOptions,
-        budget: float,
-        subagents: list[SubAgentDefinition],
-        phase: str,
     ) -> AgentResult:
         """query() を実行してメッセージを収集し AgentResult を返す."""
         start = time.monotonic()
@@ -311,9 +305,6 @@ class ClaudeAgentRunner:
         result = self._parse_messages(
             all_messages,
             elapsed=elapsed,
-            budget=budget,
-            subagents=subagents,
-            phase=phase,
         )
 
         # ResultMessage が欠落した場合のフォールバック
@@ -397,9 +388,6 @@ class ClaudeAgentRunner:
         messages: list[Message],
         *,
         elapsed: float,
-        budget: float,
-        subagents: list[SubAgentDefinition],
-        phase: str,
     ) -> AgentResult:
         """query() の返却メッセージ群を AgentResult に変換する.
 

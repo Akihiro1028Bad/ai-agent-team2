@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from ai_agent_orchestrator.context.engine import DESIGN_DOC_HEADING, IMPL_PLAN_HEADING
 from ai_agent_orchestrator.phases.base import PhaseExecutor
 
 if TYPE_CHECKING:
@@ -46,14 +47,14 @@ class ImplementExecutor(PhaseExecutor):
         )
 
         # 設計書・実装計画がコンテキストに含まれているか検証
-        if "## 設計書" not in context:
+        if DESIGN_DOC_HEADING not in context:
             msg = (
                 f"Issue #{request.issue_number}: "
                 "設計書がコンテキストに含まれていません。"
                 "設計フェーズが完了しているか確認してください。"
             )
             raise RuntimeError(msg)
-        if "## 実装計画" not in context:
+        if IMPL_PLAN_HEADING not in context:
             msg = (
                 f"Issue #{request.issue_number}: "
                 "実装計画がコンテキストに含まれていません。"

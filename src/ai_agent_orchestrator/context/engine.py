@@ -12,9 +12,13 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# 設計書・実装計画を参照するフェーズ
-_DESIGN_DOC_PHASES = frozenset({"planning", "implement", "ci_fix"})
-_IMPL_PLAN_PHASES = frozenset({"implement", "ci_fix"})
+# 設計書・実装計画を参照するフェーズ (Phase enum の value と一致させること)
+_DESIGN_DOC_PHASES = frozenset({"planning", "implement", "ci-fix"})
+_IMPL_PLAN_PHASES = frozenset({"implement", "ci-fix"})
+
+# コンテキストセクションの見出し定数 (implement.py 等で参照)
+DESIGN_DOC_HEADING = "## 設計書"
+IMPL_PLAN_HEADING = "## 実装計画"
 
 # ディレクトリツリーで除外するパターン
 _IGNORE_DIRS = frozenset(
@@ -109,7 +113,7 @@ class ContextEngine:
         if phase in _DESIGN_DOC_PHASES:
             design_doc = await self._read_design_doc(worktree_path, issue_number)
             if design_doc:
-                parts.append(f"## 設計書\n{design_doc}")
+                parts.append(f"{DESIGN_DOC_HEADING}\n{design_doc}")
             else:
                 logger.warning("設計書が見つかりません (issue_number=%s, phase=%s)", issue_number, phase)
 
@@ -117,7 +121,7 @@ class ContextEngine:
         if phase in _IMPL_PLAN_PHASES:
             impl_plan = await self._read_impl_plan(worktree_path, issue_number)
             if impl_plan:
-                parts.append(f"## 実装計画\n{impl_plan}")
+                parts.append(f"{IMPL_PLAN_HEADING}\n{impl_plan}")
             else:
                 logger.warning("実装計画が見つかりません (issue_number=%s, phase=%s)", issue_number, phase)
 

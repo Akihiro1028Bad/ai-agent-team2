@@ -92,7 +92,7 @@ async def test_build_context_implement_phase(engine: ContextEngine, repo: Path) 
 
 async def test_build_context_ci_fix_phase(engine: ContextEngine, repo: Path) -> None:
     """ci_fix フェーズでも設計書と実装計画を含む."""
-    result = await engine.build_context(str(repo), "Fix CI", "ci_fix")
+    result = await engine.build_context(str(repo), "Fix CI", "ci-fix")
 
     assert "## 設計書" in result
     assert "## 実装計画" in result
