@@ -537,6 +537,8 @@ class GitHubPoller:
                     review_id = str(review.get("id", ""))
                     if state == "APPROVED":
                         approved.append({"state": "approved", "body": body, "id": review_id})
+                    elif state == "COMMENTED" and body.strip().upper() == self._approve_comment.upper():
+                        approved.append({"state": "approved", "body": body, "id": review_id})
                     elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and body):
                         commented.append({"state": "commented", "body": body, "id": review_id})
                 # コメントによる承認: PR の一般コメントを確認
