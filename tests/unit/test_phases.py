@@ -94,6 +94,7 @@ def mock_sm() -> MagicMock:
         pr_number=None,
         design_pr_number=None,
         branch_head_sha=None,
+        impl_iteration=0,
     )
     sm.get_issue_type.return_value = "feature-m"
     sm.transition = AsyncMock()
@@ -588,6 +589,9 @@ class TestImplementExecutor:
             cost_usd=3.0,
             duration_sec=120.0,
         )
+        # マルチパス: _read_impl_plan が None → 完了判定で即終了
+        mock_context._read_impl_plan = AsyncMock(return_value=None)
+
         from ai_agent_orchestrator.phases.implement import ImplementExecutor
 
         executor = ImplementExecutor(
@@ -1094,6 +1098,8 @@ class TestEnsurePrCreated:
         created_pr = MagicMock()
         created_pr.number = 101
         mock_github.create_pull_request.return_value = created_pr
+        # マルチパス: _read_impl_plan が None → 完了判定で即終了
+        mock_context._read_impl_plan = AsyncMock(return_value=None)
 
         from ai_agent_orchestrator.phases.implement import ImplementExecutor
 

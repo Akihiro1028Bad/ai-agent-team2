@@ -83,6 +83,7 @@ class IssueStateData(Protocol):
     pr_number: int | None
     design_pr_number: int | None
     branch_head_sha: str | None
+    impl_iteration: int
 
 
 @runtime_checkable

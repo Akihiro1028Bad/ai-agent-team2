@@ -161,6 +161,7 @@ class IssueState:
     design_pr_number: int | None = None
     retry_count: int = 0
     branch_head_sha: str | None = None
+    impl_iteration: int = 0
     created_at: str = ""
     updated_at: str = ""
 
