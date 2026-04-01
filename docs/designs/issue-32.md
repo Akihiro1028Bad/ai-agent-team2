@@ -772,29 +772,155 @@ async def get_diff_stats(worktree_path: str, base_branch: str = "main") -> dict[
 
 ## 8. テスト方針
 
-### 8.1 新規テストケース
+> **目標: カバレッジ率 100%** — 全新規モジュール・改修箇所に対してテストを網羅し、カバレッジ率 100% を目指す。
+
+### 8.1 テストファイル構成
+
+| テストファイル | 対象モジュール |
+|--------------|--------------|
+| `tests/unit/test_notification_templates.py`（新規） | `notifications/templates.py` |
+| `tests/unit/test_progress_tracker.py`（新規） | `notifications/progress.py` |
+| `tests/unit/test_error_summarizer.py`（新規） | `notifications/error_summarizer.py` |
+| `tests/unit/test_slack.py`（更新） | `notifications/slack.py` |
+| `tests/unit/test_models.py`（更新） | `models.py`（NotificationType 追加分） |
+
+### 8.2 テンプレートレジストリ (`test_notification_templates.py`)
 
 | テスト | 検証内容 |
 |-------|---------|
+| `test_all_notification_types_have_template` | 全 `NotificationType` メンバーに対応するテンプレートが `TEMPLATES` に存在すること |
 | `test_notification_type_emoji_mapping` | 各 `NotificationType` に対応する絵文字が正しいこと |
+| `test_color_format_is_valid_hex` | 全テンプレートの `color` が `#` + 6桁16進数であること |
+| `test_default_message_not_empty` | 全テンプレートの `default_message` が空でないこと |
+| `test_template_immutability` | `NotificationTemplate` が frozen dataclass であり変更不可であること |
+| `test_phase_labels_cover_all_phases` | `PHASE_LABELS` が全フェーズキーをカバーしていること |
+| `test_workflow_phases_valid_keys` | `WORKFLOW_PHASES` の各フェーズキーが `PHASE_LABELS` に存在すること |
+
+### 8.3 進捗トラッカー (`test_progress_tracker.py`)
+
+| テスト | 検証内容 |
+|-------|---------|
+| `test_start_phase` | `start_phase` でフェーズが登録され、`started_at` がセットされること |
+| `test_start_phase_duplicate` | 同一フェーズの二重開始時の挙動（上書き or エラー） |
+| `test_update_step` | `update_step` で `current_step` が更新されること |
+| `test_update_step_invalid_phase` | 未登録フェーズへの `update_step` がエラーにならないこと |
+| `test_complete_phase` | `complete_phase` で `completed_at` がセットされ、`PhaseProgress` が返ること |
+| `test_complete_phase_with_cost` | `cost_usd` が正しく記録されること |
+| `test_get_progress_existing` | 登録済みフェーズの進捗が取得できること |
+| `test_get_progress_nonexistent` | 未登録フェーズに対して `None` が返ること |
+| `test_get_summary` | 複数フェーズ完了後のサマリーに `total_duration_sec`, `total_cost_usd`, 全フェーズが含まれること |
+| `test_get_summary_empty` | フェーズ未登録の Issue に対するサマリーが空であること |
+| `test_get_summary_partial` | 一部未完了フェーズがある場合のサマリーが正しいこと |
+| `test_cleanup` | `cleanup` 後に当該 Issue のデータが削除されること |
+| `test_cleanup_nonexistent_issue` | 未登録 Issue の `cleanup` がエラーにならないこと |
+| `test_multiple_issues_isolation` | 異なる Issue 間でデータが干渉しないこと |
+| `test_phase_steps_definition` | `PHASE_STEPS` の全エントリが空でないリストであること |
+
+### 8.4 エラー要約 (`test_error_summarizer.py`)
+
+| テスト | 検証内容 |
+|-------|---------|
+| `test_summarize_timeout_error` | `TimeoutError` が正しいテンプレートで要約されること |
+| `test_summarize_runtime_error` | `RuntimeError` のメッセージが `cause` に含まれること |
+| `test_summarize_auth_error` | 認証エラーの要約が正しいこと |
+| `test_summarize_git_conflict_error` | Git コンフリクトエラーの要約が正しいこと |
+| `test_summarize_unknown_error` | テンプレート未定義のエラーがデフォルトテンプレートで要約されること |
+| `test_summarize_with_phase` | `phase` パラメータが `location` に反映されること |
+| `test_summarize_with_issue_number` | `issue_number` が `location` に反映されること |
+| `test_summarize_traceback_tail` | `traceback_tail` に最後の3行が含まれること |
+| `test_format_for_slack` | Slack mrkdwn 形式が正しくフォーマットされること（全フィールド含む） |
+| `test_format_for_slack_all_fields_present` | `format_for_slack` の出力にエラー種別・発生箇所・原因・対応案が全て含まれること |
+
+### 8.5 SlackNotifier ペイロード構築 (`test_slack.py`)
+
+| テスト | 検証内容 |
+|-------|---------|
+| `test_backward_compatibility` | `notification_type=None` で従来の level ベースペイロードが生成されること |
 | `test_header_block_includes_issue_title` | ヘッダーブロックに Issue 番号とタイトルが含まれること |
-| `test_color_sidebar_by_type` | 通知タイプに応じた色がセットされること |
-| `test_pr_button_action` | PR URL がある場合にボタンが生成されること |
+| `test_header_block_without_issue_title` | Issue タイトルなしの場合のフォールバック表示 |
+| `test_color_sidebar_by_type` | 通知タイプに応じた `attachments.color` がセットされること |
+| `test_color_sidebar_all_types` | 全 `NotificationType` で色が正しく設定されること |
+| `test_pr_button_action` | PR URL がある場合に `actions` ブロックにボタンが生成されること |
+| `test_pr_button_absent_without_url` | PR URL がない場合にボタンが生成されないこと |
+| `test_issue_button_always_present` | Issue URL がある場合に「Issueを見る」ボタンが含まれること |
 | `test_divider_present` | divider ブロックが含まれること |
 | `test_progress_bar_rendering` | 進捗バーが正しくレンダリングされること |
+| `test_progress_bar_all_workflow_types` | 全ワークフロータイプ（bug/feature-s/m/l）で進捗バーが正しいこと |
 | `test_duration_format` | 所要時間が「X分Y秒」形式でフォーマットされること |
-| `test_done_summary_payload` | 完了サマリーにフェーズ別統計が含まれること |
-| `test_error_summary_format` | エラー要約が正しくフォーマットされること |
-| `test_backward_compatibility` | `notification_type=None` で従来動作すること |
-| `test_phase_start_notification` | フェーズ開始通知が送信されること |
-| `test_progress_tracker_lifecycle` | ProgressTracker の start → update → complete → summary |
-| `test_files_changed_in_metadata` | 変更ファイル一覧がペイロードに含まれること |
-| `test_next_action_in_context` | 次のアクション指示がコンテキストに含まれること |
+| `test_duration_format_edge_cases` | 0秒、60秒ちょうど、3600秒超のフォーマットが正しいこと |
+| `test_done_summary_payload` | 完了サマリーにフェーズ別統計・総コスト・PR一覧が含まれること |
+| `test_done_summary_with_missing_phases` | 一部フェーズ欠損時のサマリーが「N/A」で表示されること |
+| `test_error_notification_payload` | エラー通知に `ErrorSummary` の全フィールドが含まれること |
+| `test_error_notification_without_summary` | `error_summary` なしのエラー通知のフォールバック |
+| `test_phase_start_notification` | フェーズ開始通知が正しい絵文字・色・メッセージで生成されること |
+| `test_files_changed_in_metadata` | 変更ファイル一覧がペイロードの fields に含まれること |
+| `test_files_changed_empty` | 変更ファイルが空の場合にフィールドが省略されること |
+| `test_next_action_in_context` | 次のアクション指示が context ブロックに含まれること |
+| `test_next_action_absent` | `next_action` なしの場合に context ブロックが省略されること |
+| `test_block_count_within_limit` | 生成されるブロック数が Slack の 50 ブロック制限内であること |
+| `test_notify_sends_to_slack_api` | `notify` が Slack API を正しく呼び出すこと（mock） |
+| `test_notify_with_custom_channel` | カスタムチャンネル指定時に正しいチャンネルに送信されること |
+| `test_metadata_keys_all_recognized` | 4.10 で定義した全 metadata キーがペイロード構築で認識されること |
 
-### 8.2 既存テストの更新
+### 8.6 変更ファイル取得 (`test_slack.py` 内)
+
+| テスト | 検証内容 |
+|-------|---------|
+| `test_get_diff_stats_success` | 正常時に `file_count`, `insertions`, `deletions`, `files` が返ること |
+| `test_get_diff_stats_empty_diff` | 変更なしの場合に空の結果が返ること |
+| `test_get_diff_stats_git_failure` | git コマンド失敗時に例外でなく空の結果が返ること（best-effort） |
+
+### 8.7 NotificationType Enum (`test_models.py` 内)
+
+| テスト | 検証内容 |
+|-------|---------|
+| `test_notification_type_values_unique` | 全メンバーの値が一意であること |
+| `test_notification_type_is_str_enum` | `StrEnum` を継承しており、文字列比較が可能であること |
+| `test_notification_type_member_count` | メンバー数が設計通り（18個）であること |
+
+### 8.8 フェーズ側の通知呼び出し
+
+| テスト | 検証内容 |
+|-------|---------|
+| `test_base_phase_sends_start_notification` | `base.py` の `execute` がフェーズ開始時に `PHASE_START` 通知を送信すること |
+| `test_base_phase_sends_error_notification` | エラー発生時に `ERROR` タイプで `error_summary` 付き通知が送信されること |
+| `test_base_phase_sends_timeout_notification` | タイムアウト時に `TIMEOUT` タイプで通知が送信されること |
+| `test_hearing_sends_hearing_question_type` | ヒアリングフェーズが `HEARING_QUESTION` タイプで通知すること |
+| `test_design_sends_design_pr_created_type` | 設計フェーズが `DESIGN_PR_CREATED` タイプ + PR URL 付きで通知すること |
+| `test_implement_sends_impl_pr_created_type` | 実装フェーズが `IMPL_PR_CREATED` タイプ + PR URL・変更ファイル付きで通知すること |
+| `test_fix_sends_fix_pr_created_type` | 修正フェーズが `FIX_PR_CREATED` タイプ + PR URL 付きで通知すること |
+| `test_done_sends_done_summary` | 完了フェーズが `DONE_SUMMARY` タイプでサマリー付き通知を送信すること |
+| `test_design_revise_sends_revised_type` | 設計修正が `DESIGN_REVISED` タイプで通知すること |
+| `test_impl_revise_sends_revised_type` | 実装修正が `IMPL_REVISED` タイプで通知すること |
+| `test_plan_brief_sends_plan_posted_type` | 方針策定が `PLAN_POSTED` タイプで通知すること |
+| `test_analysis_sends_plan_posted_type` | 原因分析が `PLAN_POSTED` タイプで通知すること |
+| `test_split_sends_proposed_type` | 分割提案が `SPLIT_PROPOSED` タイプで通知すること |
+| `test_split_sends_executed_type` | 分割実行が `SPLIT_EXECUTED` タイプで通知すること |
+| `test_all_phases_include_repo_in_metadata` | 全フェーズの通知に `repo` が metadata に含まれること |
+| `test_all_phases_include_issue_title_in_metadata` | 全フェーズの通知に `issue_title` が metadata に含まれること |
+
+### 8.9 Orchestrator 統合
+
+| テスト | 検証内容 |
+|-------|---------|
+| `test_orchestrator_initializes_progress_tracker` | Orchestrator 起動時に `ProgressTracker` が初期化されること |
+| `test_orchestrator_system_start_notification` | 起動時に `SYSTEM_START` タイプで通知されること |
+| `test_orchestrator_system_error_notification` | システムエラー時に `SYSTEM_ERROR` タイプで通知されること |
+| `test_orchestrator_health_check_notification` | ヘルスチェック異常時に `HEALTH_CHECK` タイプで通知されること |
+| `test_orchestrator_progress_tracker_cleanup` | Issue 完了後に `ProgressTracker.cleanup` が呼ばれること |
+
+### 8.10 既存テストの更新
 
 - `TC-SL-01` ～ `TC-SL-10`: 既存テストは後方互換性により引き続きパスすることを確認
 - 必要に応じてアサーションを追加
+
+### 8.11 カバレッジ計測
+
+- `pytest --cov=src/ai_agent_orchestrator/notifications --cov=src/ai_agent_orchestrator/models --cov-report=term-missing` でカバレッジを計測
+- 新規モジュール (`templates.py`, `progress.py`, `error_summarizer.py`) は **行カバレッジ 100%** を必須とする
+- 改修モジュール (`slack.py`, `models.py`) は **変更行のカバレッジ 100%** を必須とする
+- 各フェーズファイルの通知呼び出し箇所は **分岐カバレッジ 100%** を必須とする
+- CI パイプラインで `--cov-fail-under=100` を新規モジュールに対して適用し、カバレッジ低下を防止する
 
 ## 9. リスクと対策
 
