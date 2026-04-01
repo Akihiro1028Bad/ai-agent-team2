@@ -80,7 +80,19 @@ class ImplementExecutor(PhaseExecutor):
         Args:
             request: タスクリクエスト。
             result: エージェント実行結果。
+
+        Raises:
+            RuntimeError: エージェントが空の結果を返した場合。
         """
+        # 空結果の検証: エージェントが実際にコードを書いたか確認
+        if result.cost_usd == 0.0 and not result.output.strip():
+            msg = (
+                f"Issue #{request.issue_number}: "
+                "実装フェーズが空の結果を返しました。"
+                "エージェントが正常に実行されなかった可能性があります。"
+            )
+            raise RuntimeError(msg)
+
         # PR番号を確実に取得 (エージェント出力 → 既存PR検索 → API作成)
         pr_number = await self._ensure_pr_created(
             request,

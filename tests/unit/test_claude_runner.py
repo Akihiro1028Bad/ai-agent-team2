@@ -293,8 +293,11 @@ async def test_run_adds_subagents_for_implement_phase(
     assert len(captured) == 1
     opts = captured[0]["options"]
     assert opts.system_prompt is not None
-    assert "code-analyzer" in opts.system_prompt
-    assert "test-writer" in opts.system_prompt
+    assert isinstance(opts.system_prompt, dict)
+    assert opts.system_prompt["type"] == "preset"
+    assert opts.system_prompt["preset"] == "claude_code"
+    assert "code-analyzer" in opts.system_prompt["append"]
+    assert "test-writer" in opts.system_prompt["append"]
 
 
 # ---------------------------------------------------------------------------

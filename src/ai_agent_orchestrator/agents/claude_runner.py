@@ -197,6 +197,7 @@ class ClaudeAgentRunner:
             cwd=cwd,
             permission_mode=cfg.permission_mode,  # type: ignore[arg-type]
             hooks=hooks,  # type: ignore[arg-type]
+            max_budget_usd=budget,
         )
         # 実装系フェーズでは allowed_tools を明示的に設定
         if cfg.permission_mode == "bypassPermissions":
@@ -210,7 +211,11 @@ class ClaudeAgentRunner:
                 "TodoWrite",
             ]
         if append_prompt:
-            options.system_prompt = append_prompt
+            options.system_prompt = {
+                "type": "preset",
+                "preset": "claude_code",
+                "append": append_prompt,
+            }
 
         return await asyncio.wait_for(
             self._run_query(
