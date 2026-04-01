@@ -18,12 +18,8 @@ class DesignReviseExecutor(PhaseExecutor):
 
     既存セッションを resume して設計書を修正し、
     DESIGN_REVIEW に再遷移する。
+    設計・実装は同一ブランチ (feature/issue-XX) で管理する。
     """
-
-    @property
-    def _branch_prefix(self) -> str:
-        """設計PRは docs/ ブランチを使用。"""
-        return "docs"
 
     async def build_prompt(self, request: TaskRequest) -> str:
         """レビュー指摘対応プロンプトを構築する。
@@ -48,7 +44,7 @@ class DesignReviseExecutor(PhaseExecutor):
             f"## 指示\n"
             f"1. 設計書を修正する\n"
             f"2. git add && git commit (コミットメッセージは日本語で)\n"
-            f"3. git push origin docs/issue-{request.issue_number}\n"
+            f"3. git push origin feature/issue-{request.issue_number}\n"
         )
 
     async def run_agent(self, request: TaskRequest, prompt: str) -> AgentResult:
@@ -65,7 +61,7 @@ class DesignReviseExecutor(PhaseExecutor):
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
-            branch_prefix="docs",
+            branch_prefix="feature",
         )
         return await self._runner.run(
             prompt=prompt,
