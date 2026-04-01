@@ -25,11 +25,42 @@ def test_main_help():
     assert "AI Multi-Agent Orchestrator" in result.output
 
 
+def test_main_help_shows_japanese_descriptions():
+    """メインヘルプに各コマンドの日本語説明が表示されること."""
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    # 各コマンドの日本語説明が表示される
+    assert "リポジトリをクローンし初期設定を行う" in result.output
+    assert "リポジトリをconfig.yamlから削除する" in result.output
+    assert "オーケストレーターを起動する" in result.output
+    assert "オーケストレーターを停止する" in result.output
+    assert "稼働状況を表示する" in result.output
+    assert "認証・接続のヘルスチェックを実行する" in result.output
+    assert "ログを表示する" in result.output
+
+
+def test_main_help_shows_account_description():
+    """メインヘルプにaccountサブコマンドの日本語説明が表示されること."""
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "GitHubアカウント管理" in result.output
+
+
 def test_account_help():
     """account サブコマンドのヘルプが表示されること."""
     result = runner.invoke(app, ["account", "--help"])
     assert result.exit_code == 0
     assert "account" in result.output.lower()
+
+
+def test_account_help_shows_japanese_descriptions():
+    """account サブコマンドのヘルプに日本語説明が表示されること."""
+    result = runner.invoke(app, ["account", "--help"])
+    assert result.exit_code == 0
+    assert "GitHubアカウントを追加" in result.output
+    assert "登録済みアカウント一覧を表示する" in result.output
+    assert "アカウントのトークンを検証する" in result.output
+    assert "アカウントを削除" in result.output
 
 
 def test_setup_help():
@@ -39,6 +70,13 @@ def test_setup_help():
     assert "owner/repo" in result.output
 
 
+def test_setup_help_shows_japanese_description():
+    """setup コマンドのヘルプに日本語説明が表示されること."""
+    result = runner.invoke(app, ["setup", "--help"])
+    assert result.exit_code == 0
+    assert "リポジトリをクローンし初期設定を行う" in result.output
+
+
 def test_start_help():
     """start コマンドのヘルプが表示されること."""
     result = runner.invoke(app, ["start", "--help"])
@@ -46,10 +84,25 @@ def test_start_help():
     assert "config" in result.output.lower()
 
 
+def test_start_help_shows_japanese_description():
+    """start コマンドのヘルプに日本語説明が表示されること."""
+    result = runner.invoke(app, ["start", "--help"])
+    assert result.exit_code == 0
+    assert "オーケストレーターを起動する" in result.output
+    assert "フォアグラウンド実行" in result.output
+
+
 def test_stop_help():
     """stop コマンドのヘルプが表示されること."""
     result = runner.invoke(app, ["stop", "--help"])
     assert result.exit_code == 0
+
+
+def test_stop_help_shows_japanese_description():
+    """stop コマンドのヘルプに日本語説明が表示されること."""
+    result = runner.invoke(app, ["stop", "--help"])
+    assert result.exit_code == 0
+    assert "オーケストレーターを停止する" in result.output
 
 
 def test_status_help():
@@ -59,10 +112,24 @@ def test_status_help():
     assert "json" in result.output.lower()
 
 
+def test_status_help_shows_japanese_description():
+    """status コマンドのヘルプに日本語説明が表示されること."""
+    result = runner.invoke(app, ["status", "--help"])
+    assert result.exit_code == 0
+    assert "稼働状況を表示する" in result.output
+
+
 def test_health_help():
     """health コマンドのヘルプが表示されること."""
     result = runner.invoke(app, ["health", "--help"])
     assert result.exit_code == 0
+
+
+def test_health_help_shows_japanese_description():
+    """health コマンドのヘルプに日本語説明が表示されること."""
+    result = runner.invoke(app, ["health", "--help"])
+    assert result.exit_code == 0
+    assert "認証・接続のヘルスチェックを実行する" in result.output
 
 
 def test_logs_help():
@@ -71,10 +138,26 @@ def test_logs_help():
     assert result.exit_code == 0
 
 
+def test_logs_help_shows_japanese_description():
+    """logs コマンドのヘルプに日本語説明が表示されること."""
+    result = runner.invoke(app, ["logs", "--help"])
+    assert result.exit_code == 0
+    assert "ログを表示する" in result.output
+    assert "リポジトリでフィルタ" in result.output
+    assert "Issue番号でフィルタ" in result.output
+
+
 def test_unregister_help():
     """unregister コマンドのヘルプが表示されること."""
     result = runner.invoke(app, ["unregister", "--help"])
     assert result.exit_code == 0
+
+
+def test_unregister_help_shows_japanese_description():
+    """unregister コマンドのヘルプに日本語説明が表示されること."""
+    result = runner.invoke(app, ["unregister", "--help"])
+    assert result.exit_code == 0
+    assert "リポジトリをconfig.yamlから削除する" in result.output
 
 
 # ---------------------------------------------------------------------------

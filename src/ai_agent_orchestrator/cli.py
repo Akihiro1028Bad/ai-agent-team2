@@ -22,16 +22,16 @@ app = typer.Typer(
 )
 
 # サブコマンドグループ
-app.add_typer(account_app, name="account")
+app.add_typer(account_app, name="account", help="GitHubアカウント管理")
 
 # トップレベルコマンド
-app.command("setup")(setup_command)
-app.command("unregister")(unregister_command)
-app.command("start")(start_command)
-app.command("stop")(stop_command)
-app.command("status")(status_command)
-app.command("health")(health_command)
-app.command("logs")(logs_command)
+app.command("setup", help="リポジトリをクローンし初期設定を行う")(setup_command)
+app.command("unregister", help="リポジトリをconfig.yamlから削除する")(unregister_command)
+app.command("start", help="オーケストレーターを起動する")(start_command)
+app.command("stop", help="オーケストレーターを停止する")(stop_command)
+app.command("status", help="稼働状況を表示する")(status_command)
+app.command("health", help="認証・接続のヘルスチェックを実行する")(health_command)
+app.command("logs", help="ログを表示する")(logs_command)
 
 
 @app.callback()
