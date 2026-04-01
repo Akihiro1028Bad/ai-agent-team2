@@ -565,11 +565,33 @@ class PhaseExecutor(ABC):
     def _extract_pr_number(output: str) -> int | None:
         """エージェント出力テキストから PR 番号を抽出する。
 
+        PR URL パターンを優先的に検索し、見つからなければ
+        ``PR #N`` / ``Pull Request #N`` パターンにフォールバックする。
+        単純な ``#N`` は Issue 番号と混同するため最終手段とする。
+
         Args:
             output: エージェント出力テキスト。
 
         Returns:
             PR 番号。見つからなければ None。
         """
+        # 1. GitHub PR URL (最も信頼性が高い)
+        url_match = re.search(r"github\.com/[^/]+/[^/]+/pull/(\d+)", output)
+        if url_match:
+            return int(url_match.group(1))
+
+        # 2. "PR #N" / "Pull Request #N" パターン
+        pr_match = re.search(r"(?:PR|Pull Request)\s*#(\d+)", output, re.IGNORECASE)
+        if pr_match:
+            return int(pr_match.group(1))
+
+        # 3. 出力末尾付近の #N (エージェントは最後にPR番号を出力しがち)
+        # 出力の最後500文字から最後の #N を探す
+        tail = output[-500:] if len(output) > 500 else output
+        tail_matches = list(re.finditer(r"#(\d+)", tail))
+        if tail_matches:
+            return int(tail_matches[-1].group(1))
+
+        # 4. フォールバック: 最初の #N
         match = re.search(r"#(\d+)", output)
         return int(match.group(1)) if match else None

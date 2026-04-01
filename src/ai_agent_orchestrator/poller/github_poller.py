@@ -336,54 +336,92 @@ class GitHubPoller:
     ) -> list[PollEvent]:
         """PR レビューイベント (設計PR, 実装PR) を検知する.
 
-        - 設計 PR: approve -> DESIGN_PR_APPROVED, コメント -> DESIGN_PR_COMMENTED
-        - 実装 PR: approve -> IMPL_PR_APPROVED, コメント -> IMPL_PR_COMMENTED
+        - 設計 PR (design-review): LGTM/approve → DESIGN_PR_APPROVED, コメント → DESIGN_PR_COMMENTED
+        - 実装 PR (impl-review): PRマージ → IMPL_PR_MERGED, レビューコメント → IMPL_PR_COMMENTED
+          (実装PRは手動マージで完了とする。LGTM/approve では DONE に遷移しない)
         """
         events: list[PollEvent] = []
-        label_configs: list[tuple[str, str, str]] = [
-            (
-                "design-review",
-                EventType.DESIGN_PR_APPROVED,
-                EventType.DESIGN_PR_COMMENTED,
-            ),
-            (
-                "impl-review",
-                EventType.IMPL_PR_APPROVED,
-                EventType.IMPL_PR_COMMENTED,
-            ),
-        ]
-        for label_suffix, approved_type, commented_type in label_configs:
-            issues = await client.get_issues_with_label(repo, f"{repo.label},phase:{label_suffix}")
-            for issue in issues:
-                pr_reviews = await self._get_pr_reviews(client, repo, issue)
-                for review_info in pr_reviews:
-                    review_state = review_info["state"]
-                    review_body = review_info["body"]
-                    review_id = review_info.get("id", "")
-                    event_type = approved_type if review_state == "approved" else commented_type
-                    # BUG #4: Deduplicate PR review events
-                    event_key = f"pr_review:{event_type}:{issue.number}:{review_id}"
-                    if event_key in self._seen_events:
-                        continue
-                    self._seen_events.add(event_key)
-                    if review_state == "approved":
-                        events.append(
-                            PollEvent(
-                                type=approved_type,
-                                repo=repo,
-                                issue=issue,
-                            )
+
+        # --- 設計PR: レビュー (LGTM/approve) で承認検知 ---
+        design_issues = await client.get_issues_with_label(repo, f"{repo.label},phase:design-review")
+        for issue in design_issues:
+            pr_reviews = await self._get_pr_reviews(client, repo, issue)
+            for review_info in pr_reviews:
+                review_state = review_info["state"]
+                review_body = review_info["body"]
+                review_id = review_info.get("id", "")
+                event_type = (
+                    EventType.DESIGN_PR_APPROVED if review_state == "approved" else EventType.DESIGN_PR_COMMENTED
+                )
+                event_key = f"pr_review:{event_type}:{issue.number}:{review_id}"
+                if event_key in self._seen_events:
+                    continue
+                self._seen_events.add(event_key)
+                if review_state == "approved":
+                    events.append(PollEvent(type=EventType.DESIGN_PR_APPROVED, repo=repo, issue=issue))
+                else:
+                    events.append(
+                        PollEvent(
+                            type=EventType.DESIGN_PR_COMMENTED,
+                            repo=repo,
+                            issue=issue,
+                            extra={"comments": review_body},
                         )
-                    else:
+                    )
+
+        # --- 実装PR: マージで完了検知、レビューコメントで修正検知 ---
+        impl_issues = await client.get_issues_with_label(repo, f"{repo.label},phase:impl-review")
+        for issue in impl_issues:
+            # マージ検知 (最優先)
+            merged = await self._check_pr_merged(client, repo, issue)
+            if merged:
+                event_key = f"pr_merged:{issue.number}"
+                if event_key not in self._seen_events:
+                    self._seen_events.add(event_key)
+                    events.append(PollEvent(type=EventType.IMPL_PR_MERGED, repo=repo, issue=issue))
+                continue  # マージ済みならコメント検知は不要
+
+            # レビューコメント検知 (修正指摘)
+            pr_reviews = await self._get_pr_reviews(client, repo, issue)
+            for review_info in pr_reviews:
+                review_state = review_info["state"]
+                review_body = review_info["body"]
+                review_id = review_info.get("id", "")
+                if review_state != "approved":
+                    event_key = f"pr_review:{EventType.IMPL_PR_COMMENTED}:{issue.number}:{review_id}"
+                    if event_key not in self._seen_events:
+                        self._seen_events.add(event_key)
                         events.append(
                             PollEvent(
-                                type=commented_type,
+                                type=EventType.IMPL_PR_COMMENTED,
                                 repo=repo,
                                 issue=issue,
                                 extra={"comments": review_body},
                             )
                         )
+                # approve/LGTM は無視 (実装PRはマージで完了)
+
         return events
+
+    async def _check_pr_merged(
+        self,
+        client: GitHubClient,
+        repo: RepositoryConfig,
+        issue: Issue,
+    ) -> bool:
+        """Issue に紐づく PR がマージ済みかどうかを確認する.
+
+        Returns:
+            マージ済みの場合 True。
+        """
+        # closed PR からマージ済みを探す
+        closed_prs = await client.list_pull_requests(repo, state="closed")
+        for pr in closed_prs:
+            if self._pr_references_issue(pr, issue.number):
+                merged_at = getattr(pr, "merged_at", None)
+                if merged_at is not None:
+                    return True
+        return False
 
     async def _detect_ci_results(
         self,
@@ -558,35 +596,46 @@ class GitHubPoller:
         PR レビュー (Approve/Changes Requested) に加え、
         PR の一般コメントに approve_comment と完全一致するものがあれば承認とみなす。
         承認が1つでもあれば承認のみ返す(コメントと承認の混在による遷移競合を防止)。
+        open PR で見つからなければ、最近マージされた PR もチェックする。
 
         Returns:
             {"state": "approved"|"commented", "body": "review body"} のリスト.
         """
+        # open PR を優先的にチェックし、見つからなければマージ済みもチェック
         prs = await client.list_pull_requests(repo)
+        matching_prs = [pr for pr in prs if self._pr_references_issue(pr, issue.number)]
+        if not matching_prs:
+            # マージ済み PR も検索 (設計PRがマージされた場合の検知用)
+            closed_prs = await client.list_pull_requests(repo, state="closed")
+            matching_prs = [pr for pr in closed_prs if self._pr_references_issue(pr, issue.number)]
         approved: list[dict[str, str]] = []
         commented: list[dict[str, str]] = []
-        for pr in prs:
-            if self._pr_references_issue(pr, issue.number):
-                reviews = await client.get_pr_reviews(repo.owner, repo.repo, pr.number)
-                for review in reviews:
-                    state = review.get("state", "")
-                    body = review.get("body", "") or ""
-                    review_id = str(review.get("id", ""))
-                    is_approved = state == "APPROVED"
-                    is_lgtm = state == "COMMENTED" and body.strip().upper() == self._approve_comment.upper()
-                    if is_approved or is_lgtm:
-                        approved.append({"state": "approved", "body": body, "id": review_id})
-                    elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and body):
-                        commented.append({"state": "commented", "body": body, "id": review_id})
-                # コメントによる承認: PR の一般コメントを確認
-                pr_comments = await client.list_comments(repo, pr.number)
-                for comment in pr_comments:
-                    body = comment.body or ""
-                    if _is_bot_comment(body):
-                        continue
-                    if body.strip() == self._approve_comment:
-                        approved.append({"state": "approved", "body": body, "id": str(comment.id)})
-                        break
+        for pr in matching_prs:
+            # マージ済みPRはそれ自体が承認済みとみなす
+            merged = getattr(pr, "merged_at", None) is not None or getattr(pr, "merged", False)
+            if merged:
+                approved.append({"state": "approved", "body": "PR merged", "id": f"merged-{pr.number}"})
+                continue
+            reviews = await client.get_pr_reviews(repo.owner, repo.repo, pr.number)
+            for review in reviews:
+                state = review.get("state", "")
+                body = review.get("body", "") or ""
+                review_id = str(review.get("id", ""))
+                is_approved = state == "APPROVED"
+                is_lgtm = state == "COMMENTED" and body.strip().upper() == self._approve_comment.upper()
+                if is_approved or is_lgtm:
+                    approved.append({"state": "approved", "body": body, "id": review_id})
+                elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and body):
+                    commented.append({"state": "commented", "body": body, "id": review_id})
+            # コメントによる承認: PR の一般コメントを確認
+            pr_comments = await client.list_comments(repo, pr.number)
+            for comment in pr_comments:
+                body = comment.body or ""
+                if _is_bot_comment(body):
+                    continue
+                if body.strip() == self._approve_comment:
+                    approved.append({"state": "approved", "body": body, "id": str(comment.id)})
+                    break
         # 承認があればコメントは無視(遷移競合を防止)
         return approved if approved else commented
 

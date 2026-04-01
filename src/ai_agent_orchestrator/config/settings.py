@@ -96,7 +96,7 @@ class AppSettings(BaseSettings):
         populate_by_name=True,
     )
 
-    polling_interval_sec: int = Field(default=120, ge=30)
+    polling_interval_sec: int = Field(default=120, ge=5)
     accounts: dict[str, AccountConfig] = {}
     repositories: list[RepositoryConfig]
     concurrency: ConcurrencyConfig = ConcurrencyConfig()

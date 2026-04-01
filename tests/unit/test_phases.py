@@ -1301,9 +1301,10 @@ class TestDesignPrLookup:
         )
         await executor.process_result(request, result)
 
-        # list_pull_requests が docs/issue-42 で検索されたことを確認
+        # list_pull_requests が feature/issue-42 で検索されたことを確認
+        # (設計・実装は同一 feature ブランチで管理)
         call_args = mock_github.list_pull_requests.call_args
-        assert "docs/issue-42" in str(call_args)
+        assert "feature/issue-42" in str(call_args)
 
 
 class TestEnsurePrCreatedFallback:

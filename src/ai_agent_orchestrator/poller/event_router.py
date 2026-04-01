@@ -112,6 +112,8 @@ class EventRouter:
                 await self._handle_design_pr_approved(event)
             case EventType.DESIGN_PR_COMMENTED:
                 await self._handle_design_pr_commented(event)
+            case EventType.IMPL_PR_MERGED:
+                await self._handle_impl_pr_merged(event)
             case EventType.IMPL_PR_APPROVED:
                 await self._handle_impl_pr_approved(event)
             case EventType.IMPL_PR_COMMENTED:
@@ -390,7 +392,11 @@ class EventRouter:
         )
 
     async def _handle_design_pr_approved(self, event: PollEvent) -> None:
-        """設計 PR approve: PLANNING へ遷移してエンキュー."""
+        """設計 PR approve: PLANNING へ遷移してエンキュー.
+
+        設計・実装は同一ブランチ (feature/issue-XX) の同一PRで管理するため、
+        設計PRのマージは不要。承認後すぐに実装計画フェーズへ遷移する。
+        """
         assert event.issue is not None
         await self._sm.transition(event.issue.number, Phase.PLANNING)
         await self._tq.enqueue(
@@ -416,8 +422,11 @@ class EventRouter:
             )
         )
 
-    async def _handle_impl_pr_approved(self, event: PollEvent) -> None:
-        """実装 PR approve: DONE へ遷移し、DoneExecutor をエンキュー."""
+    async def _handle_impl_pr_merged(self, event: PollEvent) -> None:
+        """実装 PR マージ: DONE へ遷移し、DoneExecutor をエンキュー.
+
+        ユーザーが手動で PR をマージした段階で Issue を完了させる。
+        """
         assert event.issue is not None
         await self._sm.transition(event.issue.number, Phase.DONE)
         await self._tq.enqueue(
@@ -427,6 +436,18 @@ class EventRouter:
                 phase=Phase.DONE.value,
                 priority=Priority.NORMAL,
             )
+        )
+
+    async def _handle_impl_pr_approved(self, event: PollEvent) -> None:
+        """実装 PR approve: ログのみ。DONE 遷移はしない.
+
+        実装PRの完了はマージ (IMPL_PR_MERGED) で判定する。
+        approve/LGTM は参考情報としてログに記録する。
+        """
+        assert event.issue is not None
+        logger.info(
+            "Issue #%d: impl PR approved (waiting for merge to complete)",
+            event.issue.number,
         )
 
     async def _handle_impl_pr_commented(self, event: PollEvent) -> None:

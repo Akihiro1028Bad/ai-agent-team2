@@ -79,6 +79,7 @@ class EventType(str, Enum):  # noqa: UP042
     DESIGN_PR_COMMENTED = "design_pr_commented"
     IMPL_PR_APPROVED = "impl_pr_approved"
     IMPL_PR_COMMENTED = "impl_pr_commented"
+    IMPL_PR_MERGED = "impl_pr_merged"
     CI_RESULT = "ci_result"
     PLAN_REACTION_ADDED = "plan_reaction_added"
     PLAN_COMMENT_ADDED = "plan_comment_added"

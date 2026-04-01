@@ -17,12 +17,9 @@ class DesignExecutor(PhaseExecutor):
     """Feature-M 設計書作成フェーズ。
 
     設計書を docs/designs/issue-XX.md に作成し、設計 PR を作成する。
+    設計・計画・実装は同一ブランチ (feature/issue-XX) で行い、
+    1つのPRとして管理する。
     """
-
-    @property
-    def _branch_prefix(self) -> str:
-        """設計PRは docs/ ブランチを使用。"""
-        return "docs"
 
     async def build_prompt(self, request: TaskRequest) -> str:
         """設計書作成プロンプトを構築する。
@@ -38,7 +35,7 @@ class DesignExecutor(PhaseExecutor):
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
-            branch_prefix="docs",
+            branch_prefix="feature",
         )
         context = await self._context.build_context(
             str(worktree),
@@ -66,7 +63,7 @@ class DesignExecutor(PhaseExecutor):
             f"## 指示\n"
             f"1. docs/designs/issue-{request.issue_number}.md に設計書を作成\n"
             f"2. git commit して Push (コミットメッセージは日本語で)\n"
-            f"3. PRを作成 (タイトル・本文は日本語で)\n"
+            f"3. PRを作成 (タイトル・本文は日本語で、Closes #{request.issue_number} を含める)\n"
             f"4. PRのURLを出力"
         )
 
@@ -78,16 +75,18 @@ class DesignExecutor(PhaseExecutor):
             result: エージェント実行結果。
         """
         # PR番号を確実に取得 (エージェント出力 → 既存PR検索 → API作成)
+        # 設計・実装は同一ブランチ (feature/) の同一PR
         pr_number = await self._ensure_pr_created(
             request,
             result.output,
-            branch_prefix="docs",
-            title_prefix="docs: ",
+            branch_prefix="feature",
+            title_prefix="feat: ",
         )
 
         state = self._sm.get_state(request.issue_number)
         if state:
             state.design_pr_number = pr_number
+            state.pr_number = pr_number  # 設計PR = 実装PR (同一ブランチ)
             state.session_id = result.session_id
 
         client = await self._get_client(request.repo)

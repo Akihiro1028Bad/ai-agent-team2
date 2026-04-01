@@ -217,14 +217,26 @@ class TestEventRouterDesignPR:
 class TestEventRouterImplPR:
     """実装 PR イベントのテスト."""
 
-    async def test_impl_pr_approved_routes_to_done(
+    async def test_impl_pr_approved_does_not_route_to_done(
         self,
         router: EventRouter,
         mock_sm: AsyncMock,
         mock_tq: AsyncMock,
     ) -> None:
-        """実装 PR approve -> DONE へ遷移."""
+        """実装 PR approve -> DONE に遷移しない (マージで完了)."""
         event = _make_event(EventType.IMPL_PR_APPROVED)
+        await router.route(event)
+
+        mock_sm.transition.assert_not_called()
+
+    async def test_impl_pr_merged_routes_to_done(
+        self,
+        router: EventRouter,
+        mock_sm: AsyncMock,
+        mock_tq: AsyncMock,
+    ) -> None:
+        """実装 PR マージ -> DONE へ遷移."""
+        event = _make_event(EventType.IMPL_PR_MERGED)
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]

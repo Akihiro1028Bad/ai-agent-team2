@@ -198,6 +198,8 @@ class WorkspaceManager:
 
         if worktree_path.exists():
             logger.info("Worktree already exists: %s", worktree_path)
+            # 既存 worktree を最新の main にリベース (設計書マージ後の同期)
+            await self._sync_worktree_with_base(worktree_path, repo)
             return worktree_path
 
         worktree_path.parent.mkdir(parents=True, exist_ok=True)
@@ -239,6 +241,43 @@ class WorkspaceManager:
         )
 
         return worktree_path
+
+    async def _sync_worktree_with_base(
+        self,
+        worktree_path: Path,
+        repo: RepositoryConfig,
+    ) -> None:
+        """既存 worktree を最新の base ブランチに同期する.
+
+        設計PRマージ後に feature ブランチが最新の main を含むようにするため、
+        fetch → merge を実行する。コンフリクトが発生した場合はログに記録するのみ。
+
+        Args:
+            worktree_path: worktree のパス。
+            repo: リポジトリ設定。
+        """
+        base_branch = getattr(repo, "base_branch", "main")
+        # fetch latest
+        rc, _, stderr = await self._run_git("fetch", "origin", cwd=str(worktree_path))
+        if rc != 0:
+            logger.warning("git fetch failed in worktree %s: %s", worktree_path, stderr)
+            return
+        # merge origin/main into current branch
+        rc, _, stderr = await self._run_git(
+            "merge",
+            f"origin/{base_branch}",
+            "--no-edit",
+            cwd=str(worktree_path),
+        )
+        if rc != 0:
+            logger.warning(
+                "git merge origin/%s failed in worktree %s: %s",
+                base_branch,
+                worktree_path,
+                stderr,
+            )
+            # コンフリクト時は merge を中断
+            await self._run_git("merge", "--abort", cwd=str(worktree_path))
 
     async def remove_worktree(
         self,

@@ -78,9 +78,9 @@ class TestTCC02Validation:
             ConcurrencyConfig(max_per_repo=6)
 
     def test_polling_interval_below_min(self):
-        """polling_interval_sec が 30 未満の場合にバリデーションエラー."""
+        """polling_interval_sec が 5 未満の場合にバリデーションエラー."""
         with pytest.raises(ValidationError):
-            AppSettings(polling_interval_sec=10, repositories=[])
+            AppSettings(polling_interval_sec=3, repositories=[])
 
 
 # ---------------------------------------------------------------------------

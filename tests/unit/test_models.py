@@ -64,8 +64,8 @@ def test_phase_values() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_event_type_has_12_values() -> None:
-    assert len(EventType) == 12
+def test_event_type_has_13_values() -> None:
+    assert len(EventType) == 13
 
 
 def test_event_type_values() -> None:
@@ -76,6 +76,7 @@ def test_event_type_values() -> None:
         "design_pr_commented",
         "impl_pr_approved",
         "impl_pr_commented",
+        "impl_pr_merged",
         "ci_result",
         "plan_reaction_added",
         "plan_comment_added",
