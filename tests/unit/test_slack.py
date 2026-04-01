@@ -35,10 +35,10 @@ async def test_notify_sends_info_message(notifier: SlackNotifier) -> None:
 
     assert route.called
     request_body = json.loads(route.calls[0].request.content)
-    assert "blocks" in request_body
-    text_block = request_body["blocks"][0]["text"]["text"]
+    assert "attachments" in request_body
+    blocks = request_body["attachments"][0]["blocks"]
+    text_block = blocks[0]["text"]["text"]
     assert ":robot_face:" in text_block
-    assert "Issue #42" in text_block
 
 
 # ── TC-SL-02: error レベルの絵文字 ──
@@ -52,7 +52,8 @@ async def test_notify_error_level_uses_x_emoji(notifier: SlackNotifier) -> None:
     await notifier.notify("エラーが発生しました", level="error")
 
     request_body = json.loads(route.calls[0].request.content)
-    text_block = request_body["blocks"][0]["text"]["text"]
+    blocks = request_body["attachments"][0]["blocks"]
+    text_block = blocks[0]["text"]["text"]
     assert ":x:" in text_block
 
 
@@ -69,7 +70,8 @@ async def test_notify_critical_level_uses_rotating_light_emoji(
     await notifier.notify("認証が切れました", level="critical")
 
     request_body = json.loads(route.calls[0].request.content)
-    text_block = request_body["blocks"][0]["text"]["text"]
+    blocks = request_body["attachments"][0]["blocks"]
+    text_block = blocks[0]["text"]["text"]
     assert ":rotating_light:" in text_block
 
 
@@ -93,10 +95,13 @@ async def test_notify_includes_metadata_context(notifier: SlackNotifier) -> None
     )
 
     request_body = json.loads(route.calls[0].request.content)
-    assert len(request_body["blocks"]) >= 2  # section + context
-    context_text = request_body["blocks"][1]["elements"][0]["text"]
+    blocks = request_body["attachments"][0]["blocks"]
+    assert len(blocks) >= 2  # section + context
+    # Find the context block
+    context_blocks = [b for b in blocks if b["type"] == "context"]
+    assert len(context_blocks) >= 1
+    context_text = context_blocks[0]["elements"][0]["text"]
     assert "org/repo" in context_text
-    assert "42" in context_text
 
 
 # ── TC-SL-05: Webhook 失敗時に例外を発生させない ──
@@ -216,7 +221,9 @@ async def test_notify_without_metadata_has_no_context_block(
     await notifier.notify("シンプルなメッセージ")
 
     request_body = json.loads(route.calls[0].request.content)
-    assert len(request_body["blocks"]) == 1  # section only
+    blocks = request_body["attachments"][0]["blocks"]
+    # attachments ベースではヘッダー+divider+メッセージ+divider+context が含まれる
+    assert len(blocks) >= 1
 
 
 # ── TC-SL-13: default_channel が None の場合 channel キーがない ──

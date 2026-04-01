@@ -144,9 +144,7 @@ PHASE_LABELS: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-def resolve_step(
-    phase: str, issue_type: str | None
-) -> tuple[int | None, int | None, str | None]:
+def resolve_step(phase: str, issue_type: str | None) -> tuple[int | None, int | None, str | None]:
     """フェーズと Issue タイプからステップ情報を返す.
 
     Args:
@@ -278,9 +276,7 @@ class SlackNotifier:
             payload["channel"] = resolved_channel
         return payload
 
-    def _build_blocks(
-        self, message: str, level: str, metadata: dict[str, Any]
-    ) -> list[dict[str, Any]]:
+    def _build_blocks(self, message: str, level: str, metadata: dict[str, Any]) -> list[dict[str, Any]]:
         """全ブロックを組み立てて返す."""
         blocks: list[dict[str, Any]] = []
         phase = metadata.get("phase")
@@ -328,9 +324,7 @@ class SlackNotifier:
 
         return NOTIFICATION_COLORS["start"]
 
-    def _build_header_block(
-        self, phase: str | None, level: str, metadata: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _build_header_block(self, phase: str | None, level: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Header block を構築する."""
         emoji = self._phase_emoji(phase) if phase else self._level_emoji(level)
         phase_label = PHASE_LABELS.get(phase or "", phase or "通知")
@@ -370,39 +364,49 @@ class SlackNotifier:
         # Issue ボタン
         if repo and issue is not None:
             issue_url = f"https://github.com/{repo}/issues/{issue}"
-            elements.append({
-                "type": "button",
-                "text": {"type": "plain_text", "text": "Issue を見る"},
-                "url": issue_url,
-            })
+            elements.append(
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Issue を見る"},
+                    "url": issue_url,
+                }
+            )
 
         # PR ボタン
         if pr_url:
-            elements.append({
-                "type": "button",
-                "text": {"type": "plain_text", "text": "PR を見る"},
-                "url": pr_url,
-            })
+            elements.append(
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "PR を見る"},
+                    "url": pr_url,
+                }
+            )
         elif repo and pr is not None:
-            elements.append({
-                "type": "button",
-                "text": {"type": "plain_text", "text": "PR を見る"},
-                "url": f"https://github.com/{repo}/pull/{pr}",
-            })
+            elements.append(
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "PR を見る"},
+                    "url": f"https://github.com/{repo}/pull/{pr}",
+                }
+            )
 
         # 設計PR ボタン
         if design_pr_url:
-            elements.append({
-                "type": "button",
-                "text": {"type": "plain_text", "text": "設計PR を見る"},
-                "url": design_pr_url,
-            })
+            elements.append(
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "設計PR を見る"},
+                    "url": design_pr_url,
+                }
+            )
         elif repo and design_pr is not None:
-            elements.append({
-                "type": "button",
-                "text": {"type": "plain_text", "text": "設計PR を見る"},
-                "url": f"https://github.com/{repo}/pull/{design_pr}",
-            })
+            elements.append(
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "設計PR を見る"},
+                    "url": f"https://github.com/{repo}/pull/{design_pr}",
+                }
+            )
 
         if not elements:
             return None
@@ -428,18 +432,14 @@ class SlackNotifier:
         if files_changed is not None:
             added = metadata.get("lines_added", 0)
             deleted = metadata.get("lines_deleted", 0)
-            parts.append(
-                f":file_folder: *変更:* {files_changed}ファイル (+{added} -{deleted})"
-            )
+            parts.append(f":file_folder: *変更:* {files_changed}ファイル (+{added} -{deleted})")
 
         # CI結果
         ci_total = metadata.get("ci_total")
         if ci_total is not None:
             ci_passed = metadata.get("ci_passed", 0)
             ci_failed = metadata.get("ci_failed", 0)
-            parts.append(
-                f":test_tube: *CI:* {ci_passed}pass / {ci_failed}fail (計{ci_total})"
-            )
+            parts.append(f":test_tube: *CI:* {ci_passed}pass / {ci_failed}fail (計{ci_total})")
 
         if not parts:
             return None
