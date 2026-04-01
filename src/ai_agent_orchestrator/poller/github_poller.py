@@ -462,15 +462,21 @@ class GitHubPoller:
                         break
 
             # 人間のコメント (修正指示) を確認
-            # 最後の Bot コメント以降の人間コメントのみを対象とする
-            last_bot_time = max(
+            # 分割提案コメント以降の人間コメントのみを対象とする
+            # (ヒアリング回答など分割提案前のコメントを誤検知しないようにする)
+            split_proposal_time = max(
+                (c.created_at for c in comments if _is_bot_comment(c.body or "") and "分割提案" in (c.body or "")),
+                default=None,
+            )
+            # 分割提案コメントがまだなければ、最後の Bot コメント以降を対象とする
+            cutoff_time = split_proposal_time or max(
                 (c.created_at for c in comments if _is_bot_comment(c.body or "")),
                 default=None,
             )
             human_comments = [
                 c
                 for c in comments
-                if not _is_bot_comment(c.body or "") and (last_bot_time is None or c.created_at > last_bot_time)
+                if not _is_bot_comment(c.body or "") and (cutoff_time is None or c.created_at > cutoff_time)
             ]
             for hc in human_comments:
                 # BUG #4: Deduplicate split modified events
@@ -535,9 +541,9 @@ class GitHubPoller:
                     state = review.get("state", "")
                     body = review.get("body", "") or ""
                     review_id = str(review.get("id", ""))
-                    if state == "APPROVED":
-                        approved.append({"state": "approved", "body": body, "id": review_id})
-                    elif state == "COMMENTED" and body.strip().upper() == self._approve_comment.upper():
+                    is_approved = state == "APPROVED"
+                    is_lgtm = state == "COMMENTED" and body.strip().upper() == self._approve_comment.upper()
+                    if is_approved or is_lgtm:
                         approved.append({"state": "approved", "body": body, "id": review_id})
                     elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and body):
                         commented.append({"state": "commented", "body": body, "id": review_id})

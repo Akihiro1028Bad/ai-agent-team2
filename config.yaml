@@ -22,7 +22,7 @@ repositories:
   label: ai-agent
   owner: Akihiro1028Bad
   repo: ai-agent-team2
-- account: Akihiro1028Bad
+- account: default
   base_branch: main
   label: ai-agent
   owner: Akihiro1028Bad

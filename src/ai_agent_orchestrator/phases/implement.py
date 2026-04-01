@@ -28,6 +28,9 @@ class ImplementExecutor(PhaseExecutor):
 
         Returns:
             プロンプト文字列。
+
+        Raises:
+            RuntimeError: 設計書または実装計画がコンテキストに含まれない場合。
         """
         client = await self._get_client(request.repo)
         issue = await client.get_issue(request.repo, request.issue_number)
@@ -42,11 +45,27 @@ class ImplementExecutor(PhaseExecutor):
             "implement",
         )
 
+        # 設計書・実装計画がコンテキストに含まれているか検証
+        if "## 設計書" not in context:
+            msg = (
+                f"Issue #{request.issue_number}: "
+                "設計書がコンテキストに含まれていません。"
+                "設計フェーズが完了しているか確認してください。"
+            )
+            raise RuntimeError(msg)
+        if "## 実装計画" not in context:
+            msg = (
+                f"Issue #{request.issue_number}: "
+                "実装計画がコンテキストに含まれていません。"
+                "計画フェーズが完了しているか確認してください。"
+            )
+            raise RuntimeError(msg)
+
         return (
-            f"実装計画に基づいてコードを実装してください。\n\n"
+            f"以下の設計書と実装計画に基づいてコードを実装してください。\n\n"
             f"## Issue #{request.issue_number}: {issue.title}\n\n"
-            f"## コンテキスト\n{context}\n\n"
-            f"## 指示\n"
+            f"{context}\n\n"
+            f"## 実装指示\n"
             f"1. 実装計画の順序に従ってコードを実装\n"
             f"2. テストコードも作成\n"
             f"3. テスト・lint・ビルドを実行して確認\n"

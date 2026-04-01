@@ -197,7 +197,8 @@ repositories:
 # TC-C07: SlackConfig のオプション性
 # ---------------------------------------------------------------------------
 class TestTCC07SlackConfig:
-    def test_slack_config_optional(self, tmp_path):
+    def test_slack_config_optional(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         config_yaml = tmp_path / "config.yaml"
         config_yaml.write_text("""\
 repositories:

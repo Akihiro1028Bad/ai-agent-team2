@@ -260,7 +260,8 @@ class EventRouter:
             await self._sm.transition(issue_number, Phase.HEARING)
             logger.info("Issue #%d resumed from SUSPENDED to HEARING", issue_number)
         else:
-            # HEARING/HEARING_WAIT 以外のフェーズなら無視
+            # HEARING/HEARING_WAIT/SUSPENDED 以外のフェーズなら無視
+            # (SPLIT_PROPOSAL等のフェーズでコメントを誤検知しないようにする)
             logger.info("Issue #%d is in phase %s, ignoring hearing reply", issue_number, current_phase)
             return
 

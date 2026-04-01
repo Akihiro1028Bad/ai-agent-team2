@@ -83,6 +83,9 @@ class ContextEngine:
         Returns:
             コンテキスト文字列 (Markdown形式、セクション区切り ``---``).
         """
+        # worktree パスから issue_number を抽出
+        issue_number = self._extract_issue_number(worktree_path)
+
         parts: list[str] = []
 
         # 1. リポマップ (ディレクトリ構造)
@@ -104,17 +107,34 @@ class ContextEngine:
 
         # 4. 設計書 (planning / implement / ci_fix フェーズ)
         if phase in _DESIGN_DOC_PHASES:
-            design_doc = await self._read_design_doc(worktree_path)
+            design_doc = await self._read_design_doc(worktree_path, issue_number)
             if design_doc:
                 parts.append(f"## 設計書\n{design_doc}")
+            else:
+                logger.warning("設計書が見つかりません (issue_number=%s, phase=%s)", issue_number, phase)
 
         # 5. 実装計画 (implement / ci_fix フェーズ)
         if phase in _IMPL_PLAN_PHASES:
-            impl_plan = await self._read_impl_plan(worktree_path)
+            impl_plan = await self._read_impl_plan(worktree_path, issue_number)
             if impl_plan:
                 parts.append(f"## 実装計画\n{impl_plan}")
+            else:
+                logger.warning("実装計画が見つかりません (issue_number=%s, phase=%s)", issue_number, phase)
 
         return "\n\n---\n\n".join(parts)
+
+    @staticmethod
+    def _extract_issue_number(worktree_path: str) -> int | None:
+        """worktree パスから issue_number を抽出する.
+
+        Args:
+            worktree_path: worktree のパス (例: .../worktrees/issue-15).
+
+        Returns:
+            Issue番号。抽出できなければ None。
+        """
+        match = re.search(r"issue-(\d+)", worktree_path)
+        return int(match.group(1)) if match else None
 
     async def _read_claude_md(self, repo_path: str) -> str | None:
         """リポジトリの CLAUDE.md を読み込む.
@@ -130,8 +150,8 @@ class ContextEngine:
     async def _read_design_doc(self, repo_path: str, issue_number: int | None = None) -> str | None:
         """設計書を読み込む.
 
-        docs/design.md または docs/design-*.md を探す。
-        issue_number が指定されている場合は issue 固有の設計書も探す。
+        issue_number が指定されている場合は issue 固有の設計書を優先的に探す。
+        設計フェーズが生成する docs/designs/issue-{N}.md も検索対象に含む。
 
         Args:
             repo_path: リポジトリのルートパス.
@@ -142,18 +162,22 @@ class ContextEngine:
         """
         docs_dir = Path(repo_path) / "docs"
 
-        # issue 固有の設計書を優先
+        candidates: list[Path] = []
         if issue_number is not None:
-            issue_doc = docs_dir / f"design-issue-{issue_number}.md"
-            content = await self._read_file_if_exists(issue_doc)
-            if content:
-                return content
+            candidates.extend(
+                [
+                    docs_dir / "designs" / f"issue-{issue_number}.md",
+                    docs_dir / f"design-issue-{issue_number}.md",
+                ]
+            )
+        candidates.extend(
+            [
+                docs_dir / "design.md",
+                docs_dir / "design-python.md",
+            ]
+        )
 
-        # 汎用設計書
-        for candidate in [
-            docs_dir / "design.md",
-            docs_dir / "design-python.md",
-        ]:
+        for candidate in candidates:
             content = await self._read_file_if_exists(candidate)
             if content:
                 return content
@@ -162,6 +186,9 @@ class ContextEngine:
 
     async def _read_impl_plan(self, repo_path: str, issue_number: int | None = None) -> str | None:
         """実装計画を読み込む.
+
+        issue_number が指定されている場合は issue 固有の実装計画を優先的に探す。
+        計画フェーズが生成する docs/designs/issue-{N}-plan.md も検索対象に含む。
 
         Args:
             repo_path: リポジトリのルートパス.
@@ -172,16 +199,22 @@ class ContextEngine:
         """
         docs_dir = Path(repo_path) / "docs"
 
-        # issue 固有の実装計画を優先
+        candidates: list[Path] = []
         if issue_number is not None:
-            issue_plan = docs_dir / f"impl-plan-issue-{issue_number}.md"
-            content = await self._read_file_if_exists(issue_plan)
+            candidates.extend(
+                [
+                    docs_dir / "designs" / f"issue-{issue_number}-plan.md",
+                    docs_dir / f"impl-plan-issue-{issue_number}.md",
+                ]
+            )
+        candidates.append(docs_dir / "impl-plan.md")
+
+        for candidate in candidates:
+            content = await self._read_file_if_exists(candidate)
             if content:
                 return content
 
-        # 汎用実装計画
-        plan_path = docs_dir / "impl-plan.md"
-        return await self._read_file_if_exists(plan_path)
+        return None
 
     async def _get_repo_structure(self, repo_path: str, max_depth: int = 3) -> str:
         """リポジトリのディレクトリツリーを生成.
