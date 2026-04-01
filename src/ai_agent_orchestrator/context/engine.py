@@ -76,6 +76,7 @@ class ContextEngine:
         worktree_path: str,
         issue_body: str,
         phase: str,
+        issue_number: int | None = None,
     ) -> str:
         """フェーズに応じたコンテキストを構築.
 
@@ -83,21 +84,20 @@ class ContextEngine:
             worktree_path: worktree のファイルシステムパス.
             issue_body: Issue本文 (キーワード抽出に使用).
             phase: 現在のフェーズ名.
+            issue_number: Issue番号 (設計書・実装計画の検索に使用).
 
         Returns:
             コンテキスト文字列 (Markdown形式、セクション区切り ``---``).
         """
-        # worktree パスから issue_number を抽出
-        issue_number = self._extract_issue_number(worktree_path)
-
         parts: list[str] = []
 
-        # 1. リポマップ (ディレクトリ構造)
-        repo_map = await self._get_repo_structure(worktree_path)
+        # 1-2. リポマップとCLAUDE.mdを並行取得
+        repo_map, claude_md = await asyncio.gather(
+            self._get_repo_structure(worktree_path),
+            self._read_claude_md(worktree_path),
+        )
         parts.append(f"## リポジトリ構造\n```\n{repo_map}\n```")
 
-        # 2. CLAUDE.md (存在すれば)
-        claude_md = await self._read_claude_md(worktree_path)
         if claude_md:
             parts.append(f"## プロジェクト規約\n{claude_md}")
 
@@ -127,19 +127,6 @@ class ContextEngine:
 
         return "\n\n---\n\n".join(parts)
 
-    @staticmethod
-    def _extract_issue_number(worktree_path: str) -> int | None:
-        """worktree パスから issue_number を抽出する.
-
-        Args:
-            worktree_path: worktree のパス (例: .../worktrees/issue-15).
-
-        Returns:
-            Issue番号。抽出できなければ None。
-        """
-        match = re.search(r"issue-(\d+)", worktree_path)
-        return int(match.group(1)) if match else None
-
     async def _read_claude_md(self, repo_path: str) -> str | None:
         """リポジトリの CLAUDE.md を読み込む.
 
@@ -150,6 +137,21 @@ class ContextEngine:
             CLAUDE.md の内容。存在しなければ None。
         """
         return await self._read_file_if_exists(Path(repo_path) / "CLAUDE.md")
+
+    async def _read_first_existing(self, candidates: list[Path]) -> str | None:
+        """候補リストから最初に存在するファイルの内容を返す.
+
+        Args:
+            candidates: 検索するファイルパスのリスト (優先度順).
+
+        Returns:
+            最初に見つかったファイルの内容。すべて存在しなければ None。
+        """
+        for candidate in candidates:
+            content = await self._read_file_if_exists(candidate)
+            if content:
+                return content
+        return None
 
     async def _read_design_doc(self, repo_path: str, issue_number: int | None = None) -> str | None:
         """設計書を読み込む.
@@ -181,12 +183,7 @@ class ContextEngine:
             ]
         )
 
-        for candidate in candidates:
-            content = await self._read_file_if_exists(candidate)
-            if content:
-                return content
-
-        return None
+        return await self._read_first_existing(candidates)
 
     async def _read_impl_plan(self, repo_path: str, issue_number: int | None = None) -> str | None:
         """実装計画を読み込む.
@@ -213,12 +210,7 @@ class ContextEngine:
             )
         candidates.append(docs_dir / "impl-plan.md")
 
-        for candidate in candidates:
-            content = await self._read_file_if_exists(candidate)
-            if content:
-                return content
-
-        return None
+        return await self._read_first_existing(candidates)
 
     async def _get_repo_structure(self, repo_path: str, max_depth: int = 3) -> str:
         """リポジトリのディレクトリツリーを生成.
@@ -386,10 +378,11 @@ class ContextEngine:
             ファイルの内容。存在しなければ None。
         """
         try:
-            if path.is_file():
-                return await asyncio.to_thread(path.read_text, encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            logger.warning("Failed to read %s: %s", path, exc)
+            return await asyncio.to_thread(path.read_text, encoding="utf-8")
+        except OSError as exc:
+            logger.debug("File not available %s: %s", path, exc)
+        except UnicodeDecodeError as exc:
+            logger.warning("Failed to decode %s: %s", path, exc)
         return None
 
 

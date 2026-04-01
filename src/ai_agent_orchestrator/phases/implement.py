@@ -44,6 +44,7 @@ class ImplementExecutor(PhaseExecutor):
             str(worktree),
             getattr(issue, "body", "") or "",
             "implement",
+            issue_number=request.issue_number,
         )
 
         # 設計書・実装計画がコンテキストに含まれているか検証

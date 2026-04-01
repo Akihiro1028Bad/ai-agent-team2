@@ -38,6 +38,7 @@ class FixExecutor(PhaseExecutor):
             str(worktree),
             getattr(issue, "body", "") or "",
             "fix",
+            issue_number=request.issue_number,
         )
 
         # 方針コメントを取得

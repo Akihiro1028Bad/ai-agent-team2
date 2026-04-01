@@ -36,6 +36,7 @@ class PlanBriefExecutor(PhaseExecutor):
             str(worktree),
             getattr(issue, "body", "") or "",
             "plan_brief",
+            issue_number=request.issue_number,
         )
         comments = await client.list_comments(request.repo, request.issue_number)
         hearing_log = (

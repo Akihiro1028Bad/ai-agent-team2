@@ -37,6 +37,7 @@ class TypeDetectionExecutor(PhaseExecutor):
             str(worktree),
             getattr(issue, "body", "") or "",
             "type_detection",
+            issue_number=request.issue_number,
         )
 
         return (

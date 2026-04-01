@@ -18,9 +18,6 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import (
     AssistantMessage,
-    HookContext,
-    HookEvent,
-    HookJSONOutput,
     ResultMessage,
     TextBlock,
     ToolUseBlock,
@@ -106,6 +103,16 @@ PHASE_CONFIG: dict[str, PhaseConfig] = {
 }
 
 _DEFAULT_PHASE_CONFIG = PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="bypassPermissions")
+
+_BYPASS_ALLOWED_TOOLS = [
+    "Read",
+    "Write",
+    "Edit",
+    "Glob",
+    "Grep",
+    "Bash",
+    "TodoWrite",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -201,15 +208,7 @@ class ClaudeAgentRunner:
         )
         # 実装系フェーズでは allowed_tools を明示的に設定
         if cfg.permission_mode == "bypassPermissions":
-            options.allowed_tools = [
-                "Read",
-                "Write",
-                "Edit",
-                "Glob",
-                "Grep",
-                "Bash",
-                "TodoWrite",
-            ]
+            options.allowed_tools = list(_BYPASS_ALLOWED_TOOLS)
         if append_prompt:
             options.system_prompt = {
                 "type": "preset",
@@ -332,47 +331,6 @@ class ClaudeAgentRunner:
                     break
 
         return result
-
-    def _build_hooks(self) -> dict[HookEvent, list[HookMatcher]]:
-        """PreToolUse / PostToolUse フックを構成する."""
-        pre_hook = HookMatcher(hooks=[self._on_pre_tool_use])  # type: ignore[list-item]
-        post_hook = HookMatcher(hooks=[self._on_post_tool_use])  # type: ignore[list-item]
-        return {
-            "PreToolUse": [pre_hook],
-            "PostToolUse": [post_hook],
-        }
-
-    async def _on_pre_tool_use(
-        self,
-        event: dict[str, Any],
-        tool_use_id: str | None,
-        context: HookContext,
-    ) -> HookJSONOutput:
-        """PreToolUse フックコールバック。ツール使用開始をログに記録する."""
-        tool_name = event.get("tool_name", "unknown")
-        await self._tracker.track(
-            "tool_use_start",
-            {"tool": tool_name, "tool_input": event.get("tool_input", {})},
-        )
-        return {}
-
-    async def _on_post_tool_use(
-        self,
-        event: dict[str, Any],
-        tool_use_id: str | None,
-        context: HookContext,
-    ) -> HookJSONOutput:
-        """PostToolUse フックコールバック。ツール使用完了をログに記録する."""
-        tool_name = event.get("tool_name", "unknown")
-        output = event.get("tool_output", "")
-        await self._tracker.track(
-            "tool_use_end",
-            {
-                "tool": tool_name,
-                "output_size": len(str(output)),
-            },
-        )
-        return {}
 
     @staticmethod
     def _build_subagent_prompt(subagents: list[SubAgentDefinition]) -> str:

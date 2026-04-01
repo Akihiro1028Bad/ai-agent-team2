@@ -789,6 +789,7 @@ class Orchestrator:
                         worktree_path=worktree_path,
                         issue_body=issue_body,
                         phase=phase,
+                        issue_number=issue_number,
                     )
                 except Exception as ctx_err:
                     logger.warning(

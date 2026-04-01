@@ -39,6 +39,7 @@ class HearingExecutor(PhaseExecutor):
             str(worktree),
             getattr(issue, "body", "") or "",
             "hearing",
+            issue_number=request.issue_number,
         )
 
         # 過去のコメント (ヒアリング回答) も含める

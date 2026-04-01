@@ -40,6 +40,7 @@ class PlanningExecutor(PhaseExecutor):
             str(worktree),
             getattr(issue, "body", "") or "",
             "planning",
+            issue_number=request.issue_number,
         )
 
         return (

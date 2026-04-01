@@ -358,6 +358,7 @@ class TestExecuteTask:
             worktree_path=str(worktree),
             issue_body="test body",
             phase="type_detection",
+            issue_number=42,
         )
 
         # Context should be passed to dispatcher

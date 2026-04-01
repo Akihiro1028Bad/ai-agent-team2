@@ -36,6 +36,7 @@ class AnalysisExecutor(PhaseExecutor):
             str(worktree),
             getattr(issue, "body", "") or "",
             "analysis",
+            issue_number=request.issue_number,
         )
 
         extra = getattr(request, "extra", {}) or {}

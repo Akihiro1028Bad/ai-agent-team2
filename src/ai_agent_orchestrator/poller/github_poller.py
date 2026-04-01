@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -67,6 +68,8 @@ class GitHubPoller:
         self._seen_reactions: set[tuple[int, int]] = set()
         # BUG #4: General event deduplication
         self._seen_events: set[str] = set()
+        # Memory leak prevention: periodic cache cleanup
+        self._last_cleanup: datetime | None = None
 
     async def start(self, event_queue: asyncio.Queue[PollEvent]) -> None:
         """ポーリングループを開始する.
@@ -126,6 +129,7 @@ class GitHubPoller:
         Returns:
             検知された PollEvent のリスト.
         """
+        self._cleanup_seen_caches()
         events: list[PollEvent] = []
         repo_key = f"{repo.owner}/{repo.repo}"
         since = self._last_poll.get(repo_key)
@@ -464,15 +468,9 @@ class GitHubPoller:
             # 人間のコメント (修正指示) を確認
             # 分割提案コメント以降の人間コメントのみを対象とする
             # (ヒアリング回答など分割提案前のコメントを誤検知しないようにする)
-            split_proposal_time = max(
-                (c.created_at for c in comments if _is_bot_comment(c.body or "") and "分割提案" in (c.body or "")),
-                default=None,
-            )
+            split_proposal_time = self._find_latest_bot_comment_time(comments, "分割提案")
             # 分割提案コメントがまだなければ、最後の Bot コメント以降を対象とする
-            cutoff_time = split_proposal_time or max(
-                (c.created_at for c in comments if _is_bot_comment(c.body or "")),
-                default=None,
-            )
+            cutoff_time = split_proposal_time or self._find_latest_bot_comment_time(comments)
             human_comments = [
                 c
                 for c in comments
@@ -493,6 +491,42 @@ class GitHubPoller:
                     )
                 )
         return events
+
+    # ------------------------------------------------------------------
+    # Cache / utility helpers
+    # ------------------------------------------------------------------
+
+    def _cleanup_seen_caches(self) -> None:
+        """定期的にキャッシュをクリアする (メモリリーク防止)."""
+        now = datetime.now(UTC)
+        if self._last_cleanup is None or (now - self._last_cleanup).total_seconds() > 3600:
+            self._seen_events.clear()
+            self._seen_reactions.clear()
+            # Don't clear _seen_issue_numbers as they prevent re-detection of existing issues
+            self._last_cleanup = now
+
+    @staticmethod
+    def _pr_references_issue(pr: object, issue_number: int) -> bool:
+        """PR が指定 Issue を参照しているか判定する."""
+        issue_ref = f"#{issue_number}"
+        pr_body = getattr(pr, "body", "") or ""
+        pr_title = getattr(pr, "title", "") or ""
+        return issue_ref in pr_body or issue_ref in pr_title
+
+    @staticmethod
+    def _find_latest_bot_comment_time(
+        comments: Sequence[IssueComment],
+        content_marker: str | None = None,
+    ) -> datetime | None:
+        """Bot コメントの最新投稿時刻を取得する."""
+        return max(
+            (
+                c.created_at
+                for c in comments
+                if _is_bot_comment(c.body or "") and (content_marker is None or content_marker in (c.body or ""))
+            ),
+            default=None,
+        )
 
     # ------------------------------------------------------------------
     # Helper methods
@@ -532,10 +566,7 @@ class GitHubPoller:
         approved: list[dict[str, str]] = []
         commented: list[dict[str, str]] = []
         for pr in prs:
-            issue_ref = f"#{issue.number}"
-            pr_body = getattr(pr, "body", "") or ""
-            pr_title = getattr(pr, "title", "") or ""
-            if issue_ref in pr_body or issue_ref in pr_title:
+            if self._pr_references_issue(pr, issue.number):
                 reviews = await client.get_pr_reviews(repo.owner, repo.repo, pr.number)
                 for review in reviews:
                     state = review.get("state", "")
@@ -572,10 +603,7 @@ class GitHubPoller:
         """
         prs = await client.list_pull_requests(repo)
         for pr in prs:
-            issue_ref = f"#{issue.number}"
-            pr_body = getattr(pr, "body", "") or ""
-            pr_title = getattr(pr, "title", "") or ""
-            if issue_ref in pr_body or issue_ref in pr_title:
+            if self._pr_references_issue(pr, issue.number):
                 head_ref = getattr(pr, "head", None)
                 ref = getattr(head_ref, "ref", None) if head_ref else None
                 if ref:

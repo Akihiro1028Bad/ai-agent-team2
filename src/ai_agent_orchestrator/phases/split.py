@@ -36,6 +36,7 @@ class SplitProposalExecutor(PhaseExecutor):
             str(worktree),
             getattr(issue, "body", "") or "",
             "split_proposal",
+            issue_number=request.issue_number,
         )
         comments = await client.list_comments(request.repo, request.issue_number)
         hearing_log = (
