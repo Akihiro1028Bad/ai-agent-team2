@@ -750,12 +750,9 @@ class PhaseExecutor(ABC):
             return int(pr_match.group(1))
 
         # 3. 出力末尾付近の #N (エージェントは最後にPR番号を出力しがち)
-        # 出力の最後500文字から最後の #N を探す
         tail = output[-500:] if len(output) > 500 else output
         tail_matches = list(re.finditer(r"#(\d+)", tail))
         if tail_matches:
             return int(tail_matches[-1].group(1))
 
-        # 4. フォールバック: 最初の #N
-        match = re.search(r"#(\d+)", output)
-        return int(match.group(1)) if match else None
+        return None

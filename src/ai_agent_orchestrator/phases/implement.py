@@ -6,11 +6,18 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from ai_agent_orchestrator.context.engine import DESIGN_DOC_HEADING, IMPL_PLAN_HEADING
+from ai_agent_orchestrator.context.engine import (
+    _SOURCE_EXTENSIONS as _ALL_SOURCE_EXTENSIONS,
+)
+from ai_agent_orchestrator.context.engine import (
+    DESIGN_DOC_HEADING,
+    IMPL_PLAN_HEADING,
+)
+from ai_agent_orchestrator.models import AgentResult
 from ai_agent_orchestrator.phases.base import PhaseExecutor
 
 if TYPE_CHECKING:
-    from ai_agent_orchestrator.models import AgentResult, TaskRequest
+    from ai_agent_orchestrator.models import TaskRequest
 
 logger = logging.getLogger(__name__)
 
@@ -18,28 +25,9 @@ logger = logging.getLogger(__name__)
 _MAX_IMPL_ITERATIONS = 5
 _COMPLETION_THRESHOLD = 0.8  # 計画ファイルの 80% 以上が変更済みなら完了
 
-# 実装計画からファイルパスを抽出するパターン
+# 実装計画からファイルパスを抽出するパターン (ドキュメント拡張子は除外)
 _FILE_PATH_PATTERN = re.compile(r"[`*]*([a-zA-Z_][\w./\-]*\.\w{1,5})[`*]*")
-_SOURCE_EXTENSIONS = frozenset(
-    {
-        ".py",
-        ".ts",
-        ".tsx",
-        ".js",
-        ".jsx",
-        ".go",
-        ".rs",
-        ".java",
-        ".kt",
-        ".rb",
-        ".yaml",
-        ".yml",
-        ".toml",
-        ".json",
-        ".sql",
-        ".sh",
-    }
-)
+_IMPL_SOURCE_EXTENSIONS = _ALL_SOURCE_EXTENSIONS - {".md", ".rst"}
 
 
 def extract_planned_files(impl_plan_text: str) -> set[str]:
@@ -52,7 +40,7 @@ def extract_planned_files(impl_plan_text: str) -> set[str]:
         ソースファイルパスの集合。
     """
     candidates = set(_FILE_PATH_PATTERN.findall(impl_plan_text))
-    return {f for f in candidates if any(f.endswith(ext) for ext in _SOURCE_EXTENSIONS)}
+    return {f for f in candidates if any(f.endswith(ext) for ext in _IMPL_SOURCE_EXTENSIONS)}
 
 
 class ImplementExecutor(PhaseExecutor):
@@ -87,6 +75,17 @@ class ImplementExecutor(PhaseExecutor):
             last_result: AgentResult | None = None
             prev_modified: set[str] = set()
 
+            # worktree と計画ファイルをループ前に1回だけ取得
+            wt_path = str(
+                await self._workspace.create_worktree(
+                    request.repo,
+                    request.issue_number,
+                    branch_prefix="feature",
+                )
+            )
+            impl_plan = await self._context.read_impl_plan(wt_path, request.issue_number)
+            planned_files = extract_planned_files(impl_plan) if impl_plan else set()
+
             for iteration in range(start_iteration, _MAX_IMPL_ITERATIONS):
                 logger.info(
                     "Issue #%d: implementation pass %d/%d",
@@ -96,7 +95,12 @@ class ImplementExecutor(PhaseExecutor):
                 )
 
                 # プロンプト構築 (継続パスなら進捗コンテキスト付き)
-                prompt = await self._build_pass_prompt(request, iteration)
+                prompt = await self._build_pass_prompt(
+                    request,
+                    iteration,
+                    wt_path,
+                    planned_files,
+                )
                 await self._record_branch_baseline(request)
 
                 # エージェント実行
@@ -114,12 +118,7 @@ class ImplementExecutor(PhaseExecutor):
                     state.impl_iteration = iteration + 1
 
                 # 完了判定
-                worktree = await self._workspace.create_worktree(
-                    request.repo,
-                    request.issue_number,
-                    branch_prefix="feature",
-                )
-                cur_modified = await self._get_modified_files(request, str(worktree))
+                cur_modified = await self._get_modified_files(request, wt_path)
 
                 # 進捗なし検知 (前回と同じファイル集合 = スタル)
                 if iteration > start_iteration and cur_modified == prev_modified:
@@ -133,12 +132,7 @@ class ImplementExecutor(PhaseExecutor):
                 prev_modified = cur_modified
 
                 # 完了率チェック
-                should_continue = await self._should_continue(
-                    request,
-                    str(worktree),
-                    cur_modified,
-                )
-                if not should_continue:
+                if not self._should_continue(request, cur_modified, planned_files):
                     logger.info(
                         "Issue #%d: implementation sufficiently complete at pass %d",
                         request.issue_number,
@@ -168,8 +162,6 @@ class ImplementExecutor(PhaseExecutor):
                 raise RuntimeError(msg)
 
             # コスト・時間を集約した結果で finalize
-            from ai_agent_orchestrator.models import AgentResult
-
             aggregated = AgentResult(
                 session_id=last_result.session_id,
                 output=last_result.output,
@@ -261,12 +253,20 @@ class ImplementExecutor(PhaseExecutor):
     # Multi-pass helpers
     # ------------------------------------------------------------------
 
-    async def _build_pass_prompt(self, request: TaskRequest, iteration: int) -> str:
+    async def _build_pass_prompt(
+        self,
+        request: TaskRequest,
+        iteration: int,
+        wt_path: str,
+        planned_files: set[str],
+    ) -> str:
         """パスに応じたプロンプトを構築する。
 
         Args:
             request: タスクリクエスト。
             iteration: 現在のイテレーション番号 (0始まり)。
+            wt_path: worktree のパス。
+            planned_files: 計画ファイル集合。
 
         Returns:
             プロンプト文字列。
@@ -277,18 +277,14 @@ class ImplementExecutor(PhaseExecutor):
         # 継続パス: 進捗コンテキスト付き
         client = await self._get_client(request.repo)
         issue = await client.get_issue(request.repo, request.issue_number)
-        worktree = await self._workspace.create_worktree(
-            request.repo,
-            request.issue_number,
-            branch_prefix="feature",
-        )
         context = await self._context.build_context(
-            str(worktree),
+            wt_path,
             getattr(issue, "body", "") or "",
             "implement",
             issue_number=request.issue_number,
         )
-        continuation = await self._build_continuation_context(request, str(worktree))
+        modified = await self._get_modified_files(request, wt_path)
+        continuation = self._build_continuation_context(modified, planned_files)
 
         return (
             f"## Issue #{request.issue_number}: {issue.title} (実装継続パス {iteration + 1})\n\n"
@@ -302,26 +298,22 @@ class ImplementExecutor(PhaseExecutor):
             f"5. git commit して Push (コミットメッセージは日本語で)\n"
         )
 
-    async def _build_continuation_context(
-        self,
-        request: TaskRequest,
-        worktree_path: str,
+    @staticmethod
+    def _build_continuation_context(
+        modified_files: set[str],
+        planned_files: set[str],
     ) -> str:
         """継続パス用の進捗コンテキストを構築する。
 
         Args:
-            request: タスクリクエスト。
-            worktree_path: worktree のパス。
+            modified_files: 変更済みファイル集合。
+            planned_files: 計画ファイル集合。
 
         Returns:
             進捗コンテキスト文字列。
         """
-        modified = await self._get_modified_files(request, worktree_path)
-        impl_plan = await self._context._read_impl_plan(worktree_path, request.issue_number)
-        planned = extract_planned_files(impl_plan) if impl_plan else set()
-
-        done_files = sorted(modified & planned)
-        remaining_files = sorted(planned - modified)
+        done_files = sorted(modified_files & planned_files)
+        remaining_files = sorted(planned_files - modified_files)
 
         done_list = "\n".join(f"- [x] `{f}`" for f in done_files) or "(なし)"
         remaining_list = "\n".join(f"- [ ] `{f}`" for f in remaining_files) or "(なし)"
@@ -332,39 +324,34 @@ class ImplementExecutor(PhaseExecutor):
             f"### 未実装ファイル (今回実装してください)\n{remaining_list}"
         )
 
-    async def _should_continue(
-        self,
+    @staticmethod
+    def _should_continue(
         request: TaskRequest,
-        worktree_path: str,
         modified_files: set[str],
+        planned_files: set[str],
     ) -> bool:
         """実装を継続すべきか判定する。
 
         Args:
             request: タスクリクエスト。
-            worktree_path: worktree のパス。
             modified_files: 現在の変更済みファイル集合。
+            planned_files: 計画ファイル集合。
 
         Returns:
             継続すべきなら True。
         """
-        impl_plan = await self._context._read_impl_plan(worktree_path, request.issue_number)
-        if not impl_plan:
+        if not planned_files:
             return False
 
-        planned = extract_planned_files(impl_plan)
-        if not planned:
-            return False
-
-        touched = len(planned & modified_files)
-        ratio = touched / len(planned)
+        touched = len(planned_files & modified_files)
+        ratio = touched / len(planned_files)
 
         logger.info(
             "Issue #%d: implementation progress %.0f%% (%d/%d planned files)",
             request.issue_number,
             ratio * 100,
             touched,
-            len(planned),
+            len(planned_files),
         )
 
         return ratio < _COMPLETION_THRESHOLD
