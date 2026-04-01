@@ -734,32 +734,171 @@ class NotifierProtocol:
 
 ## 11. テスト計画
 
-### 11.1 新規テストケース
+> **目標: カバレッジ 100%** — 全メソッド・全分岐・全境界値を網羅する。
+
+### 11.1 カバレッジ戦略
+
+| 観点 | 方針 |
+|------|------|
+| ライン カバレッジ | 全メソッドの全行を少なくとも1つのテストで通過させる |
+| ブランチ カバレッジ | 各 `if/else`・`try/except`・三項演算子の真偽両方を検証する |
+| 境界値 | 空文字列・`None`・0・負数・超長文字列等のエッジケースを網羅 |
+| パラメトリック テスト | `@pytest.mark.parametrize` で全 19 通知タイプ × 絵文字・タイトルを一括検証 |
+| 計測 | CI で `pytest --cov=src/ai_agent_orchestrator/notifications --cov-report=term-missing --cov-fail-under=100` を実行し、100% 未満で失敗させる |
+
+### 11.2 テストケース一覧
+
+#### A. `_build_rich_payload` — ペイロード構造テスト
 
 | ID | テスト | 検証内容 |
 |----|-------|---------|
-| TC-SL-11 | `test_notify_rich_format_has_header` | ヘッダーブロックが含まれること |
-| TC-SL-12 | `test_notify_rich_format_has_divider` | ディバイダーが含まれること |
-| TC-SL-13 | `test_notify_rich_format_has_section` | セクション（本文）が含まれること |
-| TC-SL-14 | `test_notify_rich_format_has_context` | コンテキストブロックが含まれること |
-| TC-SL-15 | `test_notification_type_emoji_mapping` | 全通知タイプの絵文字が正しいこと |
-| TC-SL-16 | `test_header_title_per_notification_type` | 全通知タイプのヘッダータイトルが正しいこと |
-| TC-SL-17 | `test_body_includes_issue_link_and_title` | 本文に Issue リンクとタイトルが含まれること |
-| TC-SL-18 | `test_context_includes_duration` | コンテキストに経過時間が含まれること |
-| TC-SL-19 | `test_context_includes_cost` | コンテキストにコストが含まれること |
-| TC-SL-20 | `test_context_includes_files_changed` | コンテキストに変更ファイル数が含まれること |
-| TC-SL-21 | `test_context_includes_issue_type` | コンテキストに Issue タイプが含まれること |
-| TC-SL-22 | `test_context_includes_pr_link` | コンテキストに PR リンクが含まれること |
-| TC-SL-23 | `test_context_includes_ci_url` | コンテキストに CI URL が含まれること |
-| TC-SL-24 | `test_error_notification_includes_stacktrace` | エラー通知にスタックトレースが含まれること |
-| TC-SL-25 | `test_stacktrace_truncated_to_5_lines` | スタックトレースが5行以内に切り詰められること |
-| TC-SL-26 | `test_backward_compat_without_notification_type` | notification_type なしでも動作すること |
-| TC-SL-27 | `test_phase_start_notification_in_execute` | execute() でフェーズ開始通知が送信されること |
-| TC-SL-28 | `test_phase_labels_mapping` | フェーズ名の日本語ラベル変換が正しいこと |
+| TC-SL-11 | `test_notify_rich_format_has_header` | ヘッダーブロック（type="header"）が含まれること |
+| TC-SL-12 | `test_notify_rich_format_has_divider` | ディバイダー（type="divider"）が含まれること |
+| TC-SL-13 | `test_notify_rich_format_has_section` | セクション（type="section", mrkdwn）が含まれること |
+| TC-SL-14 | `test_notify_rich_format_has_context` | コンテキストブロック（type="context"）が含まれること |
+| TC-SL-14b | `test_notify_rich_format_no_context_when_empty_meta` | metadata が空の場合コンテキストブロックが **省略** されること |
+| TC-SL-14c | `test_payload_includes_channel_when_specified` | `channel` 指定時にペイロードに `channel` キーが含まれること |
+| TC-SL-14d | `test_payload_uses_default_channel_when_none` | `channel=None` 時にデフォルトチャンネルが使われること |
+| TC-SL-14e | `test_payload_no_channel_when_no_default` | デフォルトチャンネルも未設定の場合 `channel` キーが **存在しない** こと |
 
-### 11.2 既存テストの更新
+#### B. 通知タイプ — 絵文字・タイトル・レベルマッピング
+
+| ID | テスト | 検証内容 |
+|----|-------|---------|
+| TC-SL-15 | `test_notification_type_emoji_mapping[parametrize: 全19タイプ]` | 各通知タイプの絵文字がヘッダーに正しく反映されること |
+| TC-SL-16 | `test_header_title_per_notification_type[parametrize: 全19タイプ]` | 各通知タイプのヘッダータイトルが正しいこと |
+| TC-SL-16b | `test_header_title_unknown_type_fallback` | 未知の `notification_type` が渡された場合 `"通知"` にフォールバックすること |
+| TC-SL-16c | `test_notification_config_unknown_type_fallback` | 未知の `notification_type` 時に `phase_end` の設定にフォールバックすること |
+| TC-SL-16d | `test_level_auto_determined_by_notification_type` | `notification_type` からレベル（info/error/critical）が自動決定されること |
+| TC-SL-16e | `test_level_explicit_override` | 明示的 `level` 指定が `notification_type` のデフォルトを上書きすること |
+
+#### C. `_build_body` — 本文構築テスト
+
+| ID | テスト | 検証内容 |
+|----|-------|---------|
+| TC-SL-17 | `test_body_includes_issue_link_and_title` | `repo` + `issue` + `issue_title` 指定時にリンクとタイトルが含まれること |
+| TC-SL-17b | `test_body_issue_link_without_title` | `issue_title` 省略時にリンクのみ（タイトルなし）が含まれること |
+| TC-SL-17c | `test_body_no_issue_when_repo_missing` | `repo` が無い場合 Issue リンクが生成されないこと |
+| TC-SL-17d | `test_body_no_issue_when_issue_none` | `issue` が `None` の場合 Issue リンクが生成されないこと |
+| TC-SL-17e | `test_body_message_always_included` | metadata の有無にかかわらずメッセージ本文が常に含まれること |
+
+#### D. `_build_body` — スタックトレース
+
+| ID | テスト | 検証内容 |
+|----|-------|---------|
+| TC-SL-24 | `test_error_notification_includes_stacktrace` | `stacktrace` 指定時にコードブロック（``` ```）付きで含まれること |
+| TC-SL-25 | `test_stacktrace_truncated_to_5_lines` | 6行以上のスタックトレースが5行に切り詰められること |
+| TC-SL-25b | `test_stacktrace_under_5_lines_not_truncated` | 5行以下のスタックトレースがそのまま出力されること |
+| TC-SL-25c | `test_stacktrace_empty_string_ignored` | `stacktrace` が空文字列の場合にコードブロックが生成されないこと |
+| TC-SL-25d | `test_stacktrace_whitespace_only_ignored` | `stacktrace` がスペース/改行のみの場合に空のコードブロックが生成されないこと |
+
+#### E. `_build_rich_context` — コンテキストブロック
+
+| ID | テスト | 検証内容 |
+|----|-------|---------|
+| TC-SL-18 | `test_context_includes_duration` | `duration_sec` 指定時に `⏱️ X分Y秒` 形式で含まれること |
+| TC-SL-18b | `test_context_duration_zero` | `duration_sec=0` 時に `⏱️ 0分0秒` と表示されること |
+| TC-SL-18c | `test_context_duration_large_value` | `duration_sec=3661` 時に `⏱️ 61分1秒` と表示されること（時間単位への変換はしない） |
+| TC-SL-19 | `test_context_includes_cost` | `cost_usd` 指定時に `💰 $X.XX` 形式で含まれること |
+| TC-SL-19b | `test_context_cost_zero` | `cost_usd=0` 時に `💰 $0.00` と表示されること |
+| TC-SL-20 | `test_context_includes_files_changed` | `files_changed` 指定時に `📁 N files changed` で含まれること |
+| TC-SL-20b | `test_context_files_changed_zero` | `files_changed=0` 時に `📁 0 files changed` と表示されること |
+| TC-SL-21 | `test_context_includes_issue_type` | `issue_type` 指定時に `🏷️` 付きで含まれること |
+| TC-SL-22 | `test_context_includes_pr_link_with_url` | `pr` + `pr_url` 指定時に `pr_url` を使ったリンクが含まれること |
+| TC-SL-22b | `test_context_includes_pr_link_without_url` | `pr` + `repo` 指定（`pr_url` なし）時に自動生成 URL のリンクが含まれること |
+| TC-SL-22c | `test_context_pr_without_repo_or_url_omitted` | `pr` のみ（`repo`/`pr_url` なし）の場合 PR リンクが省略されること |
+| TC-SL-23 | `test_context_includes_ci_url` | `ci_url` 指定時に `🔄 CI` リンクが含まれること |
+| TC-SL-23b | `test_context_includes_commit_count` | `commit_count` 指定時に `📝 N commits` で含まれること |
+| TC-SL-23c | `test_context_parts_joined_with_pipe` | 複数項目が ` \| ` 区切りで結合されること |
+| TC-SL-23d | `test_context_returns_none_when_no_parts` | metadata にコンテキスト関連キーが無い場合 `None` を返すこと |
+
+#### F. `_build_header_title` — フェーズラベル
+
+| ID | テスト | 検証内容 |
+|----|-------|---------|
+| TC-SL-28 | `test_phase_labels_mapping[parametrize: 全18フェーズ]` | 全フェーズ名が正しい日本語ラベルに変換されること |
+| TC-SL-28b | `test_phase_labels_unknown_phase_passthrough` | 未知のフェーズ名がそのままラベルとして使われること |
+
+#### G. 後方互換性
+
+| ID | テスト | 検証内容 |
+|----|-------|---------|
+| TC-SL-26 | `test_backward_compat_without_notification_type` | `notification_type` 省略時にデフォルト `phase_end` として動作すること |
+| TC-SL-26b | `test_backward_compat_message_only` | `notify(message)` のみの呼び出しがエラーなく動作すること |
+| TC-SL-26c | `test_backward_compat_with_legacy_metadata` | 既存の metadata キー（`repo`, `issue`, `phase` 等）のみで正しく動作すること |
+
+#### H. `notify` メソッド統合テスト
+
+| ID | テスト | 検証内容 |
+|----|-------|---------|
+| TC-SL-30 | `test_notify_calls_send_with_built_payload` | `notify()` が `_build_rich_payload()` → `send()` の順で呼ばれること |
+| TC-SL-31 | `test_notify_send_failure_does_not_raise` | `send()` が例外を投げても `notify()` は例外を伝搬しないこと（best-effort） |
+
+#### I. `base.py` フェーズ開始通知・エラー処理
+
+| ID | テスト | 検証内容 |
+|----|-------|---------|
+| TC-SL-27 | `test_phase_start_notification_in_execute` | `execute()` でフェーズ開始通知が送信されること |
+| TC-SL-27b | `test_phase_start_includes_issue_title` | 開始通知の metadata に `issue_title` が含まれること |
+| TC-SL-27c | `test_phase_start_issue_title_fetch_failure_ignored` | Issue タイトル取得失敗時にも開始通知は送信されること（best-effort） |
+| TC-SL-27d | `test_phase_start_includes_issue_type` | 開始通知の metadata に `issue_type` が含まれること |
+| TC-SL-32 | `test_handle_error_sends_error_notification_type` | `_handle_error()` が `notification_type="error"` で通知すること |
+| TC-SL-33 | `test_handle_error_includes_stacktrace` | `_handle_error()` の通知にスタックトレースが含まれること |
+| TC-SL-33b | `test_handle_error_stacktrace_last_5_lines` | スタックトレースの **末尾5行** が使用されること |
+| TC-SL-34 | `test_handle_timeout_sends_timeout_notification_type` | `_handle_timeout()` が `notification_type="timeout"` で通知すること |
+
+#### J. `NotificationType` Enum
+
+| ID | テスト | 検証内容 |
+|----|-------|---------|
+| TC-SL-35 | `test_notification_type_enum_values` | 全 Enum メンバーの値が `_NOTIFICATION_CONFIG` のキーと一致すること |
+| TC-SL-36 | `test_notification_type_is_str_enum` | `NotificationType` が `StrEnum` であり文字列比較が可能なこと |
+
+#### K. 各フェーズ notify 呼び出し更新
+
+| ID | テスト | 検証内容 |
+|----|-------|---------|
+| TC-SL-40 | `test_hearing_phase_sends_hearing_question_type` | hearing フェーズが `hearing_question` タイプで通知すること |
+| TC-SL-41 | `test_analysis_phase_sends_plan_posted_type` | analysis フェーズが `plan_posted` タイプで通知すること |
+| TC-SL-42 | `test_design_phase_sends_design_pr_created_type` | design フェーズが `design_pr_created` タイプで通知すること |
+| TC-SL-43 | `test_implement_phase_sends_impl_pr_created_type` | implement フェーズが `impl_pr_created` タイプで通知すること |
+| TC-SL-44 | `test_fix_phase_sends_fix_pr_created_type` | fix フェーズが `fix_pr_created` タイプで通知すること |
+| TC-SL-45 | `test_done_phase_sends_issue_done_type` | done フェーズが `issue_done` タイプで通知すること |
+| TC-SL-46 | `test_done_phase_chain_sends_chain_start_type` | done フェーズ（連鎖あり）が `chain_start` タイプで通知すること |
+| TC-SL-47 | `test_split_proposal_sends_split_proposed_type` | split(proposal) フェーズが `split_proposed` タイプで通知すること |
+| TC-SL-48 | `test_split_execute_sends_split_completed_type` | split(execute) フェーズが `split_completed` タイプで通知すること |
+| TC-SL-49 | `test_design_revise_sends_design_revised_type` | design-revise フェーズが `design_revised` タイプで通知すること |
+| TC-SL-50 | `test_impl_revise_sends_impl_revised_type` | impl-revise フェーズが `impl_revised` タイプで通知すること |
+| TC-SL-51 | `test_each_phase_includes_duration_and_cost_in_metadata` | 全フェーズの終了通知 metadata に `duration_sec`, `cost_usd` が含まれること |
+
+#### L. オーケストレーター通知
+
+| ID | テスト | 検証内容 |
+|----|-------|---------|
+| TC-SL-55 | `test_orchestrator_start_notification` | 起動時に `orchestrator_start` タイプで通知すること |
+| TC-SL-56 | `test_orchestrator_error_notification` | ルーティングエラー時に `orchestrator_error` タイプで通知すること |
+| TC-SL-57 | `test_issue_suspended_notification` | Issue 中断時に `issue_suspended` タイプで通知すること |
+| TC-SL-58 | `test_health_check_fail_notification` | ヘルスチェック失敗時に `health_check_fail` タイプで通知すること |
+
+### 11.3 既存テストの更新
 
 TC-SL-01〜10 は新フォーマット（ヘッダー + ディバイダー + セクション構成）に合わせてアサーションを更新する。
+
+### 11.4 カバレッジ計測・CI 設定
+
+```yaml
+# CI での実行コマンド
+pytest tests/unit/test_slack.py tests/unit/test_base_phase.py \
+  --cov=src/ai_agent_orchestrator/notifications \
+  --cov=src/ai_agent_orchestrator/phases/base \
+  --cov-branch \
+  --cov-report=term-missing \
+  --cov-fail-under=100
+```
+
+- `--cov-branch`: ブランチカバレッジも100%を目標とする
+- `--cov-fail-under=100`: 100%未満でCIを失敗させる
+- カバレッジ対象は `notifications/slack.py` および `phases/base.py` の変更箇所
 
 ---
 
@@ -770,4 +909,4 @@ TC-SL-01〜10 は新フォーマット（ヘッダー + ディバイダー + セ
 | パフォーマンス | 通知送信は `asyncio.create_task()` でバックグラウンド実行し、フェーズ処理をブロックしない |
 | 耐障害性 | 通知送信失敗時は例外を発生させない（best-effort、既存方針を継続） |
 | ペイロードサイズ | Slack Block Kit の上限（50ブロック / 3000文字 per text）を超えないようスタックトレースを5行に制限 |
-| テスト | 全通知タイプに対してペイロード構築の単体テストを実施 |
+| テスト | カバレッジ100%を目標とし、全メソッド・全分岐・全境界値を網羅する単体テストを実施。CI で `--cov-fail-under=100` を設定 |
