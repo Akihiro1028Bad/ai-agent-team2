@@ -988,31 +988,208 @@ def _get_progress(self, issue_number: int, current_phase: str) -> str | None:
 
 ## 7. テスト計画
 
-### 7.1 既存テストの維持
+### 7.1 カバレッジ目標
+
+**カバレッジ率 100% を目標とする。**
+
+対象ファイルと計測スコープ:
+
+| 対象ファイル | 計測対象 | 目標 |
+|------------|---------|------|
+| `src/ai_agent_orchestrator/notifications/slack.py` | 全メソッド（既存 + 新規） | 100% |
+| `src/ai_agent_orchestrator/models.py` (`NotificationType`) | Enum 定義 | 100% |
+| `src/ai_agent_orchestrator/phases/base.py` (変更部分) | `_notify_phase_start`, `_get_progress`, `_get_repo_key`, `_get_issue_title`, `_handle_error`, `_handle_timeout` | 100% |
+
+カバレッジ計測コマンド:
+
+```bash
+pytest tests/unit/test_slack.py tests/unit/test_phase_base.py \
+  --cov=src/ai_agent_orchestrator/notifications/slack \
+  --cov=src/ai_agent_orchestrator/models \
+  --cov=src/ai_agent_orchestrator/phases/base \
+  --cov-report=term-missing \
+  --cov-report=html:htmlcov \
+  --cov-fail-under=100
+```
+
+### 7.2 既存テストの維持
 
 既存の13テストケース (TC-SL-01 ～ TC-SL-13) は後方互換のため全て維持する。
 `notification_type` なしの `notify()` 呼び出しは従来フォーマットで送信される。
 
-### 7.2 追加テストケース
+### 7.3 追加テストケース
 
-| ID | テスト内容 | 検証ポイント |
-|----|----------|------------|
-| TC-SL-14 | `notification_type` ありでリッチペイロード生成 | attachments + color + blocks 構造 |
-| TC-SL-15 | Header ブロックに Issue番号・タイトルが含まれる | header.text の内容 |
-| TC-SL-16 | Fields に フェーズ・進捗・所要時間・ブランチ | fields 配列の内容 |
-| TC-SL-17 | Action Buttons - Issueリンク | button の url |
-| TC-SL-18 | Action Buttons - PRリンク | pr_url 指定時のボタン |
-| TC-SL-19 | Action Buttons - 質問コメントリンク | comment_url 指定時のボタン |
-| TC-SL-20 | エラー通知のスタックトレース抜粋 | 最後5行が code block に含まれる |
-| TC-SL-21 | カラーバーの色が通知タイプに応じて変わる | attachments[0].color |
-| TC-SL-22 | 通知タイプ別の絵文字マッピング | 全タイプの絵文字が正しいこと |
-| TC-SL-23 | 進捗計算 `_get_progress()` | フェーズリスト内のインデックス計算 |
-| TC-SL-24 | `notification_type` なしで従来フォーマット維持 | blocks 直配列（attachments なし） |
-| TC-SL-25 | metadata に `repo` なしでもエラーにならない | ボタンが生成されないこと |
-| TC-SL-26 | フェーズ開始通知の基本動作 | `phase_start` type でリッチ通知 |
-| TC-SL-27 | スタックトレースが3000文字制限を超えない | 長大トレースの切り詰め |
+#### 7.3.1 `slack.py` リッチペイロード構築テスト
 
-### 7.3 テストコード例
+| ID | テスト内容 | 検証ポイント | 対応メソッド |
+|----|----------|------------|------------|
+| TC-SL-14 | `notification_type` ありでリッチペイロード生成 | attachments + color + blocks 構造 | `notify()`, `_build_rich_payload()` |
+| TC-SL-15 | Header - Issue番号 + タイトルあり | `":emoji: Issue #N: title"` 形式 | `_build_header_text()` |
+| TC-SL-16 | Header - Issue番号のみ（タイトルなし） | `":emoji: Issue #N"` 形式 | `_build_header_text()` |
+| TC-SL-17 | Header - Issue情報なし（システム通知） | `":emoji: message"` 形式 | `_build_header_text()` |
+| TC-SL-18 | Fields - フェーズ表示名の日本語変換 | `_PHASE_DISPLAY_NAME` のマッピング | `_build_fields()` |
+| TC-SL-19 | Fields - 進捗・所要時間・ブランチの全表示 | fields 配列に4要素 | `_build_fields()` |
+| TC-SL-20 | Fields - metadata が空の場合 | fields が空配列 | `_build_fields()` |
+| TC-SL-21 | Body - エラーメッセージのみ（スタックトレースなし） | message のみ返却 | `_build_body_text()` |
+| TC-SL-22 | Body - スタックトレース付き（5行以下） | 全行がコードブロック内 | `_build_body_text()` |
+| TC-SL-23 | Body - スタックトレース付き（5行超） | 最後5行のみ抜粋 | `_build_body_text()` |
+| TC-SL-24 | Body - error_analysis 付き | 調査結果セクション | `_build_body_text()` |
+| TC-SL-25 | Actions - Issue + PR + コメントの3ボタン | 3つのボタン要素 | `_build_actions()` |
+| TC-SL-26 | Actions - repo + issue のみ（PRなし） | Issueボタンのみ | `_build_actions()` |
+| TC-SL-27 | Actions - metadata 空でボタンなし | 空配列 | `_build_actions()` |
+| TC-SL-28 | Context - repo + notification_type 表示 | 2要素 | `_build_rich_context()` |
+| TC-SL-29 | Context - repo なし | notification_type のみ | `_build_rich_context()` |
+| TC-SL-30 | Context - 空 metadata | 空配列 | `_build_rich_context()` |
+
+#### 7.3.2 通知タイプ・カラー・絵文字のマッピングテスト
+
+| ID | テスト内容 | 検証ポイント | 対応定数 |
+|----|----------|------------|---------|
+| TC-SL-31 | 全16通知タイプの絵文字マッピング | 全キーに対応する絵文字が存在 | `_TYPE_EMOJI` |
+| TC-SL-32 | 全16通知タイプのカラーマッピング | 全キーに対応するカラーが存在 | `_TYPE_COLOR` |
+| TC-SL-33 | 未知の通知タイプでデフォルト絵文字 | `_level_emoji()` にフォールバック | `_TYPE_EMOJI` |
+| TC-SL-34 | 未知の通知タイプでデフォルトカラー | `#439FE0` にフォールバック | `_TYPE_COLOR` |
+| TC-SL-35 | カラー値: phase_start → 青 | `#439FE0` | `_TYPE_COLOR` |
+| TC-SL-36 | カラー値: error → 赤 | `#E01E5A` | `_TYPE_COLOR` |
+| TC-SL-37 | カラー値: issue_completed → 緑 | `#2EB67D` | `_TYPE_COLOR` |
+| TC-SL-38 | カラー値: impl_pr_created → 黄 | `#E8A317` | `_TYPE_COLOR` |
+
+#### 7.3.3 後方互換性テスト
+
+| ID | テスト内容 | 検証ポイント | 対応メソッド |
+|----|----------|------------|------------|
+| TC-SL-39 | `notification_type` なしで従来フォーマット維持 | blocks 直配列（attachments なし） | `notify()` |
+| TC-SL-40 | `notification_type` 空文字で従来フォーマット | 空文字も従来扱い | `notify()` |
+| TC-SL-41 | metadata が None で従来フォーマット | エラーなし | `notify()` |
+
+#### 7.3.4 `base.py` フェーズ開始通知・進捗計算テスト
+
+| ID | テスト内容 | 検証ポイント | 対応メソッド |
+|----|----------|------------|------------|
+| TC-SL-42 | フェーズ開始通知の送信 | `phase_start` type でリッチ通知 | `_notify_phase_start()` |
+| TC-SL-43 | `_get_repo_key()` - owner/repo 正常取得 | `"owner/repo"` 形式 | `_get_repo_key()` |
+| TC-SL-44 | `_get_repo_key()` - 属性なしオブジェクト | 空文字を返す | `_get_repo_key()` |
+| TC-SL-45 | `_get_issue_title()` - 正常取得 | Issue タイトル文字列 | `_get_issue_title()` |
+| TC-SL-46 | `_get_issue_title()` - API 例外時 | 空文字にフォールバック | `_get_issue_title()` |
+| TC-SL-47 | `_get_progress()` - bug ワークフロー中間 | `"2/6 フェーズ完了"` 形式 | `_get_progress()` |
+| TC-SL-48 | `_get_progress()` - feature-s ワークフロー | 正しいフェーズ数 | `_get_progress()` |
+| TC-SL-49 | `_get_progress()` - feature-m ワークフロー | 正しいフェーズ数 | `_get_progress()` |
+| TC-SL-50 | `_get_progress()` - feature-l ワークフロー | 正しいフェーズ数 | `_get_progress()` |
+| TC-SL-51 | `_get_progress()` - 未知の issue_type | None を返す | `_get_progress()` |
+| TC-SL-52 | `_get_progress()` - 未知のフェーズ名 | None を返す | `_get_progress()` |
+| TC-SL-53 | エラーハンドラのリッチ通知 | スタックトレース付き error 通知 | `_handle_error()` |
+| TC-SL-54 | タイムアウトハンドラのリッチ通知 | timeout 通知タイプ | `_handle_timeout()` |
+
+#### 7.3.5 フェーズ表示名テスト
+
+| ID | テスト内容 | 検証ポイント | 対応定数 |
+|----|----------|------------|---------|
+| TC-SL-55 | 全18フェーズの日本語表示名 | 全キーに対応する表示名が存在 | `_PHASE_DISPLAY_NAME` |
+| TC-SL-56 | 未定義フェーズはキー名をそのまま表示 | フォールバック動作 | `_PHASE_DISPLAY_NAME` |
+
+#### 7.3.6 統合テスト（エンドツーエンド通知フロー）
+
+| ID | テスト内容 | 検証ポイント | 対応フェーズ |
+|----|----------|------------|------------|
+| TC-SL-57 | hearing.py の通知 metadata | `hearing_question` type + 必須フィールド | hearing |
+| TC-SL-58 | design.py の通知 metadata | `design_pr_created` type + pr_url | design |
+| TC-SL-59 | implement.py の通知 metadata | `impl_pr_created` type + pr_url + branch | implement |
+| TC-SL-60 | fix.py の通知 metadata | `fix_pr_created` type + pr_url | fix |
+| TC-SL-61 | design_revise.py の通知 metadata | `design_revised` type | design_revise |
+| TC-SL-62 | impl_revise.py の通知 metadata | `impl_revised` type | impl_revise |
+| TC-SL-63 | analysis.py の通知 metadata | `plan_posted` type | analysis |
+| TC-SL-64 | plan_brief.py の通知 metadata | `plan_posted` type | plan_brief |
+| TC-SL-65 | split.py の通知 metadata (提案) | `split_proposed` type | split |
+| TC-SL-66 | split.py の通知 metadata (完了) | `split_completed` type | split |
+| TC-SL-67 | done.py の通知 metadata | `issue_completed` type | done |
+| TC-SL-68 | orchestrator.py 起動通知 | `system_start` type + repos | orchestrator |
+| TC-SL-69 | orchestrator.py エラー中断通知 | `suspended` type + error | orchestrator |
+| TC-SL-70 | orchestrator.py ヘルスチェック失敗通知 | `health_check_failure` type | orchestrator |
+
+### 7.4 カバレッジエビデンスのPR添付
+
+実装PRでは以下のカバレッジエビデンスを添付する。
+
+#### 7.4.1 エビデンス取得手順
+
+```bash
+# 1. カバレッジ計測実行
+pytest tests/unit/test_slack.py tests/unit/test_phase_base.py \
+  --cov=src/ai_agent_orchestrator/notifications/slack \
+  --cov=src/ai_agent_orchestrator/models \
+  --cov=src/ai_agent_orchestrator/phases/base \
+  --cov-report=term-missing \
+  --cov-report=html:htmlcov \
+  --cov-fail-under=100
+
+# 2. テスト結果サマリー取得
+pytest tests/unit/test_slack.py tests/unit/test_phase_base.py -v 2>&1 | tail -80
+```
+
+#### 7.4.2 PRへの添付内容
+
+PRの説明欄に以下を記載する:
+
+1. **テスト実行結果**: `pytest -v` の出力（全テストケースの PASSED/FAILED 一覧）
+2. **カバレッジレポート**: `--cov-report=term-missing` の出力
+   - 各ファイルの Stmts / Miss / Cover (%) を表形式で記載
+   - Missing 行がないこと（= 100%）を確認
+3. **カバレッジサマリー**: TOTAL 行が 100% であることのスクリーンショットまたはテキスト
+
+#### 7.4.3 PR添付テンプレート
+
+```markdown
+## カバレッジエビデンス
+
+### テスト実行結果
+- 全 XX テスト PASSED ✅
+- 失敗: 0
+
+### カバレッジレポート
+| ファイル | Stmts | Miss | Cover |
+|---------|-------|------|-------|
+| notifications/slack.py | XXX | 0 | 100% |
+| models.py | XX | 0 | 100% |
+| phases/base.py | XXX | 0 | 100% |
+| **TOTAL** | **XXX** | **0** | **100%** |
+
+### pytest 出力 (詳細)
+<details>
+<summary>クリックで展開</summary>
+
+\```
+(pytest -v の出力をここに貼り付け)
+\```
+
+</details>
+
+### カバレッジ詳細 (term-missing)
+<details>
+<summary>クリックで展開</summary>
+
+\```
+(--cov-report=term-missing の出力をここに貼り付け)
+\```
+
+</details>
+```
+
+#### 7.4.4 CI での自動検証
+
+CIパイプライン (`pytest` ステップ) に `--cov-fail-under=100` を追加し、
+カバレッジが100%を下回った場合はCIを失敗させる。
+
+```yaml
+# .github/workflows/ci.yml (該当ステップ)
+- name: Run tests with coverage
+  run: |
+    pytest tests/ \
+      --cov=src/ai_agent_orchestrator \
+      --cov-report=term-missing \
+      --cov-fail-under=100
+```
+
+### 7.5 テストコード例
 
 ```python
 @respx.mock
