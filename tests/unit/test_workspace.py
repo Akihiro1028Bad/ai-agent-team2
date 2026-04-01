@@ -118,7 +118,7 @@ async def test_create_worktree_creates_new(
     with patch("asyncio.create_subprocess_exec", side_effect=mock_exec) as mock_exec_patch:
         result = await workspace.create_worktree(repo_config, issue_number=42)
 
-        expected_path = repo_dir / "worktrees" / "issue-42"
+        expected_path = repo_dir / "worktrees" / "feature-issue-42"
         assert result == expected_path
 
         # git worktree add コマンドの確認 (args[0]="git", args[1]=subcommand)
@@ -140,7 +140,7 @@ async def test_create_worktree_returns_existing(
 ) -> None:
     """worktree が既に存在する場合、git worktree add を実行せずにパスを返すことを検証する."""
     repo_dir = workspace._repos_dir / "test-org-test-repo"
-    worktree_path = repo_dir / "worktrees" / "issue-42"
+    worktree_path = repo_dir / "worktrees" / "feature-issue-42"
     worktree_path.mkdir(parents=True)
 
     mock_proc = AsyncMock()
@@ -197,7 +197,7 @@ async def test_remove_worktree_removes_existing(
 ) -> None:
     """既存の worktree が削除されることを検証する."""
     repo_dir = workspace._repos_dir / "test-org-test-repo"
-    worktree_path = repo_dir / "worktrees" / "issue-42"
+    worktree_path = repo_dir / "worktrees" / "feature-issue-42"
     worktree_path.mkdir(parents=True)
 
     mock_proc = AsyncMock()

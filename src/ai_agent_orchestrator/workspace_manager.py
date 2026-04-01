@@ -194,7 +194,7 @@ class WorkspaceManager:
             WorkspaceError: worktree の作成に失敗した場合。
         """
         repo_dir = await self.ensure_cloned(repo, token=token)
-        worktree_path = repo_dir / "worktrees" / f"issue-{issue_number}"
+        worktree_path = repo_dir / "worktrees" / f"{branch_prefix}-issue-{issue_number}"
 
         if worktree_path.exists():
             logger.info("Worktree already exists: %s", worktree_path)
@@ -255,25 +255,26 @@ class WorkspaceManager:
             issue_number: Issue 番号。
         """
         repo_dir = self._repos_dir / self._repo_dir_name(repo)
-        worktree_path = repo_dir / "worktrees" / f"issue-{issue_number}"
 
-        if not worktree_path.exists():
-            logger.debug("Worktree does not exist, skipping removal: %s", worktree_path)
-            return
+        # branch_prefix ごとに worktree パスが異なるため、全パターンを試す
+        for prefix in ("feature", "docs"):
+            worktree_path = repo_dir / "worktrees" / f"{prefix}-issue-{issue_number}"
+            if not worktree_path.exists():
+                continue
 
-        rc, _, stderr = await self._run_git(
-            "worktree",
-            "remove",
-            str(worktree_path),
-            "--force",
-            cwd=repo_dir,
-        )
-        if rc != 0:
-            logger.warning(
-                "Failed to remove worktree %s: %s",
-                worktree_path,
-                stderr,
+            rc, _, stderr = await self._run_git(
+                "worktree",
+                "remove",
+                str(worktree_path),
+                "--force",
+                cwd=repo_dir,
             )
+            if rc != 0:
+                logger.warning(
+                    "Failed to remove worktree %s: %s",
+                    worktree_path,
+                    stderr,
+                )
 
     async def list_worktrees(self, repo: RepositoryConfig) -> list[Path]:
         """リポジトリの全 worktree を一覧取得する.
