@@ -119,7 +119,7 @@ class ContextEngine:
 
         # 5. 実装計画 (implement / ci_fix フェーズ)
         if phase in _IMPL_PLAN_PHASES:
-            impl_plan = await self._read_impl_plan(worktree_path, issue_number)
+            impl_plan = await self.read_impl_plan(worktree_path, issue_number)
             if impl_plan:
                 parts.append(f"{IMPL_PLAN_HEADING}\n{impl_plan}")
             else:
@@ -185,7 +185,7 @@ class ContextEngine:
 
         return await self._read_first_existing(candidates)
 
-    async def _read_impl_plan(self, repo_path: str, issue_number: int | None = None) -> str | None:
+    async def read_impl_plan(self, repo_path: str, issue_number: int | None = None) -> str | None:
         """実装計画を読み込む.
 
         issue_number が指定されている場合は issue 固有の実装計画を優先的に探す。

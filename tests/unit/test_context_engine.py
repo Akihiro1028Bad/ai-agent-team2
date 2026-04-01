@@ -155,14 +155,14 @@ async def test_read_design_doc_missing(engine: ContextEngine, tmp_path: Path) ->
 
 async def test_read_impl_plan_exists(engine: ContextEngine, repo: Path) -> None:
     """impl-plan.md を読む."""
-    result = await engine._read_impl_plan(str(repo))
+    result = await engine.read_impl_plan(str(repo))
     assert result is not None
     assert "Implementation Plan" in result
 
 
 async def test_read_impl_plan_missing(engine: ContextEngine, tmp_path: Path) -> None:
     """実装計画がない場合は None を返す."""
-    result = await engine._read_impl_plan(str(tmp_path))
+    result = await engine.read_impl_plan(str(tmp_path))
     assert result is None
 
 
