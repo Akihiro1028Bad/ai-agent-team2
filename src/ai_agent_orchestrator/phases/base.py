@@ -442,7 +442,8 @@ class PhaseExecutor(ABC):
                 branch_prefix=self._branch_prefix,
             )
             rc, stdout, _ = await self._workspace._run_git(
-                "rev-parse", "HEAD",
+                "rev-parse",
+                "HEAD",
                 cwd=str(worktree),
             )
             if rc == 0 and stdout.strip():
@@ -483,7 +484,9 @@ class PhaseExecutor(ABC):
 
         # 2. 未プッシュコミットの確認
         rc, stdout, _ = await self._workspace._run_git(
-            "log", f"origin/{branch_name}..HEAD", "--oneline",
+            "log",
+            f"origin/{branch_name}..HEAD",
+            "--oneline",
             cwd=wt,
         )
         has_unpushed = rc == 0 and stdout.strip() != ""
@@ -494,7 +497,9 @@ class PhaseExecutor(ABC):
             baseline = state.branch_head_sha if state else None
             if baseline:
                 rc, stdout, _ = await self._workspace._run_git(
-                    "log", f"{baseline}..origin/{branch_name}", "--oneline",
+                    "log",
+                    f"{baseline}..origin/{branch_name}",
+                    "--oneline",
                     cwd=wt,
                 )
                 new_commits = rc == 0 and stdout.strip() != ""
@@ -530,7 +535,10 @@ class PhaseExecutor(ABC):
 
         # push
         rc_push, _, stderr = await self._workspace._run_git(
-            "push", "origin", branch_name, cwd=wt,
+            "push",
+            "origin",
+            branch_name,
+            cwd=wt,
         )
         if rc_push != 0:
             msg = f"Issue #{request.issue_number}: git push 失敗: {stderr}"

@@ -1281,7 +1281,10 @@ class TestDesignPrLookup:
         from ai_agent_orchestrator.phases.design import DesignExecutor
 
         mock_sm.get_state.return_value = MagicMock(
-            session_id=None, design_pr_number=None, pr_number=None, branch_head_sha=None,
+            session_id=None,
+            design_pr_number=None,
+            pr_number=None,
+            branch_head_sha=None,
         )
 
         mock_pr = MagicMock()
