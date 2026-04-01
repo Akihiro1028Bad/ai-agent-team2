@@ -35,6 +35,7 @@ class EventRouter:
         state_machine: StateMachineManager,
         task_queue: TaskQueue,
         account_manager: object | None = None,
+        notifier: object | None = None,
     ) -> None:
         """EventRouter を初期化する.
 
@@ -42,10 +43,12 @@ class EventRouter:
             state_machine: ステートマシンマネージャ.
             task_queue: タスクキュー.
             account_manager: AccountManager (GitHub ラベル更新用、省略可).
+            notifier: 通知送信 (Slack 等、省略可).
         """
         self._sm = state_machine
         self._tq = task_queue
         self._account_manager = account_manager
+        self._notifier = notifier
 
     async def _get_client(self, repo: object) -> GitHubClient | None:
         """リポジトリに対応する GitHubClient を取得する (省略可能).
@@ -313,6 +316,13 @@ class EventRouter:
         # 承認検出を通知: Issue に🚀リアクション + コメント
         await self._notify_plan_approved(event, next_phase)
 
+        # Slack 通知
+        await self._notify_approval_accepted(
+            event.issue.number,
+            f"{event.repo.owner}/{event.repo.repo}",
+            "方針",
+        )
+
         await self._sm.transition(event.issue.number, next_phase)
         await self._tq.enqueue(
             TaskRequest(
@@ -341,6 +351,31 @@ class EventRouter:
             logger.debug(
                 "Failed to notify plan approval for issue #%d",
                 event.issue.number,
+                exc_info=True,
+            )
+
+    async def _notify_approval_accepted(
+        self,
+        issue_number: int,
+        repo_full_name: str,
+        phase_label: str,
+    ) -> None:
+        """承認後の再開通知を Slack に送信する."""
+        if self._notifier is None:
+            return
+        try:
+            await self._notifier.notify(
+                f"Issue #{issue_number} の{phase_label}が承認されました。次のフェーズに進みます",
+                metadata={
+                    "notification_type": "approval_accepted",
+                    "issue": issue_number,
+                    "repo": repo_full_name,
+                },
+            )
+        except Exception:
+            logger.debug(
+                "Failed to send approval notification for issue #%d",
+                issue_number,
                 exc_info=True,
             )
 
@@ -398,6 +433,11 @@ class EventRouter:
         設計PRのマージは不要。承認後すぐに実装計画フェーズへ遷移する。
         """
         assert event.issue is not None
+        await self._notify_approval_accepted(
+            event.issue.number,
+            f"{event.repo.owner}/{event.repo.repo}",
+            "設計PR",
+        )
         await self._sm.transition(event.issue.number, Phase.PLANNING)
         await self._tq.enqueue(
             TaskRequest(

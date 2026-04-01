@@ -72,9 +72,14 @@ class DoneExecutor(PhaseExecutor):
         # worktree 削除
         await self._workspace.remove_worktree(request.repo, request.issue_number)
 
+        repo_full_name = self._get_repo_full_name(request)
         await self._notifier.notify(
             f"Issue #{request.issue_number} 完了しました",
-            metadata={"issue": request.issue_number},
+            metadata={
+                "notification_type": "done",
+                "issue": request.issue_number,
+                "repo": repo_full_name,
+            },
         )
 
         # 子Issueの場合、次の子Issueに ai-agent ラベルを付けて連鎖起動
@@ -121,7 +126,11 @@ class DoneExecutor(PhaseExecutor):
                         )
                         await self._notifier.notify(
                             f"Issue #{candidate.number} の処理を開始します (#{request.issue_number} 完了による連鎖)",
-                            metadata={"issue": candidate.number},
+                            metadata={
+                                "notification_type": "chain_start",
+                                "issue": candidate.number,
+                                "repo": repo_full_name,
+                            },
                         )
                     return
         except Exception:

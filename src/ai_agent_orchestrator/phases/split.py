@@ -84,9 +84,15 @@ class SplitProposalExecutor(PhaseExecutor):
         comment_body += next_action_footer("split-proposal")
         await client.create_comment(request.repo, request.issue_number, comment_body)
         # 承認待ち (SPLIT_PROPOSAL フェーズのまま)
+        repo_full_name = self._get_repo_full_name(request)
         await self._notifier.notify(
-            f"Issue #{request.issue_number} の分割を提案しました。判断をお願いします",
-            metadata={"issue": request.issue_number},
+            f"Issue #{request.issue_number} の分割を提案しました",
+            metadata={
+                "notification_type": "split_proposal",
+                "issue": request.issue_number,
+                "repo": repo_full_name,
+                "next_action": "→ 👍で承認をお願いします",
+            },
         )
 
 
@@ -147,7 +153,12 @@ class SplitExecuteExecutor(PhaseExecutor):
         )
         await client.replace_phase_label(request.repo, request.issue_number, "phase:done")
         await self._sm.transition(request.issue_number, "done")
+        repo_full_name = self._get_repo_full_name(request)
         await self._notifier.notify(
             f"Issue #{request.issue_number} の分割が完了しました",
-            metadata={"issue": request.issue_number},
+            metadata={
+                "notification_type": "split_complete",
+                "issue": request.issue_number,
+                "repo": repo_full_name,
+            },
         )

@@ -618,6 +618,7 @@ class Orchestrator:
             "Orchestrator started",
             level="info",
             metadata={
+                "notification_type": "system_start",
                 "repos": [f"{r.owner}/{r.repo}" for r in self._settings.repositories],
             },
         )
@@ -745,6 +746,9 @@ class Orchestrator:
                     await self._notifier.notify(
                         f"Event routing error: {exc}",
                         level="error",
+                        metadata={
+                            "notification_type": "system_error",
+                        },
                     )
                 finally:
                     self._event_queue.task_done()
@@ -939,9 +943,11 @@ class Orchestrator:
                 f"Issue #{issue_number} suspended due to error: {error}",
                 level="error",
                 metadata={
+                    "notification_type": "suspended",
                     "issue": issue_number,
                     "phase": task.phase,
                     "error": str(error),
+                    "next_action": "→ 手動での確認をお願いします",
                 },
             )
 
@@ -1032,6 +1038,9 @@ class Orchestrator:
                     await self._notifier.notify(
                         f"Health check failures: {', '.join(unhealthy)}",
                         level="error",
+                        metadata={
+                            "notification_type": "health_check",
+                        },
                     )
             except asyncio.CancelledError:
                 break

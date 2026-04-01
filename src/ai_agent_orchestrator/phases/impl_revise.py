@@ -98,7 +98,26 @@ class ImplReviseExecutor(PhaseExecutor):
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:impl-review")
         await self._sm.transition(request.issue_number, "impl-review")
+        repo_full_name = self._get_repo_full_name(request)
+        state_data = self._sm.get_state(request.issue_number)
+        impl_pr = state_data.pr_number if state_data else None
+        pr_url_val = None
+        if impl_pr:
+            owner = getattr(request.repo, "owner", "")
+            repo_name = getattr(request.repo, "repo", "")
+            if owner and repo_name:
+                pr_url_val = f"https://github.com/{owner}/{repo_name}/pull/{impl_pr}"
+        client = await self._get_client(request.repo)
+        issue = await client.get_issue(request.repo, request.issue_number)
         await self._notifier.notify(
             f"Issue #{request.issue_number} の実装を修正しました",
-            metadata={"issue": request.issue_number},
+            metadata={
+                "notification_type": "impl_revised",
+                "issue": request.issue_number,
+                "issue_title": issue.title,
+                "pr": impl_pr,
+                "pr_url": pr_url_val,
+                "repo": repo_full_name,
+                "next_action": "→ 実装PRを再レビューしてください",
+            },
         )

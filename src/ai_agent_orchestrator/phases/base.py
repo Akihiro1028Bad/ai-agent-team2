@@ -282,6 +282,26 @@ class PhaseExecutor(ABC):
             return result
         return self._account_manager  # type: ignore[return-value]
 
+    def _get_repo_full_name(self, request: TaskRequest) -> str:
+        """リポジトリのフルネーム (owner/repo) を取得する.
+
+        Args:
+            request: タスクリクエスト。
+
+        Returns:
+            "owner/repo" 形式の文字列。
+        """
+        owner = getattr(request.repo, "owner", "")
+        repo_name = getattr(request.repo, "repo", "")
+        if owner and repo_name:
+            return f"{owner}/{repo_name}"
+        return ""
+
+    @property
+    def _phase_display_name(self) -> str:
+        """フェーズの表示名。サブクラスでオーバーライド可能."""
+        return "処理"
+
     async def execute(self, request: TaskRequest) -> None:
         """フェーズを実行する (テンプレートメソッド)。
 
@@ -389,12 +409,16 @@ class PhaseExecutor(ABC):
             await client.replace_phase_label(request.repo, request.issue_number, "phase:suspended")
         except Exception:
             logger.warning("Failed to update phase label to suspended for issue #%d", request.issue_number)
+        repo_full_name = self._get_repo_full_name(request)
         await self._notifier.notify(
             f"Issue #{request.issue_number} がタイムアウトしました (phase: {request.phase})",
             level="error",
             metadata={
+                "notification_type": "timeout",
                 "issue": request.issue_number,
                 "phase": str(request.phase),
+                "repo": repo_full_name,
+                "next_action": "→ 手動での確認をお願いします",
             },
         )
 
@@ -411,12 +435,16 @@ class PhaseExecutor(ABC):
             request.issue_number,
             f"エラーが発生しました: {error}",
         )
+        repo_full_name = self._get_repo_full_name(request)
         await self._notifier.notify(
             f"Issue #{request.issue_number} でエラー: {error} (phase: {request.phase})",
             level="error",
             metadata={
+                "notification_type": "error",
                 "issue": request.issue_number,
                 "phase": str(request.phase),
+                "repo": repo_full_name,
+                "next_action": "→ 手動での確認をお願いします",
             },
         )
 

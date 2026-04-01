@@ -87,7 +87,14 @@ class PlanBriefExecutor(PhaseExecutor):
         await client.create_comment(request.repo, request.issue_number, comment_body)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:plan-review")
         await self._sm.transition(request.issue_number, "plan-review")
+        repo_full_name = self._get_repo_full_name(request)
         await self._notifier.notify(
-            f"Issue #{request.issue_number} の実装方針を投稿しました。thumbsup で承認をお願いします",
-            metadata={"issue": request.issue_number},
+            f"Issue #{request.issue_number} の実装方針を投稿しました",
+            metadata={
+                "notification_type": "plan_posted",
+                "issue": request.issue_number,
+                "issue_title": issue.title,
+                "repo": repo_full_name,
+                "next_action": "→ 👍で承認をお願いします",
+            },
         )

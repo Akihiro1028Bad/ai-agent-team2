@@ -141,11 +141,14 @@ class ImplementExecutor(PhaseExecutor):
                     break
 
                 # 継続通知
+                repo_full_name = self._get_repo_full_name(request)
                 await self._notifier.notify(
                     f"Issue #{request.issue_number} 実装パス {iteration + 1} 完了、継続中",
                     metadata={
+                        "notification_type": "impl_continuation",
                         "issue": request.issue_number,
                         "iteration": iteration + 1,
+                        "repo": repo_full_name,
                     },
                 )
 
@@ -408,10 +411,19 @@ class ImplementExecutor(PhaseExecutor):
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:impl-review")
         await self._sm.transition(request.issue_number, "impl-review")
+        repo_full_name = self._get_repo_full_name(request)
+        owner = getattr(request.repo, "owner", "")
+        repo_name = getattr(request.repo, "repo", "")
+        pr_url = f"https://github.com/{owner}/{repo_name}/pull/{pr_number}" if owner and repo_name else None
         await self._notifier.notify(
             f"Issue #{request.issue_number} の実装PR #{pr_number} を作成しました",
             metadata={
+                "notification_type": "impl_pr_created",
                 "issue": request.issue_number,
                 "pr": pr_number,
+                "pr_url": pr_url,
+                "repo": repo_full_name,
+                "duration_sec": total_duration,
+                "next_action": "→ 実装PRをレビューしてください",
             },
         )

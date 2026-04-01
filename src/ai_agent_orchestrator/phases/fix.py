@@ -97,10 +97,20 @@ class FixExecutor(PhaseExecutor):
             phase="fix",
             data={"note": "impl-review に遷移", "pr_number": pr_number},
         )
+        repo_full_name = self._get_repo_full_name(request)
+        owner = getattr(request.repo, "owner", "")
+        repo_name = getattr(request.repo, "repo", "")
+        pr_url = f"https://github.com/{owner}/{repo_name}/pull/{pr_number}" if owner and repo_name else None
+        issue = await client.get_issue(request.repo, request.issue_number)
         await self._notifier.notify(
-            f"Issue #{request.issue_number} の修正PR #{pr_number} を作成しました。レビュー待ちです",
+            f"Issue #{request.issue_number} の修正PR #{pr_number} を作成しました",
             metadata={
+                "notification_type": "fix_pr_created",
                 "issue": request.issue_number,
+                "issue_title": issue.title,
                 "pr": pr_number,
+                "pr_url": pr_url,
+                "repo": repo_full_name,
+                "next_action": "→ 修正PRをレビューしてください",
             },
         )
