@@ -72,9 +72,7 @@ def mock_context() -> AsyncMock:
     """Mock ContextEngine."""
     ctx = AsyncMock()
     ctx.build_context.return_value = (
-        "## リポジトリ構造\n(mock context)\n\n"
-        "## 設計書\n(mock design doc)\n\n"
-        "## 実装計画\n(mock impl plan)"
+        "## リポジトリ構造\n(mock context)\n\n## 設計書\n(mock design doc)\n\n## 実装計画\n(mock impl plan)"
     )
     return ctx
 
