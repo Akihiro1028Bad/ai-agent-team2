@@ -220,10 +220,14 @@ class WorkspaceManager:
             raise WorkspaceError(msg)
 
         # Configure git credential helper in worktree
+        # gh のフルパスを使用 (Claude Code サブプロセスで PATH が異なる場合の対策)
+        import shutil
+
+        gh_path = shutil.which("gh") or "/snap/bin/gh"
         await self._run_git(
             "config",
             "credential.helper",
-            "!gh auth git-credential",
+            f"!{gh_path} auth git-credential",
             cwd=str(worktree_path),
         )
         await self._run_git("config", "user.name", "ai-agent-bot", cwd=str(worktree_path))
