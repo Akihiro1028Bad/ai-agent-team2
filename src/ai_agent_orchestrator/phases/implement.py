@@ -423,7 +423,7 @@ class ImplementExecutor(PhaseExecutor):
                 "pr": pr_number,
                 "pr_url": pr_url,
                 "repo": repo_full_name,
-                "duration_sec": total_duration,
+                "duration_sec": result.duration_sec,
                 "next_action": "→ 実装PRをレビューしてください",
             },
         )

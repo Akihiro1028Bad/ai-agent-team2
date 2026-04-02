@@ -114,6 +114,7 @@ class HearingExecutor(PhaseExecutor):
             # hearing-wait へ遷移 (user reply待ち)
             await client.replace_phase_label(request.repo, request.issue_number, "phase:hearing-wait")
             await self._sm.transition(request.issue_number, "hearing-wait")
+            issue = await client.get_issue(request.repo, request.issue_number)
             repo_full_name = self._get_repo_full_name(request)
             await self._notifier.notify(
                 f"Issue #{request.issue_number} に質問を投稿しました",

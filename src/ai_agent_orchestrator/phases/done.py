@@ -124,6 +124,7 @@ class DoneExecutor(PhaseExecutor):
                             request.issue_number,
                             candidate.number,
                         )
+                        repo_full_name = self._get_repo_full_name(request)
                         await self._notifier.notify(
                             f"Issue #{candidate.number} の処理を開始します (#{request.issue_number} 完了による連鎖)",
                             metadata={

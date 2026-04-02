@@ -76,6 +76,7 @@ class AnalysisExecutor(PhaseExecutor):
         await client.create_comment(request.repo, request.issue_number, comment_body)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:plan-review")
         await self._sm.transition(request.issue_number, "plan-review")
+        issue = await client.get_issue(request.repo, request.issue_number)
         repo_full_name = self._get_repo_full_name(request)
         await self._notifier.notify(
             f"Issue #{request.issue_number} の修正方針を投稿しました",
