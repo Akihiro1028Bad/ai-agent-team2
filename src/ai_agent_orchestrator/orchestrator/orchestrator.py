@@ -738,6 +738,8 @@ class Orchestrator:
                 event = await self._event_queue.get()
                 try:
                     await self._event_router.route(event)
+                except KeyError as exc:
+                    logger.warning("Event routing skipped (unregistered issue): %s", exc)
                 except Exception as exc:
                     logger.error("Event routing error: %s", exc, exc_info=True)
                     await self._notifier.notify(

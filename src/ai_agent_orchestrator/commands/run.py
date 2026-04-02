@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import signal
 from pathlib import Path
@@ -69,8 +70,18 @@ def logs_command(
 # ---------------------------------------------------------------------------
 
 
+def _configure_logging() -> None:
+    """ルートロガーに基本的なlogging設定を適用する."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+
 async def _start_foreground(config_path: str) -> None:
     """フォアグラウンドでオーケストレーターを起動."""
+    _configure_logging()
+
     from ai_agent_orchestrator.orchestrator.orchestrator import Orchestrator
 
     try:

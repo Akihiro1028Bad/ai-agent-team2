@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from ai_agent_orchestrator.models import Phase
+
 if TYPE_CHECKING:
     from ai_agent_orchestrator.agents.claude_runner import ClaudeAgentRunner
     from ai_agent_orchestrator.context.engine import ContextEngine
@@ -172,6 +174,10 @@ class StateMachineProtocol:
 
     def get_state(self, issue_number: int) -> IssueStateData | None:
         """Get state for an issue."""
+        ...  # pragma: no cover
+
+    def get_phase(self, issue_number: int) -> Phase | None:
+        """Get the current phase for an issue."""
         ...  # pragma: no cover
 
     def get_issue_type(self, issue_number: int) -> str:
@@ -407,7 +413,18 @@ class PhaseExecutor(ABC):
     # ------------------------------------------------------------------
 
     async def _handle_timeout(self, request: TaskRequest) -> None:
-        """タイムアウト処理: セッション中断 + SUSPENDED 遷移 + 通知。"""
+        """タイムアウト処理: セッション中断 + SUSPENDED 遷移 + 通知。
+
+        既に DONE に到達している場合は suspended にしない (重複実行の残留タスク対策)。
+        """
+        current = self._sm.get_phase(request.issue_number)
+        if current == Phase.DONE:
+            logger.warning(
+                "Issue #%d: timeout in stale task (phase=%s) but already DONE, skipping suspend",
+                request.issue_number,
+                request.phase,
+            )
+            return
         state = self._sm.get_state(request.issue_number)
         if state and state.session_id:
             await self._runner.interrupt(state.session_id)
@@ -432,7 +449,18 @@ class PhaseExecutor(ABC):
         )
 
     async def _handle_error(self, request: TaskRequest, error: Exception) -> None:
-        """エラー処理: SUSPENDED 遷移 + Issue コメント + 通知。"""
+        """エラー処理: SUSPENDED 遷移 + Issue コメント + 通知。
+
+        既に DONE に到達している場合は suspended にしない (重複実行の残留タスク対策)。
+        """
+        current = self._sm.get_phase(request.issue_number)
+        if current == Phase.DONE:
+            logger.warning(
+                "Issue #%d: error in stale task (phase=%s) but already DONE, skipping suspend",
+                request.issue_number,
+                request.phase,
+            )
+            return
         await self._sm.transition(request.issue_number, "suspended")
         client = await self._get_client(request.repo)
         try:

@@ -437,6 +437,14 @@ class EventRouter:
         設計PRのマージは不要。承認後すぐに実装計画フェーズへ遷移する。
         """
         assert event.issue is not None
+        current_phase = self._sm.get_phase(event.issue.number)
+        if current_phase != Phase.DESIGN_REVIEW:
+            logger.info(
+                "Issue #%d is in %s, not DESIGN_REVIEW, skipping design_pr_approved",
+                event.issue.number,
+                current_phase,
+            )
+            return
         await self._notify_approval_accepted(
             event.issue.number,
             f"{event.repo.owner}/{event.repo.repo}",
@@ -455,6 +463,14 @@ class EventRouter:
     async def _handle_design_pr_commented(self, event: PollEvent) -> None:
         """設計 PR コメント (指摘): DESIGN_REVISE へ遷移してエンキュー."""
         assert event.issue is not None
+        current_phase = self._sm.get_phase(event.issue.number)
+        if current_phase != Phase.DESIGN_REVIEW:
+            logger.info(
+                "Issue #%d is in %s, not DESIGN_REVIEW, skipping design_pr_commented",
+                event.issue.number,
+                current_phase,
+            )
+            return
         await self._sm.transition(event.issue.number, Phase.DESIGN_REVISE)
         await self._tq.enqueue(
             TaskRequest(
@@ -470,8 +486,18 @@ class EventRouter:
         """実装 PR マージ: DONE へ遷移し、DoneExecutor をエンキュー.
 
         ユーザーが手動で PR をマージした段階で Issue を完了させる。
+        fix フェーズがまだ impl-review に遷移完了していないタイミングで
+        マージが検知される場合があるため、先に impl-review へ遷移させる。
         """
         assert event.issue is not None
+        current_phase = self._sm.get_phase(event.issue.number)
+        if current_phase not in (Phase.IMPL_REVIEW, Phase.DONE):
+            logger.info(
+                "Issue #%d: PR merged while in %s, transitioning to impl-review first",
+                event.issue.number,
+                current_phase,
+            )
+            await self._sm.transition(event.issue.number, Phase.IMPL_REVIEW)
         await self._sm.transition(event.issue.number, Phase.DONE)
         await self._tq.enqueue(
             TaskRequest(
@@ -498,8 +524,14 @@ class EventRouter:
         """実装 PR コメント (指摘): IMPL_REVISE へ遷移してエンキュー."""
         assert event.issue is not None
 
-        # 既に修正中の場合はスキップ (重複検出対策)
+        # 既に修正中またはまだ実装中の場合はスキップ
         current_phase = self._sm.get_phase(event.issue.number)
+        if current_phase == Phase.IMPLEMENT:
+            logger.info(
+                "Issue #%d is still in implement phase, skipping PR comment",
+                event.issue.number,
+            )
+            return
         if current_phase == Phase.IMPL_REVISE:
             logger.info(
                 "Issue #%d is already in impl-revise, skipping duplicate PR comment",
@@ -559,6 +591,14 @@ class EventRouter:
         ci_status = (event.extra or {}).get("ci_status", "")
 
         if ci_status == "failure":
+            current_phase = self._sm.get_phase(event.issue.number)
+            if current_phase not in (Phase.IMPL_REVIEW, Phase.CI_FIX):
+                logger.info(
+                    "Issue #%d is in %s, not IMPL_REVIEW/CI_FIX, skipping ci_result failure",
+                    event.issue.number,
+                    current_phase,
+                )
+                return
             retry_count = await self._sm.get_ci_retry_count(event.issue.number)
             if retry_count < 3:
                 await self._sm.transition(event.issue.number, Phase.CI_FIX)
@@ -591,6 +631,14 @@ class EventRouter:
     async def _handle_split_approved(self, event: PollEvent) -> None:
         """分割承認 (Feature-L): SPLIT_EXECUTE へ遷移してエンキュー."""
         assert event.issue is not None
+        current_phase = self._sm.get_phase(event.issue.number)
+        if current_phase != Phase.SPLIT_PROPOSAL:
+            logger.info(
+                "Issue #%d is in %s, not SPLIT_PROPOSAL, skipping split_approved",
+                event.issue.number,
+                current_phase,
+            )
+            return
         await self._sm.transition(event.issue.number, Phase.SPLIT_EXECUTE)
         await self._tq.enqueue(
             TaskRequest(

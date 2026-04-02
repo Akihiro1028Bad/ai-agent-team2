@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_keyring_warned: set[str] = set()
+
 
 class CredentialError(Exception):
     """トークン解決に失敗した場合の例外.
@@ -100,7 +102,11 @@ class CredentialResolver:
             token: str | None = await asyncio.to_thread(keyring.get_password, service, "github_token")
             return token
         except keyring.errors.KeyringError:
-            logger.warning("keyring へのアクセスに失敗しました (service=%s)", service)
+            if service not in _keyring_warned:
+                logger.warning("keyring へのアクセスに失敗しました (service=%s)。以降は抑制します。", service)
+                _keyring_warned.add(service)
+            else:
+                logger.debug("keyring へのアクセスに失敗しました (service=%s)", service)
             return None
 
     def _resolve_env(self, env_var: str) -> str | None:

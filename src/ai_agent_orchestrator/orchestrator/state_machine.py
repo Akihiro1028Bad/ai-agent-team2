@@ -6,6 +6,7 @@ StateMachineManager: 複数 Issue の IssueWorkflow を管理し、永続化・�
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -318,6 +319,7 @@ class StateMachineManager:
         self._tracker = tracker
         self._states: dict[int, IssueState] = {}
         self._workflows: dict[int, IssueWorkflow] = {}
+        self._locks: dict[int, asyncio.Lock] = {}
 
     def register_issue(
         self,
@@ -353,6 +355,12 @@ class StateMachineManager:
         )
         self._auto_save()
 
+    def _get_lock(self, issue_number: int) -> asyncio.Lock:
+        """Issue 単位のロックを取得する。存在しなければ作成."""
+        if issue_number not in self._locks:
+            self._locks[issue_number] = asyncio.Lock()
+        return self._locks[issue_number]
+
     async def transition(
         self,
         issue_number: int,
@@ -362,6 +370,8 @@ class StateMachineManager:
 
         内部で python-statemachine の遷移メソッドを呼び出し、
         イベントログ記録・永続化を自動実行する。
+        Issue 単位の asyncio.Lock で排他制御を行い、
+        ポーラーとワーカーの同時遷移による競合を防止する。
 
         Args:
             issue_number: Issue 番号。
@@ -371,6 +381,15 @@ class StateMachineManager:
             KeyError: 未登録の Issue 番号。
             InvalidTransitionError: 許可されていない遷移。
         """
+        async with self._get_lock(issue_number):
+            await self._transition_inner(issue_number, new_phase)
+
+    async def _transition_inner(
+        self,
+        issue_number: int,
+        new_phase: Phase | str,
+    ) -> None:
+        """ロック保持下でフェーズ遷移を実行する内部メソッド."""
         if issue_number not in self._states:
             msg = f"Issue #{issue_number} is not registered"
             raise KeyError(msg)

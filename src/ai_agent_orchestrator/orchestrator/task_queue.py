@@ -113,6 +113,7 @@ class TaskQueue:
         self._repo_sems: dict[str, asyncio.Semaphore] = defaultdict(lambda: asyncio.Semaphore(max_per_repo))
         self._active_tasks: dict[int, asyncio.Task[None]] = {}
         self._queued_issues: set[int] = set()  # 重複排除用
+        self._queued_tasks: set[tuple[int, str]] = set()  # (issue_number, phase) 重複排除用
 
     # --- public methods ---
 
@@ -126,6 +127,15 @@ class TaskQueue:
         Args:
             request: 実行するタスクリクエスト
         """
+        task_key: tuple[int, str] = (request.issue_number, request.phase)
+        if task_key in self._queued_tasks:
+            logger.info(
+                "Issue #%d phase=%s already queued, skipping duplicate",
+                request.issue_number,
+                request.phase,
+            )
+            return
+
         # 同一Issueが実行中でも、フェーズが変わった場合は
         # 次フェーズのタスクとしてエンキューを許可する
         # (auto-enqueue は _execute_task 完了直前に呼ばれるため)
@@ -151,6 +161,7 @@ class TaskQueue:
             )
 
         self._queued_issues.add(request.issue_number)
+        self._queued_tasks.add(task_key)
         self._seq += 1
         await self._queue.put((request.priority, self._seq, request))
         logger.info(
@@ -170,6 +181,7 @@ class TaskQueue:
         """
         _, _, request = await self._queue.get()
         self._queued_issues.discard(request.issue_number)
+        # _queued_tasks はタスク完了時に除去する (実行中の重複防止)
         return request
 
     async def worker_loop(self, executor: TaskExecutor) -> None:
@@ -193,6 +205,7 @@ class TaskQueue:
             _priority, _seq, request = await self._queue.get()
             try:
                 self._queued_issues.discard(request.issue_number)
+                # _queued_tasks はデキュー時に除去しない (実行中の重複防止)
                 await self._try_execute(executor, request)
             except Exception as e:
                 logger.error(
@@ -201,6 +214,7 @@ class TaskQueue:
                     e,
                 )
             finally:
+                self._queued_tasks.discard((request.issue_number, request.phase))
                 self._active_tasks.pop(request.issue_number, None)
                 self._queue.task_done()  # always called after get()
 

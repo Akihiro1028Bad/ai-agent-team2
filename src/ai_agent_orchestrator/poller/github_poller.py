@@ -370,7 +370,7 @@ class GitHubPoller:
                     )
 
         # --- 実装PR: マージで完了検知、レビューコメントで修正検知 ---
-        impl_issues = await client.get_issues_with_label(repo, f"{repo.label},phase:impl-review")
+        impl_issues = await client.get_issues_with_label(repo, f"{repo.label},phase:impl-review", state="all")
         for issue in impl_issues:
             # マージ検知 (最優先)
             merged = await self._check_pr_merged(client, repo, issue)

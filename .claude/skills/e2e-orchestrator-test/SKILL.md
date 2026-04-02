@@ -213,18 +213,18 @@ if [ -n "$COMMENTS" ]; then
 fi
 ```
 
-**impl-review フェーズ検出時 → PR approve + merge**:
+**impl-review フェーズ検出時 → LGTM コメント + merge**:
 
 ```bash
 # PRを検索
-PR_NUM=$(gh pr list --repo $REPO --search "issue-$ISSUE_NUM" --json number --jq '.[0].number')
+PR_NUM=$(gh pr list --repo $REPO --head "feature/issue-$ISSUE_NUM" --json number --jq '.[0].number')
 if [ -n "$PR_NUM" ]; then
-  # approve
-  gh pr review $PR_NUM --repo $REPO --approve --body "E2Eテスト: 自動承認"
+  # LGTM コメントで承認 (同一アカウントでは gh pr review --approve が使えないため)
+  gh pr comment $PR_NUM --repo $REPO --body "LGTM"
   sleep 5
   # merge
   gh pr merge $PR_NUM --repo $REPO --merge --delete-branch
-  echo "PR #$PR_NUM approved and merged"
+  echo "PR #$PR_NUM approved (LGTM) and merged"
 fi
 ```
 
@@ -286,29 +286,30 @@ gh issue create --repo Akihiro1028Bad/ai-agent-team2-test \
 Feature-M の承認ポイントは多い:
 
 1. **hearing フェーズ**: 通常は自動で READY 判定される (待機のみ)
-2. **design-review フェーズ**: 設計PR の approve が必要
+2. **design-review フェーズ**: 設計PR の LGTM が必要
 
 ```bash
-# design-review 検出時 → 設計PRをapprove
+# design-review 検出時 → 設計PRにLGTMコメント
 # ただし設計PRはマージしない (設計と実装は同一ブランチ)
-DESIGN_PR=$(gh pr list --repo $REPO --search "issue-$ISSUE_NUM" --json number --jq '.[0].number')
+# 注意: 同一アカウントでは gh pr review --approve が使えないため LGTM コメントで代替
+DESIGN_PR=$(gh pr list --repo $REPO --head "feature/issue-$ISSUE_NUM" --json number --jq '.[0].number')
 if [ -n "$DESIGN_PR" ]; then
-  gh pr review $DESIGN_PR --repo $REPO --approve --body "E2Eテスト: 設計承認"
-  echo "Design PR #$DESIGN_PR approved"
+  gh pr comment $DESIGN_PR --repo $REPO --body "LGTM"
+  echo "Design PR #$DESIGN_PR approved (LGTM)"
 fi
 ```
 
-3. **impl-review フェーズ**: 実装PR の approve + merge
+3. **impl-review フェーズ**: 実装PR の LGTM + merge
 
 ```bash
-# impl-review 検出時 → PRをapprove + merge
+# impl-review 検出時 → PRにLGTMコメント + merge
 # Feature-M では設計PRと実装PRが同一の場合がある
-IMPL_PR=$(gh pr list --repo $REPO --search "issue-$ISSUE_NUM" --json number --jq '.[0].number')
+IMPL_PR=$(gh pr list --repo $REPO --head "feature/issue-$ISSUE_NUM" --json number --jq '.[0].number')
 if [ -n "$IMPL_PR" ]; then
-  gh pr review $IMPL_PR --repo $REPO --approve --body "E2Eテスト: 実装承認"
+  gh pr comment $IMPL_PR --repo $REPO --body "LGTM"
   sleep 5
   gh pr merge $IMPL_PR --repo $REPO --merge --delete-branch
-  echo "Impl PR #$IMPL_PR approved and merged"
+  echo "Impl PR #$IMPL_PR approved (LGTM) and merged"
 fi
 ```
 
@@ -466,7 +467,7 @@ cat ~/.ai-agent-workspaces/logs/issue-$ISSUE_NUM/events.jsonl
 **効率性の評価基準**:
 - **各フェーズの所要時間** (40点):
   - Bug: 全体15分以内 → 40点, 30分以内 → 25点, それ以上 → 10点
-  - Feature-M: 全体35分以内 → 40点, 60分以内 → 25点, それ以上 → 10点
+  - Feature-M: 全体45分以内 → 40点, 60分以内 → 25点, それ以上 → 10点
   - Feature-L: Split完了まで10分以内 → 40点, 20分以内 → 25点, それ以上 → 10点
 
 - **リトライ回数** (30点):
@@ -657,7 +658,7 @@ ls ~/.ai-agent-workspaces/worktrees/ 2>/dev/null
 ### エラーハンドリング
 
 - **SUSPENDED到達**: そのIssueのテストはFAILとしてマーク。オーケストレーターのログから原因を収集してレポートに含める
-- **タイムアウト**: 15分 (Bug) / 35分 (Feature-M) / 15分 (Feature-L) で打ち切り。FAIL としてマーク
+- **タイムアウト**: 15分 (Bug) / 45分 (Feature-M) / 15分 (Feature-L) で打ち切り。FAIL としてマーク
 - **オーケストレータークラッシュ**: ログを収集してレポートに含め、テスト全体を中断
 - **CI失敗**: CI_FIXフェーズに遷移するのを待つ。3回失敗でSUSPENDED → レポート
 

@@ -157,6 +157,7 @@ class TestEventRouterDesignPR:
         mock_tq: AsyncMock,
     ) -> None:
         """設計 PR approve -> PLANNING へ遷移."""
+        mock_sm.get_phase.return_value = Phase.DESIGN_REVIEW
         event = _make_event(EventType.DESIGN_PR_APPROVED)
         await router.route(event)
 
@@ -170,6 +171,7 @@ class TestEventRouterDesignPR:
         mock_tq: AsyncMock,
     ) -> None:
         """設計 PR コメント -> DESIGN_REVISE へ遷移."""
+        mock_sm.get_phase.return_value = Phase.DESIGN_REVIEW
         event = _make_event(
             EventType.DESIGN_PR_COMMENTED,
             extra={"comments": "要修正"},
@@ -244,6 +246,7 @@ class TestEventRouterCIResult:
         mock_tq: AsyncMock,
     ) -> None:
         """CI 失敗 (3回以内) -> CI_FIX へ遷移."""
+        mock_sm.get_phase.return_value = Phase.IMPL_REVIEW
         mock_sm.get_ci_retry_count.return_value = 1
         event = _make_event(
             EventType.CI_RESULT,
@@ -264,6 +267,7 @@ class TestEventRouterCIResult:
         mock_tq: AsyncMock,
     ) -> None:
         """CI 失敗 (3回超過) -> SUSPENDED へ遷移."""
+        mock_sm.get_phase.return_value = Phase.IMPL_REVIEW
         mock_sm.get_ci_retry_count.return_value = 3
         event = _make_event(
             EventType.CI_RESULT,
@@ -304,6 +308,7 @@ class TestEventRouterSplit:
         mock_tq: AsyncMock,
     ) -> None:
         """分割承認 -> SPLIT_EXECUTE へ遷移."""
+        mock_sm.get_phase.return_value = Phase.SPLIT_PROPOSAL
         event = _make_event(EventType.SPLIT_APPROVED)
         await router.route(event)
 
