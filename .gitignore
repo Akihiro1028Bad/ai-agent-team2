@@ -5,7 +5,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-.claude/
+.claude/*
+!.claude/skills/
 coverage.xml
 .mypy_cache/
 .pytest_cache/
