@@ -59,6 +59,7 @@ _HEADER_TEXT: dict[str, str] = {
     "suspended": "\u23f8\ufe0f 一時停止",
 }
 
+
 def _format_duration(seconds: float) -> str:
     """秒数を人間可読な形式にフォーマットする.
 
@@ -77,7 +78,6 @@ def _format_duration(seconds: float) -> str:
     hours = minutes // 60
     mins = minutes % 60
     return f"{hours}時間{mins:02d}分"
-
 
 
 class SlackNotifier:
