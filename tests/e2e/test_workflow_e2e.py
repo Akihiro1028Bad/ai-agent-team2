@@ -142,17 +142,17 @@ class TestBugWorkflowE2E:
 
 
 # ---------------------------------------------------------------------------
-# Test: Feature-S workflow E2E
-#   NEW_ISSUE -> TYPE_DETECTION -> (set type=feature-s) -> HEARING
-#   -> PLAN_BRIEF -> PLAN_REVIEW -> (thumbsup) -> IMPLEMENT
+# Test: Feature-M (small feature) workflow E2E
+#   NEW_ISSUE -> TYPE_DETECTION -> (set type=feature-m) -> HEARING
+#   -> DESIGN -> DESIGN_REVIEW -> (PR approve) -> PLANNING -> IMPLEMENT
 #   -> CI pass -> IMPL_REVIEW -> (PR approve) -> DONE
 # ---------------------------------------------------------------------------
 
 
-class TestFeatureSWorkflowE2E:
-    """Feature-S ワークフロー: TYPE_DETECTION -> HEARING -> IMPLEMENT -> DONE."""
+class TestSmallFeatureWorkflowE2E:
+    """Small Feature ワークフロー (feature-m): TYPE_DETECTION -> HEARING -> DESIGN -> IMPLEMENT -> DONE."""
 
-    async def test_feature_s_workflow_e2e(
+    async def test_small_feature_workflow_e2e(
         self,
         state_machine: StateMachineManager,
         task_queue: TaskQueue,
@@ -167,26 +167,30 @@ class TestFeatureSWorkflowE2E:
         assert state_machine.get_phase(100) == Phase.TYPE_DETECTION
         await _drain_queue(task_queue)
 
-        # 2. Type detection -> feature-s -> HEARING
-        state_machine.set_issue_type(100, "feature-s")
+        # 2. Type detection -> feature-m -> HEARING
+        state_machine.set_issue_type(100, "feature-m")
         await state_machine.transition(100, Phase.HEARING)
         assert state_machine.get_phase(100) == Phase.HEARING
 
-        # 3. HEARING -> PLAN_BRIEF
-        await state_machine.transition(100, Phase.PLAN_BRIEF)
-        assert state_machine.get_phase(100) == Phase.PLAN_BRIEF
+        # 3. HEARING -> DESIGN
+        await state_machine.transition(100, Phase.DESIGN)
+        assert state_machine.get_phase(100) == Phase.DESIGN
 
-        # 4. PLAN_BRIEF -> PLAN_REVIEW
-        await state_machine.transition(100, Phase.PLAN_REVIEW)
-        assert state_machine.get_phase(100) == Phase.PLAN_REVIEW
+        # 4. DESIGN -> DESIGN_REVIEW
+        await state_machine.transition(100, Phase.DESIGN_REVIEW)
+        assert state_machine.get_phase(100) == Phase.DESIGN_REVIEW
 
-        # 5. PLAN_REACTION_ADDED (thumbsup) -> Feature-S goes to IMPLEMENT
-        await event_router.route(_make_event(EventType.PLAN_REACTION_ADDED, repo_config, issue=issue))
-        assert state_machine.get_phase(100) == Phase.IMPLEMENT
+        # 5. DESIGN_PR_APPROVED -> PLANNING
+        await event_router.route(_make_event(EventType.DESIGN_PR_APPROVED, repo_config, issue=issue))
+        assert state_machine.get_phase(100) == Phase.PLANNING
         tasks = await _drain_queue(task_queue)
-        assert any(t.phase == Phase.IMPLEMENT.value for t in tasks)
+        assert any(t.phase == Phase.PLANNING.value for t in tasks)
 
-        # 6. CI success -> IMPL_REVIEW
+        # 6. PLANNING -> IMPLEMENT
+        await state_machine.transition(100, Phase.IMPLEMENT)
+        assert state_machine.get_phase(100) == Phase.IMPLEMENT
+
+        # 7. CI success -> IMPL_REVIEW
         await event_router.route(
             _make_event(
                 EventType.CI_RESULT,
@@ -197,7 +201,7 @@ class TestFeatureSWorkflowE2E:
         )
         assert state_machine.get_phase(100) == Phase.IMPL_REVIEW
 
-        # 7. IMPL_PR_APPROVED -> DONE
+        # 8. IMPL_PR_APPROVED -> DONE
         await event_router.route(_make_event(EventType.IMPL_PR_APPROVED, repo_config, issue=issue))
         assert state_machine.get_phase(100) == Phase.DONE
 
@@ -205,44 +209,10 @@ class TestFeatureSWorkflowE2E:
         transitions = [e for e in fake_tracker.events if e["event"] == "phase_transition"]
         phases_visited = [e["data"]["to"] for e in transitions]
         assert Phase.HEARING.value in phases_visited
+        assert Phase.DESIGN.value in phases_visited
+        assert Phase.PLANNING.value in phases_visited
         assert Phase.IMPLEMENT.value in phases_visited
         assert Phase.DONE.value in phases_visited
-
-    async def test_feature_s_plan_rejected_and_revised(
-        self,
-        state_machine: StateMachineManager,
-        task_queue: TaskQueue,
-        event_router: EventRouter,
-        repo_config: RepositoryConfig,
-    ) -> None:
-        """Feature-S: plan comment (rejection) -> re-do PLAN_BRIEF."""
-        issue = FakeIssue(number=101, title="Feature small", body="desc")
-        comment = FakeComment(
-            id=10,
-            body="Please reconsider the approach",
-            issue_url=f"https://api.github.com/repos/test/repo/issues/{issue.number}",
-        )
-
-        # Setup to PLAN_REVIEW
-        await event_router.route(_make_event(EventType.NEW_ISSUE, repo_config, issue=issue))
-        state_machine.set_issue_type(101, "feature-s")
-        await state_machine.transition(101, Phase.HEARING)
-        await state_machine.transition(101, Phase.PLAN_BRIEF)
-        await state_machine.transition(101, Phase.PLAN_REVIEW)
-        await _drain_queue(task_queue)
-
-        # PLAN_COMMENT_ADDED -> Feature-S goes back to PLAN_BRIEF
-        await event_router.route(
-            _make_event(
-                EventType.PLAN_COMMENT_ADDED,
-                repo_config,
-                issue=issue,
-                comment=comment,
-            )
-        )
-        assert state_machine.get_phase(101) == Phase.PLAN_BRIEF
-        tasks = await _drain_queue(task_queue)
-        assert any(t.phase == Phase.PLAN_BRIEF.value for t in tasks)
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +376,7 @@ class TestSuspendedAndResume:
 
         # Setup: register and get to HEARING
         await event_router.route(_make_event(EventType.NEW_ISSUE, repo_config, issue=issue))
-        state_machine.set_issue_type(301, "feature-s")
+        state_machine.set_issue_type(301, "feature-m")
         await state_machine.transition(301, Phase.HEARING)
         await _drain_queue(task_queue)
 
@@ -425,7 +395,7 @@ class TestSuspendedAndResume:
         issue = FakeIssue(number=302, title="Resume implement", body="desc")
 
         await event_router.route(_make_event(EventType.NEW_ISSUE, repo_config, issue=issue))
-        state_machine.set_issue_type(302, "feature-s")
+        state_machine.set_issue_type(302, "feature-m")
         await state_machine.transition(302, Phase.HEARING)
         await state_machine.transition(302, Phase.SUSPENDED)
         await _drain_queue(task_queue)
@@ -472,12 +442,13 @@ class TestCIResultHandling:
         # Let's test from IMPLEMENT state
         issue2 = FakeIssue(number=401, title="CI fail test 2", body="desc")
         await event_router.route(_make_event(EventType.NEW_ISSUE, repo_config, issue=issue2))
-        state_machine.set_issue_type(401, "feature-s")
+        state_machine.set_issue_type(401, "feature-m")
         await state_machine.transition(401, Phase.HEARING)
-        await state_machine.transition(401, Phase.PLAN_BRIEF)
-        await state_machine.transition(401, Phase.PLAN_REVIEW)
-        await event_router.route(_make_event(EventType.PLAN_REACTION_ADDED, repo_config, issue=issue2))
+        await state_machine.transition(401, Phase.DESIGN)
+        await state_machine.transition(401, Phase.DESIGN_REVIEW)
+        await event_router.route(_make_event(EventType.DESIGN_PR_APPROVED, repo_config, issue=issue2))
         await _drain_queue(task_queue)
+        await state_machine.transition(401, Phase.IMPLEMENT)
         assert state_machine.get_phase(401) == Phase.IMPLEMENT
 
         # CI failure -> CI_FIX
@@ -504,12 +475,13 @@ class TestCIResultHandling:
         issue = FakeIssue(number=410, title="CI max retries", body="desc")
 
         await event_router.route(_make_event(EventType.NEW_ISSUE, repo_config, issue=issue))
-        state_machine.set_issue_type(410, "feature-s")
+        state_machine.set_issue_type(410, "feature-m")
         await state_machine.transition(410, Phase.HEARING)
-        await state_machine.transition(410, Phase.PLAN_BRIEF)
-        await state_machine.transition(410, Phase.PLAN_REVIEW)
-        await event_router.route(_make_event(EventType.PLAN_REACTION_ADDED, repo_config, issue=issue))
+        await state_machine.transition(410, Phase.DESIGN)
+        await state_machine.transition(410, Phase.DESIGN_REVIEW)
+        await event_router.route(_make_event(EventType.DESIGN_PR_APPROVED, repo_config, issue=issue))
         await _drain_queue(task_queue)
+        await state_machine.transition(410, Phase.IMPLEMENT)
         assert state_machine.get_phase(410) == Phase.IMPLEMENT
 
         # Simulate 3 CI retries already happened
@@ -548,12 +520,13 @@ class TestImplRevise:
 
         # Setup to IMPL_REVIEW
         await event_router.route(_make_event(EventType.NEW_ISSUE, repo_config, issue=issue))
-        state_machine.set_issue_type(500, "feature-s")
+        state_machine.set_issue_type(500, "feature-m")
         await state_machine.transition(500, Phase.HEARING)
-        await state_machine.transition(500, Phase.PLAN_BRIEF)
-        await state_machine.transition(500, Phase.PLAN_REVIEW)
-        await event_router.route(_make_event(EventType.PLAN_REACTION_ADDED, repo_config, issue=issue))
+        await state_machine.transition(500, Phase.DESIGN)
+        await state_machine.transition(500, Phase.DESIGN_REVIEW)
+        await event_router.route(_make_event(EventType.DESIGN_PR_APPROVED, repo_config, issue=issue))
         await _drain_queue(task_queue)
+        await state_machine.transition(500, Phase.IMPLEMENT)
         await state_machine.transition(500, Phase.IMPL_REVIEW)
 
         # IMPL_PR_COMMENTED -> IMPL_REVISE

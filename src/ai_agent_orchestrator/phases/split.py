@@ -58,7 +58,7 @@ class SplitProposalExecutor(PhaseExecutor):
             f"## 指示\n"
             f"1. 機能を論理的に分割可能なサブタスクに分解\n"
             f"2. 各サブタスクの依存関係を明記\n"
-            f"3. 各サブタスクのタイプ (feature-s / feature-m) を判定\n"
+            f"3. 各サブタスクのタイプ (feature-m) を判定\n"
             f"4. 実装順序を決定"
         )
 

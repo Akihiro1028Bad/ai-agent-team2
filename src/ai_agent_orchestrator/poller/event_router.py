@@ -2,7 +2,7 @@
 
 PollEvent を受け取り、StateMachineManager で遷移を実行し、
 TaskQueue にタスクをエンキューする。
-Issue タイプに応じたルーティング (Bug -> ANALYSIS, Feature-S -> PLAN_BRIEF 等) を行う。
+Issue タイプに応じたルーティング (Bug -> ANALYSIS, Feature-M -> DESIGN 等) を行う。
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ class EventRouter:
 
     PollEvent を受け取り、StateMachineManager で遷移を実行し、
     TaskQueue にタスクをエンキューする。
-    Issue タイプに応じたルーティング (Bug -> FIX, Feature-S -> IMPLEMENT 等) を行う。
+    Issue タイプに応じたルーティング (Bug -> FIX, Feature-M -> DESIGN 等) を行う。
     """
 
     def __init__(
@@ -81,8 +81,8 @@ class EventRouter:
             NEW_ISSUE           -> register_issue + TYPE_DETECTION エンキュー
             ISSUE_COMMENT       -> hearing_continue エンキュー (遷移なし)
             HEARING_TIMEOUT     -> SUSPENDED 遷移
-            PLAN_REACTION_ADDED -> タイプ別: Bug->FIX, Feature-S->IMPLEMENT
-            PLAN_COMMENT_ADDED  -> タイプ別: Bug->ANALYSIS, Feature-S->PLAN_BRIEF
+            PLAN_REACTION_ADDED -> Bug->FIX (👍で方針承認)
+            PLAN_COMMENT_ADDED  -> Bug->ANALYSIS (方針指摘で再分析)
             DESIGN_PR_APPROVED  -> PLANNING 遷移 + エンキュー
             DESIGN_PR_COMMENTED -> DESIGN_REVISE 遷移 + エンキュー
             IMPL_PR_APPROVED    -> DONE 遷移 + エンキュー

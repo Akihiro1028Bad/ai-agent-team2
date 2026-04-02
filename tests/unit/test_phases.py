@@ -167,7 +167,7 @@ class TestTypeDetectionExecutor:
         mock_github.add_label.assert_called_once()
         mock_sm.transition.assert_called_with(1, "analysis")
 
-    async def test_detects_feature_s_type(
+    async def test_detects_small_feature_as_feature_m(
         self,
         mock_runner: AsyncMock,
         mock_github: AsyncMock,
@@ -177,10 +177,10 @@ class TestTypeDetectionExecutor:
         mock_context: AsyncMock,
         mock_sm: AsyncMock,
     ) -> None:
-        """Feature-S タイプが正しく判定される。"""
+        """小規模フィーチャーが feature-m として判定される。"""
         mock_runner.run.return_value = AgentResult(
             session_id="s1",
-            output='{"type": "feature-s", "reason": "小規模変更"}',
+            output='{"type": "feature-m", "reason": "小規模変更"}',
             tool_uses=[],
             cost_usd=0.1,
             duration_sec=5.0,
@@ -201,7 +201,7 @@ class TestTypeDetectionExecutor:
         request = _make_request(phase="type-detection")
         await executor.execute(request)
 
-        mock_sm.set_issue_type.assert_called_with(1, "feature-s")
+        mock_sm.set_issue_type.assert_called_with(1, "feature-m")
         mock_sm.transition.assert_called_with(1, "hearing")
 
     async def test_fallback_detection_on_invalid_json(

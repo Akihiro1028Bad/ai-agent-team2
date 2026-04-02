@@ -361,12 +361,11 @@ async def test_interrupt_ignores_unknown_session(runner: ClaudeAgentRunner) -> N
 
 
 def test_phase_config_has_all_phases() -> None:
-    """PHASE_CONFIG に全 12 フェーズが定義されている."""
+    """PHASE_CONFIG に全 11 フェーズが定義されている."""
     expected_phases = {
         "type-detection",
         "hearing",
         "analysis",
-        "plan-brief",
         "design",
         "design-revise",
         "planning",

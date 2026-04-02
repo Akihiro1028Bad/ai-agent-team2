@@ -81,7 +81,6 @@ PHASE_CONFIG: dict[str, PhaseConfig] = {
     "type-detection": PhaseConfig(max_budget_usd=0.3, timeout_sec=120, permission_mode="bypassPermissions"),
     "hearing": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="bypassPermissions"),
     "analysis": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="bypassPermissions"),
-    "plan-brief": PhaseConfig(max_budget_usd=1.0, timeout_sec=300, permission_mode="bypassPermissions"),
     "design": PhaseConfig(max_budget_usd=3.0, timeout_sec=1800, permission_mode="bypassPermissions"),
     "design-revise": PhaseConfig(
         max_budget_usd=2.0,

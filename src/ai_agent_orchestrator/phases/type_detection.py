@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class TypeDetectionExecutor(PhaseExecutor):
     """Issue のタイプを自動判定するフェーズ。
 
-    Issue 内容を AI が分析し、bug / feature-s / feature-m / feature-l の
+    Issue 内容を AI が分析し、bug / feature-m / feature-l の
     いずれかに分類する。判定結果を Issue コメントとラベルで通知し、
     タイプ別の次フェーズへ遷移する。
     """
