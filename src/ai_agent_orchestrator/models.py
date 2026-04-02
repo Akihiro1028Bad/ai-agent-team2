@@ -269,3 +269,95 @@ PHASE_CONFIG: dict[str, PhaseConfig] = {
         resume=True,
     ),
 }
+
+
+# ---------------------------------------------------------------------------
+# 5. メトリクス用 Dataclass 定義
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PhaseErrorStats:
+    """フェーズ別エラー統計."""
+
+    phase: str
+    total_executions: int
+    error_count: int
+    error_rate: float  # 0.0 〜 1.0
+    errors_by_category: dict[str, int]  # ErrorCategory -> count
+
+
+@dataclass(frozen=True)
+class PhaseRetryStats:
+    """フェーズ別リトライ統計."""
+
+    phase: str
+    total_retries: int
+    max_consecutive_retries: int
+    avg_retries_per_execution: float
+
+
+@dataclass(frozen=True)
+class PhaseCostEntry:
+    """フェーズ別コストエントリ."""
+
+    phase: str
+    total_cost_usd: float
+    execution_count: int
+    avg_cost_usd: float
+    max_cost_usd: float
+
+
+@dataclass(frozen=True)
+class CIFailurePattern:
+    """CI失敗パターン."""
+
+    error_message: str
+    occurrence_count: int
+    affected_issues: list[int]
+    first_seen: str  # ISO 8601
+    last_seen: str  # ISO 8601
+
+
+@dataclass(frozen=True)
+class PhaseTransitionLoop:
+    """フェーズ遷移ループ(繰り返し検知)."""
+
+    loop_phases: tuple[str, ...]  # 例: ("ci-fix", "impl-review", "ci-fix")
+    occurrence_count: int
+    affected_issues: list[int]
+
+
+@dataclass(frozen=True)
+class DetectionMetrics:
+    """バグ・改善検知用メトリクス集約結果.
+
+    MetricsCollector が events.jsonl から集約したメトリクスを保持する。
+    各フィールドはイミュータブルで、分析・閾値判定に利用される。
+    """
+
+    # 集計期間
+    collected_at: str  # ISO 8601
+    time_range_start: str  # ISO 8601
+    time_range_end: str  # ISO 8601
+    total_events_processed: int
+
+    # フェーズ別エラー統計
+    error_stats: tuple[PhaseErrorStats, ...]
+
+    # フェーズ別コスト推移
+    cost_by_phase: tuple[PhaseCostEntry, ...]
+
+    # リトライ統計
+    retry_stats: tuple[PhaseRetryStats, ...]
+
+    # CI失敗パターン
+    ci_failure_patterns: tuple[CIFailurePattern, ...]
+
+    # フェーズ遷移ループ検知
+    transition_loops: tuple[PhaseTransitionLoop, ...]
+
+    # サマリ
+    total_cost_usd: float
+    total_errors: int
+    total_issues_analyzed: int
