@@ -294,7 +294,6 @@ def _build_phase_executors(
         HearingExecutor,
         ImplementExecutor,
         ImplReviseExecutor,
-        PlanBriefExecutor,
         PlanningExecutor,
         SplitExecuteExecutor,
         SplitProposalExecutor,
@@ -316,7 +315,6 @@ def _build_phase_executors(
         "analysis": AnalysisExecutor(**common_kwargs),  # type: ignore[arg-type]
         "fix": FixExecutor(**common_kwargs),  # type: ignore[arg-type]
         "hearing": HearingExecutor(**common_kwargs),  # type: ignore[arg-type]
-        "plan_brief": PlanBriefExecutor(**common_kwargs),  # type: ignore[arg-type]
         "design": DesignExecutor(**common_kwargs),  # type: ignore[arg-type]
         "design_revise": DesignReviseExecutor(**common_kwargs),  # type: ignore[arg-type]
         "planning": PlanningExecutor(**common_kwargs),  # type: ignore[arg-type]
@@ -695,7 +693,6 @@ class Orchestrator:
             Phase("type-detection"),
             Phase("hearing"),
             Phase("analysis"),
-            Phase("plan-brief"),
             Phase("design"),
             Phase("design-revise"),
             Phase("planning"),
@@ -835,7 +832,6 @@ class Orchestrator:
                 Phase("type-detection"),
                 Phase("hearing"),
                 Phase("analysis"),
-                Phase("plan-brief"),
                 Phase("design"),
                 Phase("design-revise"),
                 Phase("planning"),

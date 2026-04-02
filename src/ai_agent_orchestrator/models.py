@@ -25,7 +25,6 @@ class IssueType(StrEnum):
     """Issueのタスクタイプ."""
 
     BUG = "bug"
-    FEATURE_S = "feature-s"
     FEATURE_M = "feature-m"
     FEATURE_L = "feature-l"
 
@@ -40,8 +39,7 @@ class Phase(str, Enum):  # noqa: UP042
     ANALYSIS = "analysis"
     FIX = "fix"
 
-    # Feature-S専用
-    PLAN_BRIEF = "plan-brief"
+    # Bug: 方針レビュー
     PLAN_REVIEW = "plan-review"
 
     # Feature-M/L共通
@@ -212,13 +210,11 @@ VALID_TRANSITIONS: dict[Phase, list[Phase]] = {
     # Bug ワークフロー
     Phase.ANALYSIS: [Phase.PLAN_REVIEW, Phase.SUSPENDED],
     Phase.FIX: [Phase.CI_FIX, Phase.IMPL_REVIEW, Phase.SUSPENDED],
-    # Feature-S ワークフロー
-    Phase.PLAN_BRIEF: [Phase.PLAN_REVIEW, Phase.SUSPENDED],
-    Phase.PLAN_REVIEW: [Phase.FIX, Phase.IMPLEMENT, Phase.PLAN_BRIEF, Phase.ANALYSIS],
+    # Bug: 方針レビュー
+    Phase.PLAN_REVIEW: [Phase.FIX, Phase.ANALYSIS],
     # Feature-M ワークフロー
     Phase.HEARING: [
         Phase.DESIGN,
-        Phase.PLAN_BRIEF,
         Phase.SPLIT_PROPOSAL,
         Phase.ANALYSIS,
         Phase.SUSPENDED,
@@ -249,7 +245,6 @@ PHASE_CONFIG: dict[str, PhaseConfig] = {
     "type_detection": PhaseConfig(max_budget_usd=0.3, timeout_sec=120, permission_mode="plan"),
     "hearing": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
     "analysis": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"),
-    "plan_brief": PhaseConfig(max_budget_usd=1.0, timeout_sec=300, permission_mode="plan"),
     "design": PhaseConfig(max_budget_usd=3.0, timeout_sec=1800, permission_mode="plan"),
     "design_revise": PhaseConfig(
         max_budget_usd=2.0,

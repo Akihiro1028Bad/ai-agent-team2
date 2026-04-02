@@ -117,20 +117,6 @@ class TestEventRouterPlanReaction:
         args = mock_sm.transition.call_args[0]
         assert args[1].value == "fix"
 
-    async def test_feature_s_plan_reaction_routes_to_implement(
-        self,
-        router: EventRouter,
-        mock_sm: AsyncMock,
-        mock_tq: AsyncMock,
-    ) -> None:
-        """Feature-S の thumbsup リアクション -> IMPLEMENT へ遷移."""
-        mock_sm.get_issue_type.return_value = "feature-s"
-        event = _make_event(EventType.PLAN_REACTION_ADDED)
-        await router.route(event)
-
-        args = mock_sm.transition.call_args[0]
-        assert args[1].value == "implement"
-
 
 # ---------------------------------------------------------------------------
 # Tests: PLAN_COMMENT_ADDED
@@ -154,21 +140,6 @@ class TestEventRouterPlanComment:
 
         args = mock_sm.transition.call_args[0]
         assert args[1].value == "analysis"
-
-    async def test_feature_s_plan_comment_routes_to_plan_brief(
-        self,
-        router: EventRouter,
-        mock_sm: AsyncMock,
-        mock_tq: AsyncMock,
-    ) -> None:
-        """Feature-S の方針指摘 -> PLAN_BRIEF へ遷移."""
-        mock_sm.get_issue_type.return_value = "feature-s"
-        comment = MagicMock(body="修正してください")
-        event = _make_event(EventType.PLAN_COMMENT_ADDED, comment=comment)
-        await router.route(event)
-
-        args = mock_sm.transition.call_args[0]
-        assert args[1].value == "plan-brief"
 
 
 # ---------------------------------------------------------------------------

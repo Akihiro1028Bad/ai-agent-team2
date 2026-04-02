@@ -32,7 +32,6 @@ _NEXT_ACTION: dict[str, str] = {
     "type-detection": "",
     "hearing": "📝 **次のアクション**: このコメントに**コメントで回答**してください",
     "analysis": _APPROVE_ACTION,
-    "plan-brief": _APPROVE_ACTION,
     "design": "",
     "design-review": "",
     "design-revise": "📋 **次のアクション**: 設計PRで**再レビュー**をお願いします",

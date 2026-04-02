@@ -11,7 +11,6 @@ from ai_agent_orchestrator.phases.fix import FixExecutor
 from ai_agent_orchestrator.phases.hearing import HearingExecutor
 from ai_agent_orchestrator.phases.impl_revise import ImplReviseExecutor
 from ai_agent_orchestrator.phases.implement import ImplementExecutor
-from ai_agent_orchestrator.phases.plan_brief import PlanBriefExecutor
 from ai_agent_orchestrator.phases.planning import PlanningExecutor
 from ai_agent_orchestrator.phases.split import (
     SplitExecuteExecutor,
@@ -31,7 +30,6 @@ __all__ = [
     "ImplementExecutor",
     "PhaseDispatcher",
     "PhaseExecutor",
-    "PlanBriefExecutor",
     "PlanningExecutor",
     "SplitExecuteExecutor",
     "SplitProposalExecutor",

@@ -47,11 +47,10 @@ class TypeDetectionExecutor(PhaseExecutor):
             f"## コンテキスト\n{context}\n\n"
             f"## 判定基準\n"
             f"- bug: エラー・不具合・動かない・壊れた等のキーワード、バグ修正の依頼\n"
-            f"- feature-s: 1-3ファイル変更で済む小規模な機能追加・変更\n"
-            f"- feature-m: 4-10ファイルの変更が必要な中規模の機能追加\n"
+            f"- feature-m: 1-10ファイルの変更が必要な小〜中規模の機能追加\n"
             f"- feature-l: 10ファイル以上の変更が見込まれる大規模な機能追加・刷新\n\n"
             f"## 出力形式 (JSON)\n"
-            f'{{"type": "bug|feature-s|feature-m|feature-l", "reason": "判定理由"}}'
+            f'{{"type": "bug|feature-m|feature-l", "reason": "判定理由"}}'
         )
 
     async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
@@ -88,7 +87,6 @@ class TypeDetectionExecutor(PhaseExecutor):
         # タイプ別次フェーズへ遷移
         next_phase_map: dict[str, str] = {
             "bug": "analysis",
-            "feature-s": "hearing",
             "feature-m": "hearing",
             "feature-l": "hearing",
         }
@@ -113,4 +111,4 @@ class TypeDetectionExecutor(PhaseExecutor):
             return "feature-l"
         if any(kw in output_lower for kw in ["feature-m", "中規模", "設計"]):
             return "feature-m"
-        return "feature-s"
+        return "feature-m"

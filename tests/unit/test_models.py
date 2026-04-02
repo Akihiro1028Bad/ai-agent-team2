@@ -30,7 +30,7 @@ from ai_agent_orchestrator.models import (
 
 
 def test_phase_has_19_values() -> None:
-    assert len(Phase) == 20
+    assert len(Phase) == 19
 
 
 def test_phase_values() -> None:
@@ -39,7 +39,6 @@ def test_phase_values() -> None:
         "hearing",
         "hearing-wait",
         "analysis",
-        "plan-brief",
         "plan-review",
         "design",
         "design-review",
@@ -94,10 +93,9 @@ def test_event_type_values() -> None:
 
 def test_issue_type_values() -> None:
     assert IssueType.BUG == "bug"
-    assert IssueType.FEATURE_S == "feature-s"
     assert IssueType.FEATURE_M == "feature-m"
     assert IssueType.FEATURE_L == "feature-l"
-    assert len(IssueType) == 4
+    assert len(IssueType) == 3
 
 
 def test_error_category_values() -> None:
@@ -289,7 +287,6 @@ def test_phase_config_dict_has_all_phases() -> None:
         "type_detection",
         "hearing",
         "analysis",
-        "plan_brief",
         "design",
         "design_revise",
         "planning",

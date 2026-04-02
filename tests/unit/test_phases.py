@@ -400,50 +400,6 @@ class TestAnalysisExecutor:
 
 
 # ---------------------------------------------------------------------------
-# PlanBriefExecutor
-# ---------------------------------------------------------------------------
-
-
-class TestPlanBriefExecutor:
-    """PlanBriefExecutor tests."""
-
-    async def test_posts_plan_and_transitions_to_plan_review(
-        self,
-        mock_runner: AsyncMock,
-        mock_github: AsyncMock,
-        mock_notifier: AsyncMock,
-        mock_tracker: AsyncMock,
-        mock_workspace: AsyncMock,
-        mock_context: AsyncMock,
-        mock_sm: AsyncMock,
-    ) -> None:
-        """方針がコメント投稿され PLAN_REVIEW に遷移する。"""
-        mock_runner.run.return_value = AgentResult(
-            session_id="s1",
-            output="実装方針: ファイル修正",
-            tool_uses=[],
-            cost_usd=0.3,
-            duration_sec=15.0,
-        )
-        from ai_agent_orchestrator.phases.plan_brief import PlanBriefExecutor
-
-        executor = PlanBriefExecutor(
-            mock_runner,
-            mock_github,
-            mock_notifier,
-            mock_tracker,
-            mock_workspace,
-            mock_context,
-            mock_sm,
-        )
-        request = _make_request(phase="plan-brief")
-        await executor.execute(request)
-
-        mock_github.create_comment.assert_called_once()
-        mock_sm.transition.assert_called_with(1, "plan-review")
-
-
-# ---------------------------------------------------------------------------
 # DesignExecutor
 # ---------------------------------------------------------------------------
 

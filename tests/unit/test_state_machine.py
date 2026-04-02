@@ -61,12 +61,6 @@ class TestIssueWorkflow:
         wf.send("detect_bug")
         assert wf.current_state_value == "analysis"
 
-    def test_feature_s_detection(self) -> None:
-        """Feature-S タイプで detect_feature_s 遷移ができること."""
-        wf = IssueWorkflow(issue_type="feature-s")
-        wf.send("detect_feature_s")
-        assert wf.current_state_value == "hearing"
-
     def test_feature_m_detection(self) -> None:
         """Feature-M タイプで detect_feature_m 遷移ができること."""
         wf = IssueWorkflow(issue_type="feature-m")
@@ -88,7 +82,7 @@ class TestIssueWorkflow:
         """ガードが不一致のタイプを拒否すること."""
         from statemachine.exceptions import TransitionNotAllowed
 
-        wf = IssueWorkflow(issue_type="feature-s")
+        wf = IssueWorkflow(issue_type="feature-m")
         with pytest.raises(TransitionNotAllowed):
             wf.send("detect_bug")  # is_bug() returns False
 
@@ -170,56 +164,6 @@ class TestBugWorkflow:
         await sm.transition(4, Phase.IMPL_REVIEW)
         await sm.transition(4, Phase.DONE)
         assert sm.get_phase(4) == Phase.DONE
-
-
-# ---------------------------------------------------------------------------
-# Feature-S workflow
-# ---------------------------------------------------------------------------
-
-
-class TestFeatureSWorkflow:
-    """Feature-S タイプの全遷移パスをテスト."""
-
-    @pytest.mark.asyncio
-    async def test_feature_s_happy_path(self, sm: StateMachineManager) -> None:
-        """Feature-S: TYPE_DETECTION -> HEARING -> PLAN_BRIEF -> PLAN_REVIEW -> IMPLEMENT -> IMPL_REVIEW -> DONE."""
-        sm.register_issue(10, "owner/repo")
-        sm.set_issue_type(10, "feature-s")
-
-        await sm.transition(10, Phase.HEARING)
-        await sm.transition(10, Phase.PLAN_BRIEF)
-        await sm.transition(10, Phase.PLAN_REVIEW)
-        await sm.transition(10, Phase.IMPLEMENT)
-        await sm.transition(10, Phase.IMPL_REVIEW)
-        await sm.transition(10, Phase.DONE)
-        assert sm.get_phase(10) == Phase.DONE
-
-    @pytest.mark.asyncio
-    async def test_feature_s_plan_rejected(self, sm: StateMachineManager) -> None:
-        """Feature-S: PLAN_REVIEW -> PLAN_BRIEF (方針指摘 -> 再作成)."""
-        sm.register_issue(11, "owner/repo")
-        sm.set_issue_type(11, "feature-s")
-
-        await sm.transition(11, Phase.HEARING)
-        await sm.transition(11, Phase.PLAN_BRIEF)
-        await sm.transition(11, Phase.PLAN_REVIEW)
-        await sm.transition(11, Phase.PLAN_BRIEF)  # rejected
-        assert sm.get_phase(11) == Phase.PLAN_BRIEF
-
-    @pytest.mark.asyncio
-    async def test_feature_s_impl_revise(self, sm: StateMachineManager) -> None:
-        """Feature-S: IMPL_REVIEW -> IMPL_REVISE -> IMPL_REVIEW -> DONE."""
-        sm.register_issue(12, "owner/repo")
-        sm.set_issue_type(12, "feature-s")
-
-        await sm.transition(12, Phase.HEARING)
-        await sm.transition(12, Phase.PLAN_BRIEF)
-        await sm.transition(12, Phase.PLAN_REVIEW)
-        await sm.transition(12, Phase.IMPLEMENT)
-        await sm.transition(12, Phase.IMPL_REVIEW)
-        await sm.transition(12, Phase.IMPL_REVISE)
-        await sm.transition(12, Phase.IMPL_REVIEW)
-        await sm.transition(12, Phase.DONE)
 
 
 # ---------------------------------------------------------------------------

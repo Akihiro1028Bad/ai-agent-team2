@@ -74,18 +74,12 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
     (Phase.ANALYSIS, Phase.PLAN_REVIEW): "analysis_to_plan_review",
     (Phase.ANALYSIS, Phase.SUSPENDED): "analysis_to_suspended",
     (Phase.PLAN_REVIEW, Phase.FIX): "plan_review_to_fix",
-    (Phase.PLAN_REVIEW, Phase.IMPLEMENT): "plan_review_to_implement",
     (Phase.PLAN_REVIEW, Phase.ANALYSIS): "plan_review_to_analysis",
-    (Phase.PLAN_REVIEW, Phase.PLAN_BRIEF): "plan_review_to_plan_brief",
     (Phase.FIX, Phase.CI_FIX): "fix_to_ci_fix",
     (Phase.FIX, Phase.IMPL_REVIEW): "fix_to_impl_review",
     (Phase.FIX, Phase.SUSPENDED): "fix_to_suspended",
-    # Feature-S workflow
-    (Phase.PLAN_BRIEF, Phase.PLAN_REVIEW): "plan_brief_to_plan_review",
-    (Phase.PLAN_BRIEF, Phase.SUSPENDED): "plan_brief_to_suspended",
     # HEARING branches
     (Phase.HEARING, Phase.DESIGN): "hearing_to_design",
-    (Phase.HEARING, Phase.PLAN_BRIEF): "hearing_to_plan_brief",
     (Phase.HEARING, Phase.SPLIT_PROPOSAL): "hearing_to_split_proposal",
     (Phase.HEARING, Phase.ANALYSIS): "hearing_to_analysis",
     (Phase.HEARING, Phase.SUSPENDED): "hearing_to_suspended",
@@ -130,7 +124,6 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
     (Phase.SUSPENDED, Phase.TYPE_DETECTION): "resume_to_type_detection",
     (Phase.SUSPENDED, Phase.HEARING): "resume_to_hearing",
     (Phase.SUSPENDED, Phase.ANALYSIS): "resume_to_analysis",
-    (Phase.SUSPENDED, Phase.PLAN_BRIEF): "resume_to_plan_brief",
     (Phase.SUSPENDED, Phase.DESIGN): "resume_to_design",
     (Phase.SUSPENDED, Phase.IMPLEMENT): "resume_to_implement",
     (Phase.SUSPENDED, Phase.FIX): "resume_to_fix",
@@ -149,14 +142,13 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
 class IssueWorkflow(StateMachine):
     """python-statemachine ベースの Issue ワークフロー.
 
-    19 の State を定義し、タイプ別のガード関数で遷移を制御する。
+    18 の State を定義し、タイプ別のガード関数で遷移を制御する。
     """
 
-    # --- States (19) ---
+    # --- States (18) ---
     type_detection = State("Type detection", initial=True)
     analysis = State("Analysis")
     fix = State("Fix")
-    plan_brief = State("Plan brief")
     plan_review = State("Plan review")
     hearing = State("Hearing")
     design = State("Design")
@@ -175,7 +167,6 @@ class IssueWorkflow(StateMachine):
 
     # --- TYPE_DETECTION branches ---
     detect_bug = type_detection.to(analysis, cond="is_bug")
-    detect_feature_s = type_detection.to(hearing, cond="is_feature_s")
     detect_feature_m = type_detection.to(hearing, cond="is_feature_m")
     detect_feature_l = type_detection.to(hearing, cond="is_feature_l")
     type_detection_to_suspended = type_detection.to(suspended)
@@ -185,21 +176,14 @@ class IssueWorkflow(StateMachine):
     analysis_to_suspended = analysis.to(suspended)
 
     plan_review_to_fix = plan_review.to(fix, cond="is_bug")
-    plan_review_to_implement = plan_review.to(implement, cond="is_feature_s")
     plan_review_to_analysis = plan_review.to(analysis, cond="is_bug")
-    plan_review_to_plan_brief = plan_review.to(plan_brief, cond="is_feature_s")
 
     fix_to_ci_fix = fix.to(ci_fix)
     fix_to_impl_review = fix.to(impl_review)
     fix_to_suspended = fix.to(suspended)
 
-    # --- Feature-S workflow ---
-    plan_brief_to_plan_review = plan_brief.to(plan_review)
-    plan_brief_to_suspended = plan_brief.to(suspended)
-
-    # --- HEARING (Feature-S/M/L common entry) ---
+    # --- HEARING (Feature-M/L common entry) ---
     hearing_to_design = hearing.to(design, cond="is_feature_m")
-    hearing_to_plan_brief = hearing.to(plan_brief, cond="is_feature_s")
     hearing_to_split_proposal = hearing.to(split_proposal, cond="is_feature_l")
     hearing_to_analysis = hearing.to(analysis, cond="is_bug")
     hearing_to_suspended = hearing.to(suspended)
@@ -259,7 +243,6 @@ class IssueWorkflow(StateMachine):
     resume_to_type_detection = suspended.to(type_detection)
     resume_to_hearing = suspended.to(hearing)
     resume_to_analysis = suspended.to(analysis)
-    resume_to_plan_brief = suspended.to(plan_brief)
     resume_to_design = suspended.to(design)
     resume_to_implement = suspended.to(implement)
     resume_to_fix = suspended.to(fix)
@@ -276,7 +259,7 @@ class IssueWorkflow(StateMachine):
         """初期化.
 
         Args:
-            issue_type: Issue タイプ ("bug", "feature-s", "feature-m", "feature-l")
+            issue_type: Issue タイプ ("bug", "feature-m", "feature-l")
             start_value: 復元時の初期ステート値 (State の value = attribute name)
         """
         self._issue_type = issue_type
@@ -295,10 +278,6 @@ class IssueWorkflow(StateMachine):
     def is_bug(self) -> bool:
         """Bug タイプの場合に True を返すガード."""
         return self._issue_type == "bug"
-
-    def is_feature_s(self) -> bool:
-        """Feature-S タイプの場合に True を返すガード."""
-        return self._issue_type == "feature-s"
 
     def is_feature_m(self) -> bool:
         """Feature-M タイプの場合に True を返すガード."""
@@ -460,7 +439,6 @@ class StateMachineManager:
         if current == Phase.TYPE_DETECTION and target == Phase.HEARING:
             issue_type = wf.issue_type
             type_map: dict[str, str] = {
-                "feature-s": "detect_feature_s",
                 "feature-m": "detect_feature_m",
                 "feature-l": "detect_feature_l",
             }
@@ -497,7 +475,7 @@ class StateMachineManager:
             issue_number: Issue 番号。
 
         Returns:
-            Issue タイプ文字列 ("bug" | "feature-s" | "feature-m" | "feature-l" | "")。
+            Issue タイプ文字列 ("bug" | "feature-m" | "feature-l" | "")。
         """
         state = self._states.get(issue_number)
         return state.issue_type if state else ""
@@ -509,13 +487,13 @@ class StateMachineManager:
 
         Args:
             issue_number: Issue 番号。
-            issue_type: "bug" | "feature-s" | "feature-m" | "feature-l"。
+            issue_type: "bug" | "feature-m" | "feature-l"。
 
         Raises:
             KeyError: 未登録の Issue 番号。
             ValueError: 不正なタイプ文字列。
         """
-        valid_types = {"bug", "feature-s", "feature-m", "feature-l"}
+        valid_types = {"bug", "feature-m", "feature-l"}
         if issue_type not in valid_types:
             msg = f"Invalid issue type: {issue_type}. Must be one of {valid_types}"
             raise ValueError(msg)
@@ -545,6 +523,17 @@ class StateMachineManager:
         初期状態を指定する。
         """
         self._states = self._persistence.load()
+        # マイグレーション: feature-s → feature-m
+        for state in self._states.values():
+            if state.issue_type == "feature-s":
+                state.issue_type = "feature-m"
+                if state.phase.value == "plan-brief" or state.phase.value == "plan-review":
+                    state.phase = Phase("hearing")
+                logger.info(
+                    "Migrated issue #%d from feature-s to feature-m (phase=%s)",
+                    state.issue_number,
+                    state.phase.value,
+                )
         for issue_number, state in self._states.items():
             wf = IssueWorkflow(
                 issue_type=state.issue_type,

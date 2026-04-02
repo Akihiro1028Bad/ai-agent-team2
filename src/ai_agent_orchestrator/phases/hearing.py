@@ -90,7 +90,6 @@ class HearingExecutor(PhaseExecutor):
             # タイプ別の次フェーズへ遷移
             next_phase_map: dict[str, str] = {
                 "bug": "analysis",
-                "feature-s": "plan-brief",
                 "feature-m": "design",
                 "feature-l": "split-proposal",
             }

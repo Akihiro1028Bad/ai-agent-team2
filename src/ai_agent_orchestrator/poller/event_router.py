@@ -293,16 +293,18 @@ class EventRouter:
             logger.warning("Failed to update phase label to suspended for issue #%d", event.issue.number)
 
     async def _handle_plan_reaction(self, event: PollEvent) -> None:
-        """方針承認 (thumbsup リアクション): タイプ別に次フェーズへ遷移.
+        """方針承認 (thumbsup リアクション): Bug のみ FIX へ遷移.
 
-        Bug       -> FIX へ遷移
-        Feature-S -> IMPLEMENT へ遷移
+        Bug 以外のタイプは警告ログを出力して早期リターンする。
         """
         assert event.issue is not None
         # 未登録の場合は自動登録(再起動後のリカバリ)
         await self._ensure_registered(event)
         issue_type = self._sm.get_issue_type(event.issue.number)
-        next_phase = Phase.FIX if issue_type == "bug" else Phase.IMPLEMENT
+        if issue_type != "bug":
+            logger.warning("Issue #%d is type %s, plan reaction only applies to bugs", event.issue.number, issue_type)
+            return
+        next_phase = Phase.FIX
 
         # 既に遷移先フェーズにいる場合はスキップ (再起動後の重複検出対策)
         current_phase = self._sm.get_phase(event.issue.number)
@@ -342,7 +344,7 @@ class EventRouter:
             if client is None:
                 return
             await client.add_issue_reaction(event.repo, event.issue.number, "rocket")
-            phase_label = "修正" if next_phase == Phase.FIX else "実装"
+            phase_label = "修正"
             await client.create_comment(
                 event.repo,
                 event.issue.number,
@@ -381,12 +383,10 @@ class EventRouter:
             )
 
     async def _handle_plan_comment(self, event: PollEvent) -> None:
-        """方針指摘コメント: タイプ別に修正フェーズへ遷移.
+        """方針指摘コメント: Bug のみ ANALYSIS (再分析) へ遷移.
 
-        Bug       -> ANALYSIS (再分析)
-        Feature-S -> PLAN_BRIEF (方針再作成)
-
-        既に ANALYSIS / PLAN_BRIEF にいる場合は遷移をスキップする (重複防止)。
+        Bug 以外のタイプは警告ログを出力して早期リターンする。
+        既に ANALYSIS にいる場合は遷移をスキップする (重複防止)。
         """
         assert event.issue is not None
         # 現在のフェーズを確認し、既に修正フェーズにいる場合はスキップ
@@ -397,7 +397,10 @@ class EventRouter:
             return
 
         issue_type = self._sm.get_issue_type(event.issue.number)
-        next_phase = Phase.ANALYSIS if issue_type == "bug" else Phase.PLAN_BRIEF
+        if issue_type != "bug":
+            logger.warning("Issue #%d is type %s, plan comment only applies to bugs", event.issue.number, issue_type)
+            return
+        next_phase = Phase.ANALYSIS
 
         if current_phase == next_phase:
             logger.info(
