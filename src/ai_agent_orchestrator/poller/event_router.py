@@ -16,7 +16,7 @@ from ai_agent_orchestrator.orchestrator.task_queue import Priority, TaskRequest
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.github.client import GitHubClient
-    from ai_agent_orchestrator.notifications.slack import SlackNotifier
+    from ai_agent_orchestrator.orchestrator.orchestrator import Notifier
     from ai_agent_orchestrator.orchestrator.state_machine import StateMachineManager
     from ai_agent_orchestrator.orchestrator.task_queue import TaskQueue
 
@@ -36,7 +36,7 @@ class EventRouter:
         state_machine: StateMachineManager,
         task_queue: TaskQueue,
         account_manager: object | None = None,
-        notifier: SlackNotifier | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         """EventRouter を初期化する.
 
