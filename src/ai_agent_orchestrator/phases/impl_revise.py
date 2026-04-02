@@ -101,13 +101,7 @@ class ImplReviseExecutor(PhaseExecutor):
         repo_full_name = self._get_repo_full_name(request)
         state_data = self._sm.get_state(request.issue_number)
         impl_pr = state_data.pr_number if state_data else None
-        pr_url_val = None
-        if impl_pr:
-            owner = getattr(request.repo, "owner", "")
-            repo_name = getattr(request.repo, "repo", "")
-            if owner and repo_name:
-                pr_url_val = f"https://github.com/{owner}/{repo_name}/pull/{impl_pr}"
-        client = await self._get_client(request.repo)
+        pr_url_val = self._build_pr_url(request, impl_pr) if impl_pr else None
         issue = await client.get_issue(request.repo, request.issue_number)
         await self._notifier.notify(
             f"Issue #{request.issue_number} の実装を修正しました",

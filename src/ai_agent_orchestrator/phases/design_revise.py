@@ -89,12 +89,7 @@ class DesignReviseExecutor(PhaseExecutor):
         repo_full_name = self._get_repo_full_name(request)
         state_data = self._sm.get_state(request.issue_number)
         design_pr = state_data.design_pr_number if state_data else None
-        pr_url_val = None
-        if design_pr:
-            owner = getattr(request.repo, "owner", "")
-            repo_name = getattr(request.repo, "repo", "")
-            if owner and repo_name:
-                pr_url_val = f"https://github.com/{owner}/{repo_name}/pull/{design_pr}"
+        pr_url_val = self._build_pr_url(request, design_pr) if design_pr else None
         issue = await client.get_issue(request.repo, request.issue_number)
         await self._notifier.notify(
             f"Issue #{request.issue_number} の設計書を修正しました",

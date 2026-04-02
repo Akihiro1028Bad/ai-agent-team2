@@ -297,10 +297,20 @@ class PhaseExecutor(ABC):
             return f"{owner}/{repo_name}"
         return ""
 
-    @property
-    def _phase_display_name(self) -> str:
-        """フェーズの表示名。サブクラスでオーバーライド可能."""
-        return "処理"
+    def _build_pr_url(self, request: TaskRequest, pr_number: int) -> str | None:
+        """GitHub PR URL を構築する.
+
+        Args:
+            request: タスクリクエスト。
+            pr_number: PR番号。
+
+        Returns:
+            GitHub PR URL。owner または repo_name が取得できない場合は None。
+        """
+        repo_full = self._get_repo_full_name(request)
+        if not repo_full:
+            return None
+        return f"https://github.com/{repo_full}/pull/{pr_number}"
 
     async def execute(self, request: TaskRequest) -> None:
         """フェーズを実行する (テンプレートメソッド)。

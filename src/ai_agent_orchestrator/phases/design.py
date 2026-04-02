@@ -95,9 +95,7 @@ class DesignExecutor(PhaseExecutor):
         await client.replace_phase_label(request.repo, request.issue_number, "phase:design-review")
         await self._sm.transition(request.issue_number, "design-review")
         repo_full_name = self._get_repo_full_name(request)
-        owner = getattr(request.repo, "owner", "")
-        repo_name = getattr(request.repo, "repo", "")
-        pr_url = f"https://github.com/{owner}/{repo_name}/pull/{pr_number}" if owner and repo_name else None
+        pr_url = self._build_pr_url(request, pr_number)
         issue = await client.get_issue(request.repo, request.issue_number)
         await self._notifier.notify(
             f"Issue #{request.issue_number} の設計PR #{pr_number} を作成しました",

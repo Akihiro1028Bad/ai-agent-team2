@@ -16,8 +16,6 @@ _LEVEL_EMOJI: dict[str, str] = {
 }
 
 _NOTIFICATION_TYPE_EMOJI: dict[str, str] = {
-    "receipt": ":inbox_tray:",
-    "phase_start": ":arrow_forward:",
     "approval_accepted": ":thumbsup:",
     "hearing_question": ":speech_balloon:",
     "design_pr_created": ":pencil:",
@@ -40,8 +38,6 @@ _NOTIFICATION_TYPE_EMOJI: dict[str, str] = {
 }
 
 _HEADER_TEXT: dict[str, str] = {
-    "receipt": "\U0001f4e5 Issue受付",
-    "phase_start": "\u25b6\ufe0f フェーズ開始",
     "approval_accepted": "\U0001f44d 承認確認",
     "hearing_question": "\U0001f4ac ヒアリング質問",
     "design_pr_created": "\U0001f4dd 設計PR作成",
@@ -63,39 +59,6 @@ _HEADER_TEXT: dict[str, str] = {
     "suspended": "\u23f8\ufe0f 一時停止",
 }
 
-_PHASE_SEQUENCES: dict[str, list[str]] = {
-    "bug": ["type-detection", "analysis", "plan-review", "fix", "impl-review", "done"],
-    "feature-s": [
-        "type-detection",
-        "plan-brief",
-        "plan-review",
-        "implement",
-        "impl-review",
-        "done",
-    ],
-    "feature-m": [
-        "type-detection",
-        "hearing",
-        "design",
-        "design-review",
-        "planning",
-        "implement",
-        "impl-review",
-        "done",
-    ],
-    "feature-l": [
-        "type-detection",
-        "hearing",
-        "design",
-        "design-review",
-        "planning",
-        "split-proposal",
-        "split-execute",
-        "done",
-    ],
-}
-
-
 def _format_duration(seconds: float) -> str:
     """秒数を人間可読な形式にフォーマットする.
 
@@ -115,25 +78,6 @@ def _format_duration(seconds: float) -> str:
     mins = minutes % 60
     return f"{hours}時間{mins:02d}分"
 
-
-def _compute_progress(issue_type: str, current_phase: str) -> str | None:
-    """進捗サマリを計算する。タイプ未確定の場合は None.
-
-    Args:
-        issue_type: Issueタイプ (bug, feature-s, feature-m, feature-l)。
-        current_phase: 現在のフェーズ名。
-
-    Returns:
-        進捗サマリ文字列。タイプ未確定の場合は None。
-    """
-    seq = _PHASE_SEQUENCES.get(issue_type)
-    if not seq:
-        return None
-    try:
-        idx = seq.index(current_phase)
-    except ValueError:
-        return None
-    return f"[{idx}/{len(seq)}フェーズ完了]"
 
 
 class SlackNotifier:
@@ -233,7 +177,6 @@ class SlackNotifier:
 
         blocks: list[dict[str, Any]] = []
 
-        # 1. ヘッダーブロック (notification_type がある場合のみ)
         header_text = self._get_header_text(notification_type)
         if header_text:
             blocks.append(
@@ -243,7 +186,6 @@ class SlackNotifier:
                 }
             )
 
-        # 2. セクションブロック (メイン本文)
         emoji = self._resolve_emoji(notification_type, level)
         section_text = self._build_section_text(emoji, message, meta)
         blocks.append(
@@ -253,17 +195,12 @@ class SlackNotifier:
             }
         )
 
-        # 3. Divider (notification_type がある場合のみ)
-        if header_text:
-            blocks.append({"type": "divider"})
-
-        # 4. アクションボタン (notification_type がある場合のみ)
         if notification_type:
+            blocks.append({"type": "divider"})
             action_elements = self._build_action_buttons(meta)
             if action_elements:
                 blocks.append({"type": "actions", "elements": action_elements})
 
-        # 5. コンテキストブロック (既存ロジック維持)
         context_text = self._build_context_text(meta)
         if context_text:
             blocks.append(
