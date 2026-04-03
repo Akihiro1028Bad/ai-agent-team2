@@ -628,9 +628,9 @@ class EventRouter:
 
         if ci_status == "failure":
             current_phase = self._sm.get_phase(event.issue.number)
-            if current_phase not in (Phase.IMPL_REVIEW, Phase.CI_FIX):
+            if current_phase not in (Phase.IMPLEMENT, Phase.IMPL_REVIEW, Phase.CI_FIX):
                 logger.info(
-                    "Issue #%d is in %s, not IMPL_REVIEW/CI_FIX, skipping ci_result failure",
+                    "Issue #%d is in %s, not IMPLEMENT/IMPL_REVIEW/CI_FIX, skipping ci_result failure",
                     event.issue.number,
                     current_phase,
                 )
