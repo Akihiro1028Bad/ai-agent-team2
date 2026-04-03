@@ -35,7 +35,7 @@ Claude Code の `/review` コマンドを PR レビューに活用できるよ�
    レビュー結果を PR コメントに投稿
 
 
-【実装PRの場合 (Bug / Feature-S / Feature-M 全て)】
+【実装PRの場合 (Bug / Feature-M 全て)】
 
  implement.py::_finalize()
    → PR 作成
@@ -57,7 +57,7 @@ Claude Code の `/review` コマンドを PR レビューに活用できるよ�
 | フェーズ | 投稿タイミング | 投稿場所 | 対象ワークフロー |
 |---------|--------------|---------|----------------|
 | DESIGN_REVIEW | `design.py::process_result()` 内、DESIGN_REVIEW 遷移直後 | 設計 PR | Feature-M のみ |
-| IMPL_REVIEW | `event_router.py::_handle_ci_result()` 内、CI success 検知時 | 実装 PR | Bug / Feature-S / Feature-M |
+| IMPL_REVIEW | `event_router.py::_handle_ci_result()` 内、CI success 検知時 | 実装 PR | Bug / Feature-M |
 
 ---
 
@@ -84,29 +84,38 @@ on:
   issue_comment:
     types: [created]
 
+concurrency:
+  group: claude-review-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 jobs:
   claude-review:
     # PRコメントかつ @claude /review を含む場合のみ実行
+    # ボットコメントは除外し、無限ループを防ぐ
     if: |
       github.event.issue.pull_request != null &&
-      contains(github.event.comment.body, '@claude /review')
+      contains(github.event.comment.body, '@claude /review') &&
+      github.event.comment.user.type != 'Bot'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
-      issues: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: anthropics/claude-code-action@beta
+      - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
 **ポイント**:
 - `github.event.issue.pull_request != null` で PR コメントのみに限定し、Issue コメントでの誤発火を防ぐ
+- `github.event.comment.user.type != 'Bot'` でボットのコメントを除外し、Claude Code が投稿したレビュー結果に `/review` の文言が含まれていても再起動しないようにする
+- `concurrency` グループを PR 番号で設定し、同一 PR での並列レビュー実行を防ぐ。`cancel-in-progress: false` としてレビュー完了を保証する
+- `issues: write` 権限は PR コメント投稿には不要なため削除し、最小権限の原則に従う
+- `anthropics/claude-code-action@v1` とバージョンを固定し、`@beta` タグの変更による予期せぬ挙動変化・サプライチェーンリスクを回避する
 - `fetch-depth: 0` で PR の全差分を取得可能にする
 - `CLAUDE_CODE_OAUTH_TOKEN` はリポジトリシークレットとして設定が必要 (セクション 6 参照)
 
@@ -183,9 +192,10 @@ elif ci_status == "success":
     current = self._sm.get_phase(event.issue.number)
     if current != Phase.IMPL_REVIEW:
         await self._sm.transition(event.issue.number, Phase.IMPL_REVIEW)
-
-    # CI パス後に @claude /review を自動投稿
-    await self._post_impl_review_comment(event)
+        # フェーズ遷移が実際に発生した場合のみ @claude /review を投稿（冪等性保証）
+        await self._post_impl_review_comment(event)
+    # current == Phase.IMPL_REVIEW の場合（CI が再度 success を発火した等）は
+    # 既にレビュー済みのため投稿をスキップする
 
 
 async def _post_impl_review_comment(self, event: PollEvent) -> None:
@@ -327,6 +337,13 @@ permissions:
 - これにより、コメント投稿が失敗しても既存のフェーズ遷移フローに影響しない
 - GitHub Actions ワークフロー側の失敗は GitHub Actions の UI で確認可能
 
+### 冪等性保証
+
+`@claude /review` コメントの重複投稿を防ぐため、以下の方針を採用する。
+
+- **`event_router.py`**: `IMPL_REVIEW` へのフェーズ遷移が実際に発生した場合（`current != Phase.IMPL_REVIEW`）のみ `_post_impl_review_comment` を呼び出す。CI success イベントが複数回発火しても、フェーズが既に `IMPL_REVIEW` であればスキップする。
+- **`claude-review.yml`**: `github.event.comment.user.type != 'Bot'` 条件でボットコメントを除外し、Claude Code のレビュー結果コメントが `/review` 文言を含んでいても再起動しないようにする。また `concurrency` グループで同一 PR での並列レビュー実行を防ぐ。
+
 ---
 
 ## 8. テスト計画
@@ -341,8 +358,11 @@ permissions:
 #### `tests/unit/test_event_router.py` への追加
 
 - `_handle_ci_result()` の `ci_status == "success"` 時に `@claude /review` コメントを投稿することを確認
+- CI success イベントが2回来た場合に `create_comment` が1回のみ呼ばれることを確認（冪等性テスト）
+- 既に `IMPL_REVIEW` 状態で CI success が来た場合、コメント投稿がスキップされることを確認
 - `state.pr_number` が None の場合はスキップされることを確認
 - コメント投稿失敗時も IMPL_REVIEW 遷移が完了することを確認
+- 既存の `test_ci_success_routes_to_impl_review` テストを `create_comment` モックを追加して更新する
 
 ### 8.2 GitHub Actions ワークフローの確認
 
