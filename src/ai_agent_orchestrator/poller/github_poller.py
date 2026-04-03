@@ -25,6 +25,51 @@ logger = logging.getLogger(__name__)
 
 _BOT_MARKER = "<!-- ai-agent-bot -->"
 
+_CI_LOG_MAX_CHARS = 30_000
+_CI_LOG_CONTEXT_LINES = 5
+_CI_LOG_ERROR_KEYWORDS = frozenset(
+    ["error", "Error", "ERROR", "FAILED", "failed", "AssertionError", "Traceback", "FAIL", "exception"]
+)
+
+
+def _trim_ci_logs(logs: str, max_chars: int = _CI_LOG_MAX_CHARS) -> str:
+    """CI ログをトークン制限に収まるようにトリミングする.
+
+    ログ全体が max_chars 以内ならそのまま返す。
+    超過する場合はエラー行とその前後 _CI_LOG_CONTEXT_LINES 行を優先的に抽出する。
+
+    Args:
+        logs: 元の CI ログ文字列.
+        max_chars: 最大文字数 (デフォルト 30,000).
+
+    Returns:
+        トリミングされたログ文字列.
+    """
+    if len(logs) <= max_chars:
+        return logs
+
+    lines = logs.splitlines()
+    total_lines = len(lines)
+    # エラー行のインデックスを収集
+    error_indices: set[int] = set()
+    for i, line in enumerate(lines):
+        if any(kw in line for kw in _CI_LOG_ERROR_KEYWORDS):
+            for j in range(
+                max(0, i - _CI_LOG_CONTEXT_LINES),
+                min(total_lines, i + _CI_LOG_CONTEXT_LINES + 1),
+            ):
+                error_indices.add(j)
+
+    kept_lines: list[str] = [lines[i] for i in sorted(error_indices)]
+    extracted = "\n".join(kept_lines)
+
+    header = f"[CI ログ: 全 {total_lines} 行中 {len(kept_lines)} 行を抽出]\n"
+    result = header + extracted
+    # それでも超える場合は末尾を切り詰める
+    if len(result) > max_chars:
+        result = result[:max_chars] + "\n...(truncated)"
+    return result
+
 
 def _is_bot_comment(body: str) -> bool:
     """AI agent が投稿したコメントかどうかを判定する."""
@@ -441,8 +486,9 @@ class GitHubPoller:
                 if ci_status is None:
                     continue
                 # BUG #4: Deduplicate CI result events
+                # ci-fix フェーズはリトライのため同じ CI failure を複数回検知する必要がある
                 event_key = f"ci_result:{issue.number}:{ci_status}"
-                if event_key in self._seen_events:
+                if label_suffix != "ci-fix" and event_key in self._seen_events:
                     continue
                 self._seen_events.add(event_key)
                 if ci_status == "failure":
@@ -683,6 +729,66 @@ class GitHubPoller:
         repo: RepositoryConfig,
         issue: Issue,
     ) -> str:
-        """CI 失敗ログを取得する."""
-        # 簡易実装: ログの詳細は GitHub Actions API 経由で取得予定
-        return "CI failure detected. Check GitHub Actions for details."
+        """CI 失敗ログを GitHub Actions API から取得する.
+
+        Issue に紐づく PR のブランチを特定し、最新の失敗 workflow run から
+        失敗ジョブのログを取得して返す。取得失敗時は簡易サマリにフォールバック。
+
+        Returns:
+            CI 失敗ログ文字列 (最大 30,000 文字にトリミング済み).
+        """
+        try:
+            # Issue に紐づく PR のブランチ名を取得
+            branch: str | None = None
+            prs = await client.list_pull_requests(repo)
+            for pr in prs:
+                if self._pr_references_issue(pr, issue.number):
+                    head_ref = getattr(pr, "head", None)
+                    branch = getattr(head_ref, "ref", None) if head_ref else None
+                    break
+
+            if not branch:
+                return "CI failure detected. (PR not found — check GitHub Actions for details.)"
+
+            # 最新の失敗 workflow run を取得
+            runs = await client.get_workflow_runs(repo, branch)
+            failed_runs = [r for r in runs if r.get("conclusion") == "failure"]
+            if not failed_runs:
+                return f"CI failure detected on branch '{branch}'. (No failed workflow runs found.)"
+
+            latest_run = failed_runs[0]
+            run_id: int = latest_run["id"]
+
+            # 失敗ジョブを取得してログを収集
+            failed_jobs = await client.get_workflow_run_jobs(repo, run_id)
+            if not failed_jobs:
+                return (
+                    f"CI failed (run_id={run_id}, branch='{branch}'). "
+                    f"(No failed jobs found — check GitHub Actions for details.)"
+                )
+
+            log_parts: list[str] = []
+            for job in failed_jobs:
+                job_id: int = job["id"]
+                job_name: str = job["name"]
+                log_text = await client.download_job_logs(repo, job_id)
+                if log_text:
+                    log_parts.append(f"=== Job: {job_name} ===\n{log_text}")
+                else:
+                    # ログ取得失敗時はステップ情報だけ出力
+                    failed_steps = [s["name"] for s in job.get("steps", []) if s.get("conclusion") == "failure"]
+                    log_parts.append(
+                        f"=== Job: {job_name} (log unavailable) ===\n"
+                        f"Failed steps: {', '.join(failed_steps) or 'unknown'}"
+                    )
+
+            combined = "\n\n".join(log_parts)
+            return _trim_ci_logs(combined)
+
+        except Exception:
+            logger.warning(
+                "Failed to fetch CI logs for issue #%d, falling back to summary",
+                issue.number,
+                exc_info=True,
+            )
+            return "CI failure detected. (Log retrieval failed — check GitHub Actions for details.)"

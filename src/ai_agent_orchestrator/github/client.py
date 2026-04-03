@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import urllib.parse
+import zipfile
 from typing import TYPE_CHECKING, Any, Literal
 
 from githubkit import GitHub, TokenAuthStrategy
@@ -559,6 +561,109 @@ class GitHubClient:
             }
             for run in response.parsed_data.check_runs
         ]
+
+    async def get_workflow_runs(
+        self,
+        repo: RepositoryConfig,
+        branch: str,
+    ) -> list[dict[str, Any]]:
+        """指定ブランチの最新 workflow run リストを取得する.
+
+        Args:
+            repo: リポジトリ設定.
+            branch: ブランチ名.
+
+        Returns:
+            workflow run の辞書リスト (id, name, conclusion, head_sha を含む).
+        """
+        response = await self._github.rest.actions.async_list_workflow_runs_for_repo(
+            owner=repo.owner,
+            repo=repo.repo,
+            branch=branch,
+            status="completed",
+            per_page=10,
+        )
+        return [
+            {
+                "id": run.id,
+                "name": run.name,
+                "conclusion": run.conclusion,
+                "head_sha": run.head_sha,
+            }
+            for run in response.parsed_data.workflow_runs
+        ]
+
+    async def get_workflow_run_jobs(
+        self,
+        repo: RepositoryConfig,
+        run_id: int,
+    ) -> list[dict[str, Any]]:
+        """指定 workflow run の失敗ジョブリストを取得する.
+
+        Args:
+            repo: リポジトリ設定.
+            run_id: workflow run ID.
+
+        Returns:
+            失敗ジョブの辞書リスト (id, name, conclusion, steps を含む).
+        """
+        response = await self._github.rest.actions.async_list_jobs_for_workflow_run(
+            owner=repo.owner,
+            repo=repo.repo,
+            run_id=run_id,
+            filter_="latest",
+        )
+        return [
+            {
+                "id": job.id,
+                "name": job.name,
+                "conclusion": job.conclusion,
+                "steps": [
+                    {
+                        "name": step.name,
+                        "conclusion": step.conclusion,
+                        "number": step.number,
+                    }
+                    for step in (job.steps or [])
+                ],
+            }
+            for job in response.parsed_data.jobs
+            if job.conclusion == "failure"
+        ]
+
+    async def download_job_logs(
+        self,
+        repo: RepositoryConfig,
+        job_id: int,
+    ) -> str:
+        """指定ジョブのログをダウンロードして文字列で返す.
+
+        Args:
+            repo: リポジトリ設定.
+            job_id: ジョブ ID.
+
+        Returns:
+            ログ文字列. 取得失敗時は空文字列.
+        """
+        try:
+            response = await self._github.rest.actions.async_download_job_logs_for_workflow_run(
+                owner=repo.owner,
+                repo=repo.repo,
+                job_id=job_id,
+            )
+            content = response.content
+            # レスポンスが ZIP の場合は展開する
+            if content[:2] == b"PK":
+                with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                    parts: list[str] = []
+                    for name in zf.namelist():
+                        with zf.open(name) as f:
+                            parts.append(f.read().decode("utf-8", errors="replace"))
+                    return "\n".join(parts)
+            return content.decode("utf-8", errors="replace")
+        except Exception:
+            logger.warning("Failed to download job logs for job_id=%d", job_id, exc_info=True)
+            return ""
 
 
 class AccountManager:

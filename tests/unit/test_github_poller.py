@@ -638,3 +638,129 @@ class TestHasPhaseLabel:
         """phase: ラベルがあれば True."""
         issue = _make_issue(labels=["ai-agent", "phase:hearing"])
         assert GitHubPoller._has_phase_label(issue) is True
+
+
+# ---------------------------------------------------------------------------
+# _trim_ci_logs
+# ---------------------------------------------------------------------------
+
+
+class TestTrimCiLogs:
+    """_trim_ci_logs のユニットテスト."""
+
+    def test_short_log_returned_unchanged(self) -> None:
+        """max_chars 以下のログはそのまま返す."""
+        from ai_agent_orchestrator.poller.github_poller import _trim_ci_logs
+
+        log = "line1\nline2\nerror here\n"
+        assert _trim_ci_logs(log, max_chars=10000) == log
+
+    def test_long_log_trimmed_with_error_lines(self) -> None:
+        """エラーキーワードを含む行が優先的に保持される."""
+        from ai_agent_orchestrator.poller.github_poller import _trim_ci_logs
+
+        # 大量のダミー行 + エラー行
+        filler = ["normal line " * 10] * 2000
+        filler.insert(1000, "Error: something went wrong")
+        log = "\n".join(filler)
+        result = _trim_ci_logs(log, max_chars=5000)
+        assert "Error: something went wrong" in result
+        assert len(result) <= 5000 + len("\n...(truncated)")
+
+    def test_header_added_when_trimmed(self) -> None:
+        """トリミング時にヘッダーが付与される."""
+        from ai_agent_orchestrator.poller.github_poller import _trim_ci_logs
+
+        filler = ["x" * 100] * 500
+        filler[250] = "ERROR: critical failure"
+        log = "\n".join(filler)
+        result = _trim_ci_logs(log, max_chars=5000)
+        assert result.startswith("[CI ログ: 全")
+
+    def test_empty_log_returned_unchanged(self) -> None:
+        """空のログはそのまま返す."""
+        from ai_agent_orchestrator.poller.github_poller import _trim_ci_logs
+
+        assert _trim_ci_logs("") == ""
+
+
+# ---------------------------------------------------------------------------
+# _detect_ci_results — ci-fix phase duplicate detection
+# ---------------------------------------------------------------------------
+
+
+class TestDetectCiResultsDuplicate:
+    """_detect_ci_results の ci-fix フェーズ重複検知テスト."""
+
+    def _make_poller(self) -> GitHubPoller:
+        am = MagicMock()
+        return GitHubPoller(account_manager=am, repos=[])
+
+    async def test_ci_fix_allows_duplicate_detection(self) -> None:
+        """ci-fix フェーズでは同じ CI failure を複数回検知できる."""
+        poller = self._make_poller()
+        repo = _make_repo()
+        issue = _make_issue(number=99, labels=["ai-agent", "phase:ci-fix"])
+        client = AsyncMock()
+
+        # ci-fix ラベルの Issue を返す
+        client.get_issues_with_label = AsyncMock(side_effect=[
+            [issue],  # ci-fix
+            [],       # impl-review
+        ])
+        client.list_pull_requests = AsyncMock(return_value=[])
+
+        async def fake_check_status(c: object, r: object, i: object) -> str:
+            return "failure"
+
+        async def fake_get_logs(c: object, r: object, i: object) -> str:
+            return "some error log"
+
+        poller._check_ci_status = fake_check_status  # type: ignore[method-assign]
+        poller._get_ci_logs = fake_get_logs  # type: ignore[method-assign]
+
+        # 1回目
+        events1 = await poller._detect_ci_results(client, repo)  # type: ignore[arg-type]
+        assert len(events1) == 1
+
+        # 2回目: ci-fix は _seen_events を無視するため再検知される
+        client.get_issues_with_label = AsyncMock(side_effect=[
+            [issue],
+            [],
+        ])
+        events2 = await poller._detect_ci_results(client, repo)  # type: ignore[arg-type]
+        assert len(events2) == 1
+
+    async def test_impl_review_deduplicates(self) -> None:
+        """impl-review フェーズでは同じ CI failure を重複検知しない."""
+        poller = self._make_poller()
+        repo = _make_repo()
+        issue = _make_issue(number=88, labels=["ai-agent", "phase:impl-review"])
+        client = AsyncMock()
+
+        client.get_issues_with_label = AsyncMock(side_effect=[
+            [],      # ci-fix
+            [issue], # impl-review
+        ])
+        client.list_pull_requests = AsyncMock(return_value=[])
+
+        async def fake_check_status(c: object, r: object, i: object) -> str:
+            return "failure"
+
+        async def fake_get_logs(c: object, r: object, i: object) -> str:
+            return "some error log"
+
+        poller._check_ci_status = fake_check_status  # type: ignore[method-assign]
+        poller._get_ci_logs = fake_get_logs  # type: ignore[method-assign]
+
+        # 1回目
+        events1 = await poller._detect_ci_results(client, repo)  # type: ignore[arg-type]
+        assert len(events1) == 1
+
+        # 2回目: impl-review は _seen_events で重複排除される
+        client.get_issues_with_label = AsyncMock(side_effect=[
+            [],
+            [issue],
+        ])
+        events2 = await poller._detect_ci_results(client, repo)  # type: ignore[arg-type]
+        assert len(events2) == 0

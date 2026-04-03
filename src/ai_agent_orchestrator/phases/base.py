@@ -85,6 +85,7 @@ class IssueStateData(Protocol):
     design_pr_number: int | None
     branch_head_sha: str | None
     impl_iteration: int
+    retry_count: int
 
 
 @runtime_checkable

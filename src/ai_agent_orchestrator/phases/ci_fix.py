@@ -54,17 +54,51 @@ class CiFixExecutor(PhaseExecutor):
 
         遷移は行わない。CI 結果は次回ポーリングで検知される。
 
+        エラーハンドリング:
+        - エージェントがコミットしなかった場合: リトライ上限未満なら SUSPENDED にせず継続
+        - リトライ上限 (3回) に達した場合: RuntimeError を再送出して SUSPENDED に遷移
+
         Args:
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
-        await self._recover_uncommitted_work(request, branch_prefix="feature")
+        # リトライカウンタを先にインクリメント (例外発生時も確実に更新されるよう先行実行)
+        await self._sm.increment_ci_retry(request.issue_number)
 
         state = self._sm.get_state(request.issue_number)
         if state:
             state.session_id = result.session_id
 
-        await self._sm.increment_ci_retry(request.issue_number)
+        try:
+            await self._recover_uncommitted_work(request, branch_prefix="feature")
+        except RuntimeError as exc:
+            # エージェントがコードを変更・コミット・プッシュしなかった場合
+            retry_count = state.retry_count if state else 0
+            logger.warning(
+                "Issue #%d: CI_FIX agent did not commit (attempt %d/3): %s",
+                request.issue_number,
+                retry_count,
+                exc,
+            )
+            if retry_count >= 3:
+                # 上限到達: base.execute() の _handle_error() で SUSPENDED に遷移させる
+                raise
+            # 上限未満: phase:ci-fix ラベルを維持して次のポーリングを待つ
+            client = await self._get_client(request.repo)
+            try:
+                await client.create_comment(
+                    request.repo,
+                    request.issue_number,
+                    f"⚠️ CI修正エージェントがコードを変更できませんでした ({retry_count}/3回目)。次回リトライします。",
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to post retry comment for issue #%d",
+                    request.issue_number,
+                    exc_info=True,
+                )
+            return
+
         # CI結果待ちラベルを付与
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:ci-wait")

@@ -1508,3 +1508,168 @@ class TestPhaseCompletedStatus:
                                 break
 
         assert found_status, "orchestrator.py の phase_completed track 呼び出しに status フィールドが見つかりません"
+
+
+# ---------------------------------------------------------------------------
+# CiFixExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestCiFixExecutor:
+    """CiFixExecutor のリトライロジックテスト."""
+
+    def _make_executor(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: MagicMock,
+    ) -> Any:
+        from ai_agent_orchestrator.phases.ci_fix import CiFixExecutor
+
+        return CiFixExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+
+    async def test_increment_ci_retry_called_before_recover(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: MagicMock,
+    ) -> None:
+        """increment_ci_retry が _recover_uncommitted_work より先に呼ばれる."""
+        call_order: list[str] = []
+
+        async def fake_increment(issue_number: int) -> None:
+            call_order.append("increment")
+
+        # _recover_uncommitted_work を成功とみなす (何もしない)
+        mock_sm.increment_ci_retry = AsyncMock(side_effect=fake_increment)
+
+        # ワークスペースの git 操作: コミット済み・プッシュ済みとして扱う
+        mock_workspace._run_git = AsyncMock(return_value=(0, "", ""))
+
+        executor = self._make_executor(
+            mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+        )
+
+        # _recover_uncommitted_work をモンキーパッチで呼び出し順を記録
+        original_recover = executor._recover_uncommitted_work
+
+        async def patched_recover(*args: Any, **kwargs: Any) -> None:
+            call_order.append("recover")
+            # RuntimeError を出さず正常終了させる
+            return
+
+        executor._recover_uncommitted_work = patched_recover  # type: ignore[method-assign]
+
+        request = _make_request(phase="ci-fix")
+        result = AgentResult(session_id="s1", output="fixed", tool_uses=[], cost_usd=0.1, duration_sec=5.0)
+        await executor.process_result(request, result)
+
+        assert call_order.index("increment") < call_order.index("recover")
+
+    async def test_no_commit_under_retry_limit_does_not_suspend(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: MagicMock,
+    ) -> None:
+        """エージェントがコミットしなくてもリトライ回数 < 3 なら RuntimeError が伝播しない."""
+        # retry_count = 1 (上限3未満)
+        state = mock_sm.get_state.return_value
+        state.retry_count = 1
+
+        executor = self._make_executor(
+            mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+        )
+
+        # _recover_uncommitted_work が RuntimeError を投げる
+        async def raise_runtime(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("no commit")
+
+        executor._recover_uncommitted_work = raise_runtime  # type: ignore[method-assign]
+
+        request = _make_request(phase="ci-fix")
+        result = AgentResult(session_id="s1", output="", tool_uses=[], cost_usd=0.1, duration_sec=5.0)
+
+        # RuntimeError が外に出ないこと (SUSPENDED に遷移しないこと)
+        await executor.process_result(request, result)
+
+        # コメントが投稿されること
+        mock_github.create_comment.assert_called_once()
+
+    async def test_no_commit_at_retry_limit_raises(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: MagicMock,
+    ) -> None:
+        """リトライ回数が 3 に達した場合は RuntimeError が伝播する."""
+        state = mock_sm.get_state.return_value
+        state.retry_count = 3
+
+        executor = self._make_executor(
+            mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+        )
+
+        async def raise_runtime(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("no commit")
+
+        executor._recover_uncommitted_work = raise_runtime  # type: ignore[method-assign]
+
+        request = _make_request(phase="ci-fix")
+        result = AgentResult(session_id="s1", output="", tool_uses=[], cost_usd=0.1, duration_sec=5.0)
+
+        with pytest.raises(RuntimeError, match="no commit"):
+            await executor.process_result(request, result)
+
+    async def test_successful_commit_sets_ci_wait_label(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: MagicMock,
+    ) -> None:
+        """エージェントが正常にコミットした場合、phase:ci-wait ラベルが付与される."""
+        executor = self._make_executor(
+            mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+        )
+
+        # _recover_uncommitted_work を成功扱い
+        async def ok_recover(*args: Any, **kwargs: Any) -> None:
+            return
+
+        executor._recover_uncommitted_work = ok_recover  # type: ignore[method-assign]
+
+        request = _make_request(phase="ci-fix")
+        result = AgentResult(session_id="s1", output="fixed", tool_uses=[], cost_usd=0.1, duration_sec=5.0)
+        await executor.process_result(request, result)
+
+        mock_github.replace_phase_label.assert_called_once()
+        call_args = mock_github.replace_phase_label.call_args
+        assert "phase:ci-wait" in str(call_args)
