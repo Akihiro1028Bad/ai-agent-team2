@@ -708,7 +708,7 @@ class TestFeatureLWorkflowE2E:
     ) -> None:
         """Feature-L 分割修正: SPLIT_MODIFIED -> HEARING 再ヒアリング -> 再提案 -> 承認."""
         issue = FakeIssue(number=801, title="Large feature with revision", body="desc")
-        comment = FakeComment(id=10, body="Split differently please", issue_url=f"https://api.github.com/repos/test/repo/issues/801")
+        comment = FakeComment(id=10, body="Split differently please", issue_url="https://api.github.com/repos/test/repo/issues/801")
 
         # Setup to SPLIT_PROPOSAL
         await event_router.route(_make_event(EventType.NEW_ISSUE, repo_config, issue=issue))
