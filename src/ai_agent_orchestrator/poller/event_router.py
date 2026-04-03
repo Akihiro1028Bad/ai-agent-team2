@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ai_agent_orchestrator.orchestrator.orchestrator import Notifier
     from ai_agent_orchestrator.orchestrator.state_machine import StateMachineManager
     from ai_agent_orchestrator.orchestrator.task_queue import TaskQueue
+    from ai_agent_orchestrator.protocols import GitHubClientProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,27 @@ _IMPL_REVIEW_PROMPT = """\
   - 具体的な例外クラスの使用（裸の `except:` 禁止）
 - **テストカバレッジ**: 境界値・異常系のテストが充足しているか
 """
+
+
+def _format_review_comments(comments: list[dict[str, Any]]) -> str:
+    """レビューコメントリストをプロンプト用テキストにフォーマットする.
+
+    Args:
+        comments: レビューコメントの辞書リスト.
+
+    Returns:
+        フォーマットされたプロンプト文字列.
+    """
+    if not comments:
+        return ""
+    lines: list[str] = []
+    for i, comment in enumerate(comments, 1):
+        user = (comment.get("user") or {}).get("login", "reviewer")
+        path = comment.get("path", "")
+        line = comment.get("line", "")
+        body = comment.get("body", "")
+        lines.append(f"### 指摘 {i} ({user})\n**ファイル**: `{path}` 行 {line}\n{body}")
+    return "\n\n".join(lines)
 
 
 class EventRouter:
@@ -557,10 +579,9 @@ class EventRouter:
         )
 
     async def _handle_impl_pr_commented(self, event: PollEvent) -> None:
-        """実装 PR コメント (指摘): IMPL_REVISE へ遷移してエンキュー."""
+        """実装 PR コメント (指摘): 全未対応コメントを収集して IMPL_REVISE へ遷移."""
         assert event.issue is not None
 
-        # 既に修正中またはまだ実装中の場合はスキップ
         current_phase = self._sm.get_phase(event.issue.number)
         if current_phase == Phase.IMPLEMENT:
             logger.info(
@@ -568,17 +589,42 @@ class EventRouter:
                 event.issue.number,
             )
             return
+
         if current_phase == Phase.IMPL_REVISE:
+            # 既に IMPL_REVISE 中: スキップするが、全コメント収集により
+            # 先発タスクが全コメントを包含済みのため問題なし
             logger.info(
-                "Issue #%d is already in impl-revise, skipping duplicate PR comment",
+                "Issue #%d is already in impl-revise, "
+                "skipping (all comments already included in pending task)",
                 event.issue.number,
             )
             return
 
-        # レビュー指摘を検出したことを Issue コメントで通知
-        review_comments = (event.extra or {}).get("comments", "")
-        await self._notify_review_received(event, review_comments)
+        # PR の全未対応レビューコメントを収集（1回のreviseで全件対応するため）
+        state = self._sm.get_state(event.issue.number)
+        all_review_comments: list[dict[str, Any]] = []
+        client = await self._get_client(event.repo)  # 1回だけ取得して再利用
+        if client and state and state.pr_number:
+            try:
+                all_review_comments = await client.get_pr_review_comments(
+                    event.repo, state.pr_number
+                )
+            except Exception:
+                logger.warning(
+                    "Issue #%d: failed to fetch review comments, using event comments",
+                    event.issue.number,
+                    exc_info=True,
+                )
 
+        # コメント一覧をフォーマット（プロンプト用）
+        comments_text = _format_review_comments(all_review_comments)
+        if not comments_text:
+            # フォールバック: イベントの extra から取得
+            comments_text = (event.extra or {}).get("comments", "")
+
+        comment_ids = [c["id"] for c in all_review_comments]
+
+        # フェーズ遷移・エンキュー（先に確定させる）
         await self._sm.transition(event.issue.number, Phase.IMPL_REVISE)
         await self._tq.enqueue(
             TaskRequest(
@@ -586,9 +632,55 @@ class EventRouter:
                 repo=event.repo,
                 phase=Phase.IMPL_REVISE.value,
                 priority=Priority.CRITICAL,
-                extra={"comments": review_comments},
+                extra={
+                    "comments": comments_text,
+                    "review_comment_ids": comment_ids,
+                },
             )
         )
+
+        # 着手通知: 遷移・エンキュー成功後に各レビューコメントのスレッドへ返信
+        # （遷移失敗時は例外が上位に伝播するため、ここに到達した場合は必ず修正が開始される）
+        if client and state and state.pr_number and all_review_comments:
+            await self._reply_to_review_comments(
+                client,
+                event.repo,
+                state.pr_number,
+                all_review_comments,
+                "レビュー指摘を確認しました。修正を開始します。",
+            )
+
+    async def _reply_to_review_comments(
+        self,
+        client: GitHubClientProtocol,
+        repo: object,
+        pr_number: int,
+        review_comments: list[dict[str, Any]],
+        body: str,
+    ) -> None:
+        """PRレビューコメントの各スレッドに返信する.
+
+        Args:
+            client: GitHub クライアントインスタンス（呼び出し元で取得済みのものを渡す）.
+            repo: リポジトリ設定.
+            pr_number: PR 番号.
+            review_comments: レビューコメントのリスト.
+            body: 返信本文.
+        """
+        for comment in review_comments:
+            comment_id = comment.get("id")
+            if not comment_id:
+                continue
+            try:
+                await client.reply_to_review_comment(
+                    repo, pr_number, comment_id, body  # type: ignore[arg-type]
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to reply to review comment %d",
+                    comment_id,
+                    exc_info=True,
+                )
 
     async def _notify_review_received(self, event: PollEvent, comments: str) -> None:
         """PR レビュー指摘を検出したことを Issue 上で通知する."""
