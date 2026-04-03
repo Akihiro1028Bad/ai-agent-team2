@@ -463,6 +463,69 @@ class GitHubClient:
             for comment in comments_list
         ]
 
+    async def reply_to_review_comment(
+        self,
+        repo: RepositoryConfig,
+        pr_number: int,
+        comment_id: int,
+        body: str,
+    ) -> None:
+        """PRレビューコメントのスレッドに返信する.
+
+        Args:
+            repo: リポジトリ設定.
+            pr_number: PR 番号.
+            comment_id: 返信先レビューコメント ID.
+            body: 返信本文 (Markdown).
+
+        Raises:
+            githubkit.exception.RequestFailed: API リクエスト失敗時.
+        """
+        await self._github.rest.pulls.async_create_reply_for_review_comment(
+            owner=repo.owner,
+            repo=repo.repo,
+            pull_number=pr_number,
+            comment_id=comment_id,
+            data={"body": f"{body}\n\n<!-- ai-agent-bot -->"},
+        )
+
+    async def get_pr_review_comments(
+        self,
+        repo: RepositoryConfig,
+        pr_number: int,
+    ) -> list[dict[str, Any]]:
+        """PRのレビューコメント一覧を取得する。ボットコメントを除外して返す。
+
+        GitHub API の pulls.list_review_comments エンドポイントを使用。
+        ai-agent-bot のコメントは除外して返す。
+
+        Args:
+            repo: リポジトリ設定.
+            pr_number: PR 番号.
+
+        Returns:
+            レビューコメントの辞書リスト (id, body, user.login, path, line を含む).
+        """
+        response = await self._github.rest.pulls.async_list_review_comments(
+            owner=repo.owner,
+            repo=repo.repo,
+            pull_number=pr_number,
+            per_page=100,
+        )
+        comments_list: list[Any] = list(response.parsed_data)
+        return [
+            {
+                "id": comment.id,
+                "user": ({"login": comment.user.login} if comment.user else None),
+                "body": comment.body,
+                "path": comment.path,
+                "line": comment.line,
+                "created_at": comment.created_at.isoformat(),
+            }
+            for comment in comments_list
+            if "<!-- ai-agent-bot -->" not in (comment.body or "")
+        ]
+
     async def merge_pull_request(
         self,
         repo: RepositoryConfig,
