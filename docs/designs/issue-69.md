@@ -251,6 +251,9 @@ async def get_pr_review_comments(
     ]
 ```
 
+> **制約**: `per_page=100` を使用しているため、レビューコメントが100件を超える場合は後続ページが取得されない。
+> 通常のユースケース（PRレビューが100件超えは稀）では問題ないが、実装者はこの上限を把握しておくこと。
+
 ### 6.3 `poller/event_router.py` の変更（旧 6.2）
 
 #### `_handle_impl_pr_commented` の修正
@@ -372,20 +375,26 @@ async def _reply_to_review_comments(
         review_comments: レビューコメントのリスト.
         body: 返信本文.
     """
-    try:
-        for comment in review_comments:
-            comment_id = comment.get("id")
-            if not comment_id:
-                continue
+    for comment in review_comments:
+        comment_id = comment.get("id")
+        if not comment_id:
+            continue
+        try:
             await client.reply_to_review_comment(
                 repo, pr_number, comment_id, body
             )
-    except Exception:
-        logger.debug(
-            "Failed to reply to review comments",
-            exc_info=True,
-        )
+        except Exception:
+            logger.debug(
+                "Failed to reply to review comment %d",
+                comment_id,
+                exc_info=True,
+            )
 ```
+
+> **設計判断（try/except のスコープ）**: `try/except` をループ内の各コメントに対して適用する。
+> ループ全体を1つの `try/except` で包むと1件の失敗で残り全件がスキップされるが、
+> 各コメントに個別に適用することで1件の失敗が他のコメントへの返信に影響しない。
+> 着手・完了通知はUX向上の補助機能であり、返信失敗時はログに記録して継続する。
 
 `_format_review_comments` モジュールレベル関数を追加する：
 
