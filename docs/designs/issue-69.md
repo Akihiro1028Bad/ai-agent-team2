@@ -140,15 +140,45 @@ sequenceDiagram
 
 | ファイル | 変更種別 | 概要 |
 |---------|---------|------|
-| `src/ai_agent_orchestrator/github/client.py` | **変更** | `reply_to_review_comment()` メソッドを追加 |
+| `src/ai_agent_orchestrator/github/client.py` | **変更** | `reply_to_review_comment()`, `get_pr_review_comments()` メソッドを追加 |
+| `src/ai_agent_orchestrator/protocols.py` | **変更** | `GitHubClientProtocol` に `reply_to_review_comment()`, `get_pr_review_comments()` メソッド定義を追加 |
 | `src/ai_agent_orchestrator/poller/event_router.py` | **変更** | `_handle_impl_pr_commented` を修正: 全コメント収集 + 着手通知返信 |
 | `src/ai_agent_orchestrator/phases/impl_revise.py` | **変更** | `build_prompt` 改善 + `process_result` に完了通知返信を追加 |
+| `tests/conftest.py` | **変更** | `FakeGitHubClient` に `reply_to_review_comment()`, `get_pr_review_comments()` を追加 |
 
 ---
 
 ## 6. 実装詳細
 
-### 6.1 `github/client.py` への追加
+### 6.1 `protocols.py` への追加
+
+CLAUDE.md が「全外部依存をProtocolで抽象化する」と定めているため、`GitHubClientProtocol` にも新メソッドを追加する。
+これにより `FakeGitHubClient` によるテストが型安全に行える。
+
+```python
+class GitHubClientProtocol(Protocol):
+    # ... 既存メソッド ...
+
+    async def reply_to_review_comment(
+        self,
+        repo: RepositoryConfig,
+        pr_number: int,
+        comment_id: int,
+        body: str,
+    ) -> None:
+        """PRレビューコメントのスレッドに返信する."""
+        ...
+
+    async def get_pr_review_comments(
+        self,
+        repo: RepositoryConfig,
+        pr_number: int,
+    ) -> list[dict[str, Any]]:
+        """PRのレビューコメント一覧を取得する（ボットコメントを除外）."""
+        ...
+```
+
+### 6.2 `github/client.py` への追加（旧 6.1）
 
 `reply_to_review_comment()` メソッドを追加する。
 
@@ -221,7 +251,7 @@ async def get_pr_review_comments(
     ]
 ```
 
-### 6.2 `poller/event_router.py` の変更
+### 6.3 `poller/event_router.py` の変更（旧 6.2）
 
 #### `_handle_impl_pr_commented` の修正
 
@@ -268,28 +298,18 @@ async def _handle_impl_pr_commented(self, event: PollEvent) -> None:
     # PR の全未対応レビューコメントを収集（1回のreviseで全件対応するため）
     state = self._sm.get_state(event.issue.number)
     all_review_comments: list[dict[str, Any]] = []
-    if state and state.pr_number:
+    client = await self._get_client(event.repo)  # 1回だけ取得して再利用
+    if client and state and state.pr_number:
         try:
-            client = await self._get_client(event.repo)
-            if client:
-                all_review_comments = await client.get_pr_review_comments(
-                    event.repo, state.pr_number
-                )
+            all_review_comments = await client.get_pr_review_comments(
+                event.repo, state.pr_number
+            )
         except Exception:
             logger.warning(
                 "Issue #%d: failed to fetch review comments, using event comments",
                 event.issue.number,
                 exc_info=True,
             )
-
-    # 着手通知: 各レビューコメントのスレッドに返信
-    if state and state.pr_number and all_review_comments:
-        await self._reply_to_review_comments(
-            event,
-            state.pr_number,
-            all_review_comments,
-            "レビュー指摘を確認しました。修正を開始します。",
-        )
 
     # コメント一覧をフォーマット（プロンプト用）
     comments_text = _format_review_comments(all_review_comments)
@@ -299,6 +319,7 @@ async def _handle_impl_pr_commented(self, event: PollEvent) -> None:
 
     comment_ids = [c["id"] for c in all_review_comments]
 
+    # フェーズ遷移・エンキュー（先に確定させる）
     await self._sm.transition(event.issue.number, Phase.IMPL_REVISE)
     await self._tq.enqueue(
         TaskRequest(
@@ -312,16 +333,32 @@ async def _handle_impl_pr_commented(self, event: PollEvent) -> None:
             },
         )
     )
+
+    # 着手通知: 遷移・エンキュー成功後に各レビューコメントのスレッドへ返信
+    # （遷移失敗時は例外が上位に伝播するため、ここに到達した場合は必ず修正が開始される）
+    if client and state and state.pr_number and all_review_comments:
+        await self._reply_to_review_comments(
+            client,
+            event.repo,
+            state.pr_number,
+            all_review_comments,
+            "レビュー指摘を確認しました。修正を開始します。",
+        )
 ```
+
+> **設計判断（着手通知タイミング）**: 着手通知は `transition` + `enqueue` の **後** に送信する。
+> これにより「通知を送ったが修正が開始されない」状態を防ぐ。
+> 遷移・エンキューが失敗した場合は例外が上位に伝播し着手通知は送られないため、整合性が保たれる。
 
 #### 追加ヘルパーメソッド
 
-`_reply_to_review_comments` ヘルパーを追加する：
+`_reply_to_review_comments` ヘルパーを追加する（`client` を引数で受け取り `_get_client` の二重呼び出しを防ぐ）：
 
 ```python
 async def _reply_to_review_comments(
     self,
-    event: PollEvent,
+    client: GitHubClientProtocol,
+    repo: RepositoryConfig,
     pr_number: int,
     review_comments: list[dict[str, Any]],
     body: str,
@@ -329,26 +366,23 @@ async def _reply_to_review_comments(
     """PRレビューコメントの各スレッドに返信する.
 
     Args:
-        event: 処理中のポーリングイベント.
+        client: GitHub クライアントインスタンス（呼び出し元で取得済みのものを渡す）.
+        repo: リポジトリ設定.
         pr_number: PR 番号.
         review_comments: レビューコメントのリスト.
         body: 返信本文.
     """
     try:
-        client = await self._get_client(event.repo)
-        if client is None:
-            return
         for comment in review_comments:
             comment_id = comment.get("id")
             if not comment_id:
                 continue
             await client.reply_to_review_comment(
-                event.repo, pr_number, comment_id, body
+                repo, pr_number, comment_id, body
             )
     except Exception:
         logger.debug(
-            "Failed to reply to review comments for event %s",
-            event.type,
+            "Failed to reply to review comments",
             exc_info=True,
         )
 ```
@@ -377,7 +411,7 @@ def _format_review_comments(comments: list[dict[str, Any]]) -> str:
     return "\n\n".join(lines)
 ```
 
-### 6.3 `phases/impl_revise.py` の変更
+### 6.4 `phases/impl_revise.py` の変更（旧 6.3）
 
 #### `build_prompt` の改善
 
@@ -396,13 +430,12 @@ async def build_prompt(self, request: TaskRequest) -> str:
     if state and state.pr_number:
         pr_info = f"PR #{state.pr_number}"
     else:
-        repo_any = cast("Any", request.repo)
         prs = await client.list_pull_requests(
             request.repo,
-            head=f"{repo_any.owner}:feature/issue-{request.issue_number}",
+            head=f"{request.repo.owner}:feature/issue-{request.issue_number}",
         )
         if prs:
-            pr_info = f"PR #{cast('Any', prs[0]).number}"
+            pr_info = f"PR #{prs[0].number}"  # list_pull_requests の戻り値型を使用
 
     # 複数コメントの件数をプロンプトに明示
     comment_count_note = ""
@@ -501,16 +534,26 @@ async def _reply_completion_to_review_comments(
 
 ## 8. テスト計画
 
+### 8.0 `tests/conftest.py` の更新（FakeGitHubClient）
+
+`FakeGitHubClient`（または同等のFakeクラス）に以下のメソッドを追加し、新 Protocol メソッドに対応する：
+
+- `reply_to_review_comment(repo, pr_number, comment_id, body) -> None`
+  - 呼び出し記録を保持し（例: `self.replied_comments: list[tuple[int, str]]`）、テストから検証可能にする
+- `get_pr_review_comments(repo, pr_number) -> list[dict[str, Any]]`
+  - テストケースごとに返却データを設定可能にする（例: `self.review_comments_data`）
+
 ### 8.1 `tests/unit/test_github_client.py` への追加
 
 - `reply_to_review_comment()` が `pulls.async_create_reply_for_review_comment` を正しいパラメータで呼び出すことを確認
 - `get_pr_review_comments()` がボットコメント（`<!-- ai-agent-bot -->`を含む）を除外することを確認
+  - テストデータ: `<!-- ai-agent-bot -->` を含む返信コメントと通常レビューコメントが混在するリストを入力し、ボットコメントのみ除外されることを検証する
 
 ### 8.2 `tests/unit/test_event_router.py` への追加
 
 - 複数の `IMPL_PR_COMMENTED` イベントが同時到着した場合、先発イベントが全コメントを収集してタスクにエンキューすることを確認
 - `IMPL_REVISE` 中の後発 `IMPL_PR_COMMENTED` イベントがスキップされることを確認
-- 先発イベント処理時に `reply_to_review_comment` が各コメントに着手通知を送ることを確認
+- 先発イベント処理時に `reply_to_review_comment` が各コメントに着手通知を送ることを確認（遷移・エンキュー **後** に送信されること）
 - `get_pr_review_comments` 失敗時にフォールバックとして `event.extra["comments"]` を使用することを確認
 - 着手通知の返信失敗時もフェーズ遷移が継続することを確認
 
@@ -521,7 +564,10 @@ async def _reply_completion_to_review_comments(
 - 返信失敗時も IMPL_REVIEW 遷移・Slack 通知が継続することを確認
 - `build_prompt()` が複数コメント件数を明示したプロンプトを生成することを確認
 
-### 8.4 シナリオテスト `tests/scenario/test_feature_m_workflow.py` への追加
+### 8.4 統合テスト `tests/integration/test_feature_m_workflow.py` への追加
+
+> **注**: CLAUDE.md のディレクトリ構成は `tests/unit/` と `tests/integration/` のみ定義されているため、
+> シナリオテストは `tests/integration/` に配置する。
 
 - 複数レビューコメント対応シナリオ: 2件以上のレビューコメントが同時投稿された場合、全件が `IMPL_REVISE` のプロンプトに含まれることを確認
 
@@ -532,8 +578,10 @@ async def _reply_completion_to_review_comments(
 | モジュール | 影響 | 理由 |
 |----------|------|------|
 | `github/client.py` | 追加 | `reply_to_review_comment()`, `get_pr_review_comments()` メソッド追加 |
+| `protocols.py` | 変更 | `GitHubClientProtocol` に同メソッドのシグネチャ定義を追加（CLAUDE.md規約準拠） |
 | `poller/event_router.py` | 変更 | `_handle_impl_pr_commented` の全コメント収集ロジック + 着手通知返信追加 |
 | `phases/impl_revise.py` | 変更 | `build_prompt` 改善 + `process_result` に完了通知返信追加 |
+| `tests/conftest.py` | 変更 | `FakeGitHubClient` に新メソッドを追加 |
 | `models.py` | なし | 変更不要（`TaskRequest.extra` は既存の汎用フィールドで対応可） |
 | `poller/github_poller.py` | なし | 変更不要（イベント生成は既存のまま。全コメント収集は event_router 側で行う） |
 | `orchestrator.py` | なし | 変更不要 |
@@ -548,6 +596,40 @@ async def _reply_completion_to_review_comments(
 後発イベントがスキップされても、先発タスクで全コメントを対応できる。
 
 ポーリング間隔（デフォルト120秒）以内に到着した全コメントは先発イベントの `get_pr_review_comments` で収集される。ポーリング後に追加されたコメントは次回ポーリング時に検知され、`IMPL_REVIEW` 状態であれば新たに `IMPL_REVISE` が発火する。
+
+### `IMPL_REVISE` フェーズ長引き中の後発コメント（ギャップウィンドウ）
+
+以下のケースは既知の制約として許容する：
+
+- ポーリング周期Nでコメント[A, B]が収集され `IMPL_REVISE` が開始される
+- `IMPL_REVISE` 実行中（フェーズ長引き中）にコメントCが到着する
+- コメントCのイベントは `IMPL_REVISE` 中のためスキップされる → **コメントCはAのタスクに含まれない**
+
+この場合、コメントCは `IMPL_REVISE` 完了後に `IMPL_REVIEW` 状態へ遷移した次のポーリング時に検知され、
+新たな `IMPL_REVISE` タスクとして処理される。完了通知は遅延するが対応漏れにはならない。
+
+### `get_pr_review_comments` を既存 `get_pr_comments` の拡張ではなく新規追加とする理由
+
+既存の `get_pr_comments(owner: str, repo: str, pr_number: int)` は内部で `async_list_review_comments` を呼び出しており、
+新規の `get_pr_review_comments(repo: RepositoryConfig, pr_number: int)` と処理が重複する。
+しかし、以下の差異があるため既存メソッドの拡張ではなく新規追加とする：
+
+| 差異 | `get_pr_comments`（既存） | `get_pr_review_comments`（新規） |
+|------|--------------------------|----------------------------------|
+| インターフェース | `owner: str, repo: str` を文字列で受け取る | `RepositoryConfig` を受け取る（他メソッドと統一） |
+| ボットコメント除外 | なし | あり（`<!-- ai-agent-bot -->` を除外） |
+| `side` フィールド | あり | なし（本機能では不要） |
+
+既存メソッドのシグネチャを変更すると呼び出し箇所への影響が大きいため、新規メソッドを追加して既存を維持する。
+
+### クラッシュ時の `review_comment_ids` 復元性
+
+`review_comment_ids` は `TaskRequest.extra` にのみ保持される（`IssueState` には永続化しない）。
+プロセスがIMPL_REVISE中にクラッシュした場合、タスクキューが消失し完了通知が送られない可能性がある。
+
+**この設計判断**: 完了通知はあくまで補助的なUX向上機能であり、フェーズ遷移本体には影響しない。
+クラッシュ後はリカバリーメカニズムにより `IMPL_REVISE` が再実行されるが、完了通知は送られない。
+この動作を許容する（完了通知の再送よりも実装の単純さを優先）。
 
 ### `reply_to_review_comment` と `create_comment` の違い
 
