@@ -12,6 +12,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_DESIGN_REVIEW_PROMPT = """\
+@claude /review
+
+## レビュー観点（設計レビュー）
+
+以下の観点でこのPRの設計書をレビューしてください。
+
+### チェック項目
+- **Issue要件との整合性**: Issueで要求された機能・仕様が設計書に網羅されているか
+- **設計の完全性・一貫性**: フェーズ遷移、データフロー、エラーハンドリングが設計書に明記されているか
+- **CLAUDE.md規約との整合性**: Protocol ベース設計、非同期設計、型アノテーション方針との整合性
+- **実装上の潜在的問題**: 依存関係の見落とし、循環参照、テスタビリティの問題
+- **テスト方針の妥当性**: TDD の観点でテスト戦略が適切か
+"""
+
 
 class DesignExecutor(PhaseExecutor):
     """Feature-M 設計書作成フェーズ。
@@ -102,6 +117,7 @@ class DesignExecutor(PhaseExecutor):
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:design-review")
         await self._sm.transition(request.issue_number, "design-review")
+        await self._post_design_review_comment(request, pr_number)
         repo_full_name = self._get_repo_full_name(request)
         pr_url = self._build_pr_url(request, pr_number)
         issue = await client.get_issue(request.repo, request.issue_number)
@@ -117,6 +133,33 @@ class DesignExecutor(PhaseExecutor):
                 "next_action": "→ 設計PRをレビューしてください",
             },
         )
+
+    async def _post_design_review_comment(
+        self,
+        request: TaskRequest,
+        pr_number: int,
+    ) -> None:
+        """設計PRに @claude /review コメントを投稿する。
+
+        Args:
+            request: タスクリクエスト。
+            pr_number: 設計 PR 番号。
+        """
+        try:
+            client = await self._get_client(request.repo)
+            await client.create_comment(request.repo, pr_number, _DESIGN_REVIEW_PROMPT)
+            logger.info(
+                "Issue #%d: posted @claude /review comment to design PR #%d",
+                request.issue_number,
+                pr_number,
+            )
+        except Exception:
+            logger.warning(
+                "Issue #%d: failed to post @claude /review to design PR #%d",
+                request.issue_number,
+                pr_number,
+                exc_info=True,
+            )
 
     async def _warn_if_source_files_added(self, request: TaskRequest) -> None:
         """設計フェーズでソースコードが作成された場合に警告ログを出力する。"""
