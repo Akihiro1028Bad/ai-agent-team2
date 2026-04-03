@@ -13,6 +13,7 @@ from ai_agent_orchestrator.commands import (
     status_command,
     stop_command,
     unregister_command,
+    web_command,
 )
 
 app = typer.Typer(
@@ -32,6 +33,7 @@ app.command("stop")(stop_command)
 app.command("status")(status_command)
 app.command("health")(health_command)
 app.command("logs")(logs_command)
+app.command("web")(web_command)
 
 
 @app.callback()

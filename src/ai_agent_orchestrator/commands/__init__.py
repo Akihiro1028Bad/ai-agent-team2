@@ -9,6 +9,7 @@ from ai_agent_orchestrator.commands.run import (
     stop_command,
 )
 from ai_agent_orchestrator.commands.setup import setup_command, unregister_command
+from ai_agent_orchestrator.commands.web import web_command
 
 __all__ = [
     "account_app",
@@ -19,4 +20,5 @@ __all__ = [
     "status_command",
     "stop_command",
     "unregister_command",
+    "web_command",
 ]
