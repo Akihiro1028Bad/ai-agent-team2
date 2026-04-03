@@ -120,6 +120,21 @@ class AgentResult:
 
 
 @dataclass(frozen=True)
+class Subtask:
+    """実装計画のサブタスク。
+
+    planning フェーズが出力した ## サブタスク セクションを
+    parse_subtasks() でパースした結果を保持する。
+    """
+
+    id: int
+    title: str
+    files: tuple[str, ...]
+    description: str
+    depends_on: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
 class PhaseContext:
     """フェーズ実行に必要なコンテキスト."""
 
@@ -198,6 +213,7 @@ class PhaseConfig:
     timeout_sec: int
     permission_mode: str
     resume: bool = False
+    model: str = "sonnet"
 
 
 # ---------------------------------------------------------------------------

@@ -382,6 +382,7 @@ def test_phase_config_has_all_phases() -> None:
         assert config.max_budget_usd > 0
         assert config.timeout_sec > 0
         assert config.permission_mode in ("plan", "default", "acceptEdits", "bypassPermissions")
+        assert config.model == "sonnet"
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +408,29 @@ async def test_run_hooks_are_configured(
     hooks = opts.hooks
     # hooks は SDK バグ (#730: Stream closed) のため無効化済み
     assert hooks == {}
+
+
+# ---------------------------------------------------------------------------
+# TC-CR-10b: run -- model が ClaudeAgentOptions に伝播される
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("ai_agent_orchestrator.agents.claude_runner.query")
+async def test_run_model_propagated_to_options(
+    mock_query: MagicMock,
+    runner: ClaudeAgentRunner,
+) -> None:
+    """PhaseConfig.model が ClaudeAgentOptions.model に渡される."""
+    messages = [_make_result_message(session_id="sess-model")]
+    captured: list[dict[str, Any]] = []
+    mock_query.side_effect = lambda **kw: _make_fake_query(messages, captured)(**kw)
+
+    await runner.run(prompt="テスト", cwd="/tmp", phase="hearing")
+
+    assert len(captured) == 1
+    opts = captured[0]["options"]
+    assert opts.model == "sonnet"
 
 
 # ---------------------------------------------------------------------------

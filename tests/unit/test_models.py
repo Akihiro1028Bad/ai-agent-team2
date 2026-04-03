@@ -270,6 +270,7 @@ def test_phase_config_creation() -> None:
     assert pc.timeout_sec == 600
     assert pc.permission_mode == "plan"
     assert pc.resume is False
+    assert pc.model == "sonnet"
 
 
 def test_phase_config_with_resume() -> None:
@@ -280,6 +281,16 @@ def test_phase_config_with_resume() -> None:
         resume=True,
     )
     assert pc.resume is True
+
+
+def test_phase_config_model_default_is_sonnet() -> None:
+    pc = PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan")
+    assert pc.model == "sonnet"
+
+
+def test_phase_config_model_can_be_overridden() -> None:
+    pc = PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan", model="opus")
+    assert pc.model == "opus"
 
 
 def test_phase_config_dict_has_all_phases() -> None:
