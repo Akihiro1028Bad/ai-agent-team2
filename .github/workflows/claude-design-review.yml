@@ -1,0 +1,56 @@
+name: Claude Code Design Review
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  claude-design-review:
+    if: |
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '@claude /review-design')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            このPRの設計書をレビューしてください。「良い設計になっているか」を中心に評価し、問題点や改善提案があれば具体的にコメントしてください。
+
+            ## レビュー観点
+
+            ### 設計の妥当性（最重要）
+            - 要件を適切に満たしているか
+            - 設計の目的・意図が明確か
+            - 過剰設計・過小設計になっていないか（YAGNI・KISS原則）
+
+            ### アーキテクチャ・構造
+            - 責務の分離が適切か（単一責任原則）
+            - モジュール間の依存関係が適切か（疎結合・高凝集）
+            - 既存アーキテクチャとの一貫性があるか
+            - 変更に強い設計になっているか（拡張性・保守性）
+
+            ### インターフェース設計
+            - API・メソッドシグネチャが直感的か
+            - 入出力の型・バリデーション方針が明確か
+            - エラー処理・例外設計が一貫しているか
+
+            ### 実現可能性・リスク
+            - 実装上の技術的な懸念点がないか
+            - パフォーマンス・スケーラビリティの考慮が十分か
+            - セキュリティリスクがないか
+
+            ### ドキュメント品質
+            - 設計書の記述が具体的で分かりやすいか
+            - データフロー・シーケンスが追いやすいか
+            - テスト方針が明記されているか
+
+            問題がなければ「設計レビュー問題なし」と明記してください。

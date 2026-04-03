@@ -1,0 +1,59 @@
+name: Claude Code Implementation Review
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  claude-impl-review:
+    if: |
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '@claude /review-impl')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            このPRの実装コードをレビューしてください。以下の観点で確認し、問題点や改善提案があれば具体的にコメントしてください。
+
+            ## レビュー観点
+
+            ### バグ・ロジックエラー（最重要）
+            - バグやロジックエラーの有無
+            - エッジケースの考慮漏れ（None/空リスト/境界値など）
+            - 条件分岐の網羅性
+            - 非同期処理の競合・デッドロックの可能性
+            - 状態管理の不整合
+
+            ### コード品質
+            - 命名規則の一貫性（変数名・関数名・クラス名）
+            - 関数・メソッドの単一責任原則の遵守
+            - 不要なコードや重複の有無
+            - 適切なコメント・docstring の記載
+            - 可読性・保守性
+
+            ### エラーハンドリング
+            - 例外処理の適切さ（握りつぶし・過剰キャッチがないか）
+            - エラーログの十分な情報量
+            - 障害時の安全な振る舞い（フェールセーフ）
+
+            ### テスト
+            - テストケースの十分な網羅性（正常系・異常系・境界値）
+            - テストの可読性・保守性
+            - モックの適切な使用
+
+            ### セキュリティ
+            - シークレット・認証情報のハードコードがないこと
+            - 入力値の検証・サニタイズ
+            - 権限・認可の適切な確認
+
+            問題がなければ「レビュー問題なし」と明記してください。
