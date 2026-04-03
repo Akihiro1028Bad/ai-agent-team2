@@ -443,6 +443,84 @@ class TestDesignExecutor:
         state = mock_sm.get_state(1)
         assert state.design_pr_number == 5
 
+    async def test_process_result_posts_claude_review_comment(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """設計 PR 作成後に @claude /review コメントが投稿される。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="設計PR #5 を作成しました",
+            tool_uses=[],
+            cost_usd=1.0,
+            duration_sec=60.0,
+        )
+        from ai_agent_orchestrator.phases.design import DesignExecutor
+
+        executor = DesignExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="design")
+        await executor.execute(request)
+
+        # create_comment が呼ばれ、@claude /review を含むコメントが投稿される
+        assert mock_github.create_comment.call_count >= 1
+        review_calls = [
+            call for call in mock_github.create_comment.call_args_list if "@claude /review" in str(call.args[2])
+        ]
+        assert len(review_calls) == 1
+        # PR番号 5 に投稿されていることを確認
+        assert review_calls[0].args[1] == 5
+
+    async def test_process_result_comment_failure_does_not_block_transition(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """@claude /review コメント投稿失敗時も DESIGN_REVIEW 遷移が完了する。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="設計PR #5 を作成しました",
+            tool_uses=[],
+            cost_usd=1.0,
+            duration_sec=60.0,
+        )
+        mock_github.create_comment.side_effect = Exception("network error")
+        from ai_agent_orchestrator.phases.design import DesignExecutor
+
+        executor = DesignExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="design")
+        # 例外が発生してもクラッシュしない
+        await executor.execute(request)
+
+        # DESIGN_REVIEW への遷移は完了している
+        mock_sm.transition.assert_called_with(1, "design-review")
+
 
 # ---------------------------------------------------------------------------
 # DesignReviseExecutor

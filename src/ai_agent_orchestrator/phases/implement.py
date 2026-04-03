@@ -46,13 +46,13 @@ def extract_planned_files(impl_plan_text: str) -> set[str]:
 # ## サブタスク セクションのパターン
 # group(1)=id, group(2)=title(1行), group(3)=ブロック本文
 _SUBTASK_HEADING_PATTERN = re.compile(
-    r"###\s+subtask-(\d+)\s*[:：]\s*([^\n]+)\n(.*?)(?=###\s+subtask-|\Z)",  # noqa: RUF001
+    r"###\s+subtask-(\d+)\s*[:：]\s*([^\n]+)\n(.*?)(?=###\s+subtask-|\Z)",
     re.DOTALL | re.IGNORECASE,
 )
-_FILES_INLINE_PATTERN = re.compile(r"files\s*[:：]\s*\[([^\]]*)\]", re.IGNORECASE)  # noqa: RUF001
-_FILES_BULLET_PATTERN = re.compile(r"files\s*[:：]\s*\n((?:\s*[-*]\s*.+\n?)+)", re.IGNORECASE)  # noqa: RUF001
-_DEPENDS_ON_PATTERN = re.compile(r"depends_on\s*[:：]\s*\[([^\]]*)\]", re.IGNORECASE)  # noqa: RUF001
-_DESCRIPTION_PATTERN = re.compile(r"description\s*[:：]\s*(.+?)(?=\n\s*-\s*\w|\Z)", re.DOTALL | re.IGNORECASE)  # noqa: RUF001
+_FILES_INLINE_PATTERN = re.compile(r"files\s*[:：]\s*\[([^\]]*)\]", re.IGNORECASE)
+_FILES_BULLET_PATTERN = re.compile(r"files\s*[:：]\s*\n((?:\s*[-*]\s*.+\n?)+)", re.IGNORECASE)
+_DEPENDS_ON_PATTERN = re.compile(r"depends_on\s*[:：]\s*\[([^\]]*)\]", re.IGNORECASE)
+_DESCRIPTION_PATTERN = re.compile(r"description\s*[:：]\s*(.+?)(?=\n\s*-\s*\w|\Z)", re.DOTALL | re.IGNORECASE)
 
 
 def parse_subtasks(impl_plan_text: str) -> list[Subtask]:

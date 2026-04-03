@@ -294,6 +294,151 @@ class TestEventRouterCIResult:
 
 
 # ---------------------------------------------------------------------------
+# Tests: CI_RESULT success with @claude /review comment posting
+# ---------------------------------------------------------------------------
+
+
+class TestEventRouterCIResultWithReview:
+    """CI_RESULT success 時の @claude /review コメント投稿テスト."""
+
+    @pytest.fixture
+    def mock_client(self) -> AsyncMock:
+        """GitHubClient のモック."""
+        return AsyncMock()
+
+    @pytest.fixture
+    def mock_account_manager(self, mock_client: AsyncMock) -> AsyncMock:
+        """AccountManager のモック。get_client_for_repo が GitHubClient を返す。"""
+        am = AsyncMock()
+        am.get_client_for_repo = AsyncMock(return_value=mock_client)
+        return am
+
+    @pytest.fixture
+    def mock_sm_with_state(self) -> AsyncMock:
+        """pr_number を持つ IssueState を返す StateMachineManager モック."""
+        sm = AsyncMock()
+        sm.register_issue = MagicMock()
+        sm.get_phase = MagicMock(return_value="plan-review")
+        sm.get_issue_type = MagicMock(return_value="bug")
+        sm.set_issue_type = MagicMock()
+        sm.get_ci_retry_count = AsyncMock(return_value=0)
+        state = MagicMock()
+        state.pr_number = 10
+        sm.get_state = MagicMock(return_value=state)
+        return sm
+
+    @pytest.fixture
+    def router_with_am(
+        self,
+        mock_sm_with_state: AsyncMock,
+        mock_tq: AsyncMock,
+        mock_account_manager: AsyncMock,
+    ) -> EventRouter:
+        """account_manager を持つ EventRouter インスタンス."""
+        return EventRouter(
+            state_machine=mock_sm_with_state,
+            task_queue=mock_tq,
+            account_manager=mock_account_manager,
+        )
+
+    async def test_ci_success_posts_claude_review_comment(
+        self,
+        router_with_am: EventRouter,
+        mock_sm_with_state: AsyncMock,
+        mock_tq: AsyncMock,
+        mock_client: AsyncMock,
+    ) -> None:
+        """CI 成功時に @claude /review コメントが実装 PR に投稿される。"""
+        event = _make_event(EventType.CI_RESULT, extra={"ci_status": "success"})
+        await router_with_am.route(event)
+
+        mock_client.create_comment.assert_called_once()
+        call_args = mock_client.create_comment.call_args
+        # PR番号 10 にコメントが投稿される
+        assert call_args.args[1] == 10
+        # @claude /review を含むコメントが投稿される
+        assert "@claude /review" in call_args.args[2]
+
+    async def test_ci_success_already_impl_review_skips_comment(
+        self,
+        router_with_am: EventRouter,
+        mock_sm_with_state: AsyncMock,
+        mock_tq: AsyncMock,
+        mock_client: AsyncMock,
+    ) -> None:
+        """既に IMPL_REVIEW 状態の場合はコメントが投稿されない（冪等性）。"""
+        mock_sm_with_state.get_phase.return_value = Phase.IMPL_REVIEW
+        event = _make_event(EventType.CI_RESULT, extra={"ci_status": "success"})
+        await router_with_am.route(event)
+
+        # 遷移はスキップされる
+        mock_sm_with_state.transition.assert_not_called()
+        # コメントも投稿されない
+        mock_client.create_comment.assert_not_called()
+
+    async def test_ci_success_idempotent_second_event_no_comment(
+        self,
+        router_with_am: EventRouter,
+        mock_sm_with_state: AsyncMock,
+        mock_tq: AsyncMock,
+        mock_client: AsyncMock,
+    ) -> None:
+        """CI success が2回来た場合、2回目はコメントが投稿されない。"""
+        event = _make_event(EventType.CI_RESULT, extra={"ci_status": "success"})
+
+        # 1回目: 遷移 + コメント投稿
+        await router_with_am.route(event)
+        assert mock_client.create_comment.call_count == 1
+
+        # 2回目: 既に IMPL_REVIEW なのでスキップ
+        mock_sm_with_state.get_phase.return_value = Phase.IMPL_REVIEW
+        await router_with_am.route(event)
+        # create_comment は追加で呼ばれない
+        assert mock_client.create_comment.call_count == 1
+
+    async def test_ci_success_skips_comment_if_pr_number_none(
+        self,
+        router_with_am: EventRouter,
+        mock_sm_with_state: AsyncMock,
+        mock_tq: AsyncMock,
+        mock_client: AsyncMock,
+    ) -> None:
+        """state.pr_number が None の場合はコメント投稿がスキップされる。"""
+        state = MagicMock()
+        state.pr_number = None
+        mock_sm_with_state.get_state.return_value = state
+
+        event = _make_event(EventType.CI_RESULT, extra={"ci_status": "success"})
+        await router_with_am.route(event)
+
+        # 遷移は完了する
+        mock_sm_with_state.transition.assert_called_once()
+        args = mock_sm_with_state.transition.call_args[0]
+        assert args[1].value == "impl-review"
+        # コメントは投稿されない
+        mock_client.create_comment.assert_not_called()
+
+    async def test_ci_success_comment_failure_does_not_block_transition(
+        self,
+        router_with_am: EventRouter,
+        mock_sm_with_state: AsyncMock,
+        mock_tq: AsyncMock,
+        mock_client: AsyncMock,
+    ) -> None:
+        """@claude /review コメント投稿失敗時も IMPL_REVIEW 遷移が完了する。"""
+        mock_client.create_comment.side_effect = Exception("network error")
+
+        event = _make_event(EventType.CI_RESULT, extra={"ci_status": "success"})
+        # 例外が発生してもクラッシュしない
+        await router_with_am.route(event)
+
+        # IMPL_REVIEW への遷移は完了している
+        mock_sm_with_state.transition.assert_called_once()
+        args = mock_sm_with_state.transition.call_args[0]
+        assert args[1].value == "impl-review"
+
+
+# ---------------------------------------------------------------------------
 # Tests: SPLIT_APPROVED / SPLIT_MODIFIED
 # ---------------------------------------------------------------------------
 

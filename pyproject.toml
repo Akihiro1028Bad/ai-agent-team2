@@ -113,6 +113,16 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"src/ai_agent_orchestrator/phases/*.py" = [
+    "RUF001",  # ambiguous unicode in strings (Japanese fullwidth characters)
+    "RUF002",  # ambiguous unicode in docstrings (Japanese parentheses)
+    "RUF003",  # ambiguous unicode in comments (Japanese parentheses)
+]
+"src/ai_agent_orchestrator/poller/*.py" = [
+    "RUF001",  # ambiguous unicode in strings (Japanese fullwidth characters)
+    "RUF002",  # ambiguous unicode in docstrings (Japanese parentheses)
+    "RUF003",  # ambiguous unicode in comments (Japanese parentheses)
+]
 "tests/**/*.py" = [
     "S101",    # assert is fine in tests
     "S105",    # hardcoded password (false positive in test assertions)

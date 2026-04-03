@@ -23,6 +23,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_IMPL_REVIEW_PROMPT = """\
+@claude /review
+
+## レビュー観点（実装レビュー）
+
+以下の観点でこのPRの実装をレビューしてください。
+
+### チェック項目
+- **バグ・潜在的なバグ（最重要）**: ロジックエラー、エッジケース、競合状態、None 参照
+- **コード品質・可読性**: 関数分割、命名、複雑度
+- **設計品質**: 責務分離、Protocol 準拠、依存関係の適切さ
+- **セキュリティ**: 認証・認可、入力検証、シークレット漏洩リスク
+- **CLAUDE.md規約との整合性**:
+  - mypy strict モード準拠（全関数に型アノテーション）
+  - async/await の正しい使用（ブロッキング呼び出し禁止）
+  - docstring（クラスと公開メソッドに必須、Google style）
+  - 具体的な例外クラスの使用（裸の `except:` 禁止）
+- **テストカバレッジ**: 境界値・異常系のテストが充足しているか
+"""
+
 
 class EventRouter:
     """イベントをフェーズ遷移アクションに変換する.
@@ -608,9 +628,9 @@ class EventRouter:
 
         if ci_status == "failure":
             current_phase = self._sm.get_phase(event.issue.number)
-            if current_phase not in (Phase.IMPL_REVIEW, Phase.CI_FIX):
+            if current_phase not in (Phase.IMPLEMENT, Phase.IMPL_REVIEW, Phase.CI_FIX):
                 logger.info(
-                    "Issue #%d is in %s, not IMPL_REVIEW/CI_FIX, skipping ci_result failure",
+                    "Issue #%d is in %s, not IMPLEMENT/IMPL_REVIEW/CI_FIX, skipping ci_result failure",
                     event.issue.number,
                     current_phase,
                 )
@@ -642,6 +662,8 @@ class EventRouter:
             current = self._sm.get_phase(event.issue.number)
             if current != Phase.IMPL_REVIEW:
                 await self._sm.transition(event.issue.number, Phase.IMPL_REVIEW)
+                # フェーズ遷移が実際に発生した場合のみ @claude /review を投稿（冪等性保証）
+                await self._post_impl_review_comment(event)
             # ラベルを impl-review に更新 (ci-fix → impl-review)
             try:
                 client = await self._get_client(event.repo)
@@ -650,6 +672,40 @@ class EventRouter:
             except Exception:
                 logger.warning("Failed to update phase label to impl-review for issue #%d", event.issue.number)
             # IMPL_REVIEW はポーリングで PR approve/comment を待つため、エンキュー不要
+
+    async def _post_impl_review_comment(self, event: PollEvent) -> None:
+        """CI パス後に実装PRへ @claude /review コメントを投稿する.
+
+        Args:
+            event: CI 結果イベント。
+        """
+        if event.issue is None:
+            return
+        try:
+            client = await self._get_client(event.repo)
+            if client is None:
+                return
+
+            state = self._sm.get_state(event.issue.number)
+            if state is None or state.pr_number is None:
+                logger.warning(
+                    "Issue #%d: pr_number not found in state, skipping @claude /review",
+                    event.issue.number,
+                )
+                return
+
+            await client.create_comment(event.repo, state.pr_number, _IMPL_REVIEW_PROMPT)
+            logger.info(
+                "Issue #%d: posted @claude /review comment to impl PR #%d",
+                event.issue.number,
+                state.pr_number,
+            )
+        except Exception:
+            logger.warning(
+                "Issue #%d: failed to post @claude /review to impl PR",
+                event.issue.number,
+                exc_info=True,
+            )
 
     async def _handle_split_approved(self, event: PollEvent) -> None:
         """分割承認 (Feature-L): SPLIT_EXECUTE へ遷移してエンキュー."""
