@@ -20,6 +20,7 @@ from ai_agent_orchestrator.event_logger import EventLogger
 from ai_agent_orchestrator.github.client import AccountManager
 from ai_agent_orchestrator.models import ErrorCategory, Phase
 from ai_agent_orchestrator.notifications.slack import SlackNotifier
+from ai_agent_orchestrator.orchestrator.execution_guard import ExecutionGuard
 from ai_agent_orchestrator.orchestrator.state_machine import (
     StateMachineManager,
 )
@@ -476,6 +477,9 @@ class Orchestrator:
         else:
             self._phase_dispatcher = self._build_real_phase_dispatcher()
 
+        # Execution guard: prevents EventRouter from transitioning state mid-execution
+        self._execution_guard = ExecutionGuard()
+
         # Poller (placeholder until poller module is implemented)
         self._poller: Poller = poller or NullPoller()
 
@@ -535,6 +539,11 @@ class Orchestrator:
     def workspace_manager(self) -> WorkspaceManager:
         """WorkspaceManager を返す."""
         return self._workspace_manager
+
+    @property
+    def execution_guard(self) -> ExecutionGuard:
+        """ExecutionGuard を返す."""
+        return self._execution_guard
 
     @property
     def is_running(self) -> bool:
@@ -801,15 +810,17 @@ class Orchestrator:
                         ctx_err,
                     )
 
-            # Dispatch phase execution
-            result = await self._phase_dispatcher.dispatch(
-                phase,
-                issue_number=issue_number,
-                repo=task.repo,
-                worktree_path=worktree_path,
-                context=context,
-                resume_session_id=task.extra.get("resume_session_id"),
-            )
+            # Dispatch phase execution (guard prevents EventRouter from
+            # transitioning state while the executor is running)
+            async with self._execution_guard.guard(issue_number):
+                result = await self._phase_dispatcher.dispatch(
+                    phase,
+                    issue_number=issue_number,
+                    repo=task.repo,
+                    worktree_path=worktree_path,
+                    context=context,
+                    resume_session_id=task.extra.get("resume_session_id"),
+                )
 
             await self._event_logger.track(
                 "phase_completed",
@@ -849,7 +860,11 @@ class Orchestrator:
                 task_phase = Phase(phase.replace("_", "-"))
             except ValueError:
                 task_phase = None
-            if current_phase in active_phases and current_phase != task_phase:
+            if (
+                current_phase in active_phases
+                and current_phase != task_phase
+                and not self._task_queue.is_task_queued(issue_number, current_phase.value)
+            ):
                 await self._task_queue.enqueue(
                     TaskRequest(
                         issue_number=issue_number,
@@ -862,6 +877,11 @@ class Orchestrator:
                     issue_number,
                     current_phase.value,
                 )
+
+            # Replay any events that were deferred while the guard was held
+            deferred = await self._execution_guard.drain_deferred(issue_number)
+            for deferred_event in deferred:
+                await self._event_router.route(deferred_event)
 
         except asyncio.CancelledError:
             raise

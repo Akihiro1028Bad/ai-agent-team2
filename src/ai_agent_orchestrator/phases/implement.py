@@ -13,7 +13,7 @@ from ai_agent_orchestrator.context.engine import (
     DESIGN_DOC_HEADING,
     IMPL_PLAN_HEADING,
 )
-from ai_agent_orchestrator.models import AgentResult
+from ai_agent_orchestrator.models import AgentResult, Phase
 from ai_agent_orchestrator.phases.base import PhaseExecutor
 
 if TYPE_CHECKING:
@@ -93,6 +93,16 @@ class ImplementExecutor(PhaseExecutor):
                     iteration + 1,
                     _MAX_IMPL_ITERATIONS,
                 )
+
+                # 外部遷移検知: ポーラー等がフェーズを変更した場合は正常終了
+                current_phase = self._sm.get_phase(request.issue_number)
+                if isinstance(current_phase, Phase) and current_phase != Phase.IMPLEMENT:
+                    logger.warning(
+                        "Issue #%d: phase changed externally to %s during implement loop, aborting",
+                        request.issue_number,
+                        current_phase,
+                    )
+                    return
 
                 # プロンプト構築 (継続パスなら進捗コンテキスト付き)
                 prompt = await self._build_pass_prompt(

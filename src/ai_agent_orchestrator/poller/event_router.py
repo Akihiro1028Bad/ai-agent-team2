@@ -16,6 +16,7 @@ from ai_agent_orchestrator.orchestrator.task_queue import Priority, TaskRequest
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.github.client import GitHubClient
+    from ai_agent_orchestrator.orchestrator.execution_guard import ExecutionGuard
     from ai_agent_orchestrator.orchestrator.orchestrator import Notifier
     from ai_agent_orchestrator.orchestrator.state_machine import StateMachineManager
     from ai_agent_orchestrator.orchestrator.task_queue import TaskQueue
@@ -37,6 +38,7 @@ class EventRouter:
         task_queue: TaskQueue,
         account_manager: object | None = None,
         notifier: Notifier | None = None,
+        execution_guard: ExecutionGuard | None = None,
     ) -> None:
         """EventRouter を初期化する.
 
@@ -45,11 +47,13 @@ class EventRouter:
             task_queue: タスクキュー.
             account_manager: AccountManager (GitHub ラベル更新用、省略可).
             notifier: 通知送信 (Slack 等、省略可).
+            execution_guard: フェーズ実行中の状態遷移を防止するガード (省略可).
         """
         self._sm = state_machine
         self._tq = task_queue
         self._account_manager = account_manager
         self._notifier = notifier
+        self._guard = execution_guard
 
     async def _get_client(self, repo: object) -> GitHubClient | None:
         """リポジトリに対応する GitHubClient を取得する (省略可能).
@@ -97,6 +101,18 @@ class EventRouter:
             event.type,
             event.issue.number if event.issue else "N/A",
         )
+
+        # ガードチェック: Issue が実行中の場合はイベントを保留
+        if self._guard is not None and event.issue is not None:
+            issue_number = event.issue.number
+            if await self._guard.is_executing(issue_number):
+                logger.info(
+                    "Issue #%d: currently executing, deferring event %s",
+                    issue_number,
+                    event.type,
+                )
+                await self._guard.defer_event(issue_number, event)
+                return
 
         # 検知したイベントに👀リアクションを付ける
         await self._add_eyes_reaction(event)

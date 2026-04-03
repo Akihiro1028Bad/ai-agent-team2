@@ -65,6 +65,11 @@ class DesignExecutor(PhaseExecutor):
             f"2. git commit して Push (コミットメッセージは日本語で)\n"
             f"3. PRを作成 (タイトル・本文は日本語で、Closes #{request.issue_number} を含める)\n"
             f"4. PRのURLを出力"
+            f"\n\n## 重要な制約\n"
+            f"- **設計書 (`docs/designs/` 配下の `.md` ファイル) のみ**を作成してください\n"
+            f"- ソースコード (`.ts`, `.tsx`, `.js`, `.py` 等) の作成・変更は**禁止**です\n"
+            f"- テストコードの作成も禁止です\n"
+            f"- ソースコードの実装は後続の `implement` フェーズで行います\n"
         )
 
     async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
@@ -75,6 +80,9 @@ class DesignExecutor(PhaseExecutor):
             result: エージェント実行結果。
         """
         await self._recover_uncommitted_work(request, branch_prefix="feature")
+
+        # 設計フェーズでソースコードが作成された場合の警告
+        await self._warn_if_source_files_added(request)
 
         # PR番号を確実に取得 (エージェント出力 → 既存PR検索 → API作成)
         # 設計・実装は同一ブランチ (feature/) の同一PR
@@ -109,3 +117,32 @@ class DesignExecutor(PhaseExecutor):
                 "next_action": "→ 設計PRをレビューしてください",
             },
         )
+
+    async def _warn_if_source_files_added(self, request: TaskRequest) -> None:
+        """設計フェーズでソースコードが作成された場合に警告ログを出力する。"""
+        try:
+            worktree = await self._workspace.create_worktree(
+                request.repo,
+                request.issue_number,
+                branch_prefix="feature",
+            )
+            base = getattr(request.repo, "base_branch", "main")
+            rc, stdout, _ = await self._workspace._run_git(
+                "diff", f"origin/{base}", "--name-only", cwd=str(worktree),
+            )
+            if rc != 0 or not stdout.strip():
+                return
+            source_exts = {".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs", ".java", ".kt"}
+            source_files = [
+                f for f in stdout.strip().splitlines()
+                if any(f.endswith(ext) for ext in source_exts)
+                and not f.startswith("docs/")
+            ]
+            if source_files:
+                logger.warning(
+                    "Issue #%d: design phase created source files (should be docs only): %s",
+                    request.issue_number,
+                    source_files,
+                )
+        except Exception:
+            logger.debug("Failed to check source files for issue #%d", request.issue_number)

@@ -434,7 +434,7 @@ class GitHubPoller:
         CI ステータスを確認する。
         """
         events: list[PollEvent] = []
-        for label_suffix in ("implement", "ci-fix", "impl-review"):
+        for label_suffix in ("ci-fix", "impl-review"):
             issues = await client.get_issues_with_label(repo, f"{repo.label},phase:{label_suffix}")
             for issue in issues:
                 ci_status = await self._check_ci_status(client, repo, issue)

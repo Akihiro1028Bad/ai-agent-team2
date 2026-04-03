@@ -112,6 +112,7 @@ async def _start_foreground(config_path: str) -> None:
         task_queue=orchestrator.task_queue,
         account_manager=orchestrator.account_manager,
         notifier=orchestrator._notifier,
+        execution_guard=orchestrator.execution_guard,
     )
     orchestrator.set_poller(poller)  # type: ignore[arg-type]
     orchestrator.set_event_router(router)  # type: ignore[arg-type]

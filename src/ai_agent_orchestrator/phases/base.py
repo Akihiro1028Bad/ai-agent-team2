@@ -570,6 +570,18 @@ class PhaseExecutor(ABC):
                 )
                 new_commits = rc == 0 and stdout.strip() != ""
                 if not new_commits:
+                    # フェーズが外部変更されていた場合は RuntimeError を抑制
+                    current_phase = self._sm.get_phase(request.issue_number)
+                    req_phase_str = str(request.phase).replace("Phase.", "").replace("_", "-").lower()
+                    if isinstance(current_phase, Phase) and current_phase.value != req_phase_str:
+                        logger.warning(
+                            "Issue #%d: phase changed externally (%s → %s) "
+                            "during recovery check, skipping no-commit error",
+                            request.issue_number,
+                            req_phase_str,
+                            current_phase.value,
+                        )
+                        return
                     msg = (
                         f"Issue #{request.issue_number}: "
                         "エージェントがコードの変更・コミット・プッシュを行いませんでした。"
