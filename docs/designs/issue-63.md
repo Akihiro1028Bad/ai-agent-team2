@@ -36,11 +36,11 @@ StateMachineManager.transition(IMPL_REVIEW)
 EventRouter._on_review_phase_entered()  ← NEW
     │
     ▼
-GitHubClient.create_pr_comment(pr_number, "@claude /review")  ← NEW
+GitHubClient.create_pr_comment(pr_number, "@claude /review-impl" or "@claude /review-design")  ← NEW
     │
     ▼
-GitHub Actions: claude-review.yml が起動
-    │  (@claude を含むコメントを検知)
+GitHub Actions: claude-impl-review.yml / claude-design-review.yml が起動
+    │  (@claude /review-impl または @claude /review-design を検知)
     ▼
 anthropics/claude-code-action がレビュー実施
     │
@@ -63,9 +63,10 @@ EventRouter: IMPL_PR_COMMENTED を受信
 
 | ファイル | 変更種別 | 概要 |
 |----------|----------|------|
-| `.github/workflows/claude-review.yml` | **新規作成** | Claude Code GitHub Actions ワークフロー |
+| `.github/workflows/claude-impl-review.yml` | **新規作成** | 実装レビュー用 Claude Code GitHub Actions ワークフロー |
+| `.github/workflows/claude-design-review.yml` | **新規作成** | 設計レビュー用 Claude Code GitHub Actions ワークフロー |
 | `src/ai_agent_orchestrator/orchestrator/state_machine.py` | **変更** | `register_transition_hook()` メソッドを追加 |
-| `src/ai_agent_orchestrator/poller/event_router.py` | **変更** | IMPL_REVIEW / DESIGN_REVIEW 遷移後に `@claude /review` を自動投稿 |
+| `src/ai_agent_orchestrator/poller/event_router.py` | **変更** | IMPL_REVIEW / DESIGN_REVIEW 遷移後に `@claude /review-impl` / `@claude /review-design` を自動投稿 |
 | `src/ai_agent_orchestrator/poller/event_router.py` | **変更** | `github-actions[bot]` コメントを PR_COMMENTED イベントで無視 |
 | `docs/specs/event-router.md` | **変更** | 設計変更を仕様書に反映 |
 
@@ -73,22 +74,43 @@ EventRouter: IMPL_PR_COMMENTED を受信
 
 ## 詳細設計
 
-### 1. `.github/workflows/claude-review.yml` (新規作成)
+### 1. GitHub Actions ワークフロー (新規作成)
 
-Claude Code が PR コメントの `@claude` トリガーに応答するための GitHub Actions ワークフロー。
+#### プロンプトの分割方針
+
+`anthropics/claude-code-action` の `prompt` パラメータはワークフロー YAML に静的文字列として記述する。**実装レビューと設計レビューで異なるプロンプトを使用するためには、ワークフローファイル自体を分ける方法が最もシンプル**で確実。
+
+| 方法 | 概要 | 採否 |
+|------|------|------|
+| ワークフロー分割 | `claude-impl-review.yml` / `claude-design-review.yml` を別ファイルとし、トリガーコマンドも分ける | **採用** |
+| 単一ワークフロー + 条件分岐 | YAML の `if` 条件でコメント内容によって `prompt` を切り替える | `claude-code-action` は `prompt` の動的切替不可のため不採用 |
+| コメント本文にプロンプトを含める | `@claude /review [プロンプト全文]` のようにコメントに詳細を書く | 長文になり運用しにくいため不採用 |
+
+**採用方針:** トリガーコマンドを分ける
+
+| フェーズ | 自動投稿コマンド | ワークフローファイル |
+|----------|-----------------|---------------------|
+| `IMPL_REVIEW` | `@claude /review-impl` | `.github/workflows/claude-impl-review.yml` |
+| `DESIGN_REVIEW` | `@claude /review-design` | `.github/workflows/claude-design-review.yml` |
+
+---
+
+#### 1-A. `.github/workflows/claude-impl-review.yml` (新規作成)
+
+実装 PR に対するコードレビュー用ワークフロー。バグ・品質・セキュリティを重点的に確認する。
 
 ```yaml
-name: Claude Code Review
+name: Claude Code Implementation Review
 
 on:
   issue_comment:
     types: [created]
 
 jobs:
-  claude-review:
+  claude-impl-review:
     if: |
       github.event.issue.pull_request != null &&
-      contains(github.event.comment.body, '@claude')
+      contains(github.event.comment.body, '@claude /review-impl')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -103,41 +125,114 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
-            このPRのコードをレビューしてください。以下の観点で確認し、問題点や改善提案があれば具体的にコメントしてください。
+            このPRの実装コードをレビューしてください。以下の観点で確認し、問題点や改善提案があれば具体的にコメントしてください。
 
             ## レビュー観点
+
+            ### バグ・ロジックエラー（最重要）
+            - バグやロジックエラーの有無
+            - エッジケースの考慮漏れ（None/空リスト/境界値など）
+            - 条件分岐の網羅性
+            - 非同期処理の競合・デッドロックの可能性
+            - 状態管理の不整合
 
             ### コード品質
             - 命名規則の一貫性（変数名・関数名・クラス名）
             - 関数・メソッドの単一責任原則の遵守
             - 不要なコードや重複の有無
             - 適切なコメント・docstring の記載
-
-            ### 正確性・ロジック
-            - バグやロジックエラーの有無
-            - エッジケースの考慮漏れ
-            - 条件分岐の網羅性
+            - 可読性・保守性
 
             ### エラーハンドリング
-            - 例外処理の適切さ
+            - 例外処理の適切さ（握りつぶし・過剰キャッチがないか）
             - エラーログの十分な情報量
-            - 障害時の安全な振る舞い
+            - 障害時の安全な振る舞い（フェールセーフ）
 
             ### テスト
-            - テストケースの十分な網羅性
+            - テストケースの十分な網羅性（正常系・異常系・境界値）
             - テストの可読性・保守性
             - モックの適切な使用
 
             ### セキュリティ
             - シークレット・認証情報のハードコードがないこと
-            - 入力値の検証
+            - 入力値の検証・サニタイズ
+            - 権限・認可の適切な確認
 
             問題がなければ「レビュー問題なし」と明記してください。
 ```
 
 **ポイント:**
-- `issue_comment` イベントをトリガーとし、PR コメントのみに限定する（`github.event.issue.pull_request != null`）
-- `contains(github.event.comment.body, '@claude')` で `@claude /review` を含む任意のコメントに対応
+- `contains(github.event.comment.body, '@claude /review-impl')` で実装レビュー専用トリガー
+- バグ発見を最重要観点として明記
+
+---
+
+#### 1-B. `.github/workflows/claude-design-review.yml` (新規作成)
+
+設計書 PR に対するレビュー用ワークフロー。設計の品質・妥当性を中心に確認する。
+
+```yaml
+name: Claude Code Design Review
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  claude-design-review:
+    if: |
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '@claude /review-design')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            このPRの設計書をレビューしてください。「良い設計になっているか」を中心に評価し、問題点や改善提案があれば具体的にコメントしてください。
+
+            ## レビュー観点
+
+            ### 設計の妥当性（最重要）
+            - 要件を適切に満たしているか
+            - 設計の目的・意図が明確か
+            - 過剰設計・過小設計になっていないか（YAGNI・KISS原則）
+
+            ### アーキテクチャ・構造
+            - 責務の分離が適切か（単一責任原則）
+            - モジュール間の依存関係が適切か（疎結合・高凝集）
+            - 既存アーキテクチャとの一貫性があるか
+            - 変更に強い設計になっているか（拡張性・保守性）
+
+            ### インターフェース設計
+            - API・メソッドシグネチャが直感的か
+            - 入出力の型・バリデーション方針が明確か
+            - エラー処理・例外設計が一貫しているか
+
+            ### 実現可能性・リスク
+            - 実装上の技術的な懸念点がないか
+            - パフォーマンス・スケーラビリティの考慮が十分か
+            - セキュリティリスクがないか
+
+            ### ドキュメント品質
+            - 設計書の記述が具体的で分かりやすいか
+            - データフロー・シーケンスが追いやすいか
+            - テスト方針が明記されているか
+
+            問題がなければ「設計レビュー問題なし」と明記してください。
+```
+
+**ポイント:**
+- `contains(github.event.comment.body, '@claude /review-design')` で設計レビュー専用トリガー
+- 「良い設計かどうか」の評価を最重要観点として明記
 - `CLAUDE_CODE_OAUTH_TOKEN` シークレットを使用（設定済み）
 - `pull-requests: write` / `issues: write` 権限が Claude のレビューコメント投稿に必要
 
@@ -224,7 +319,13 @@ class EventRouter:
     async def _on_review_phase_entered(
         self, issue_number: int, phase: Phase
     ) -> None:
-        """IMPL_REVIEW または DESIGN_REVIEW フェーズ遷移後のフック。"""
+        """IMPL_REVIEW または DESIGN_REVIEW フェーズ遷移後のフック。
+
+        IMPL_REVIEW の場合は "@claude /review-impl" を、
+        DESIGN_REVIEW の場合は "@claude /review-design" を投稿し、
+        それぞれ専用のワークフロー（claude-impl-review.yml / claude-design-review.yml）
+        をトリガーする。
+        """
         review_type = "impl" if phase == Phase.IMPL_REVIEW else "design"
         await self._post_claude_review_comment(issue_number, review_type)
 ```
@@ -238,14 +339,22 @@ _BOT_COMMENT_AUTHORS: frozenset[str] = frozenset({
     "claude[bot]",
 })
 
+# レビュータイプごとのトリガーコマンド
+_REVIEW_COMMANDS: dict[str, str] = {
+    "impl": "@claude /review-impl",    # claude-impl-review.yml をトリガー
+    "design": "@claude /review-design", # claude-design-review.yml をトリガー
+}
+
 async def _post_claude_review_comment(
     self, issue_number: int, review_type: str
 ) -> None:
-    """IMPL_REVIEW または DESIGN_REVIEW 遷移後に @claude /review を PR に投稿する。
+    """IMPL_REVIEW または DESIGN_REVIEW 遷移後に @claude /review-* を PR に投稿する。
 
     Args:
         issue_number: Issue番号
         review_type: "impl" または "design"
+            - "impl"   → "@claude /review-impl"   を投稿（実装レビュー用ワークフロー起動）
+            - "design" → "@claude /review-design" を投稿（設計レビュー用ワークフロー起動）
     """
     issue_state = self.state_machine.get_state(issue_number)
     if issue_state is None:
@@ -268,11 +377,12 @@ async def _post_claude_review_comment(
         )
         return
 
+    comment_body = _REVIEW_COMMANDS[review_type]
     try:
         await self.github_client.create_pr_comment(
             repo=issue_state.repo,
             pr_number=pr_number,
-            body="@claude /review",
+            body=comment_body,
         )
         logger.info(
             "posted @claude /review comment",
@@ -345,9 +455,9 @@ async def _handle_design_pr_commented(self, event: PollEvent) -> None:
 4. 遷移成功 → _transition_hooks[Phase.IMPL_REVIEW] が起動
 5. EventRouter._on_review_phase_entered(issue_number, Phase.IMPL_REVIEW) 呼び出し
 6. IssueState から pr_number を取得
-7. GitHubClient.create_pr_comment(repo, pr_number, "@claude /review") 実行
-8. GitHub Actions の claude-review.yml がトリガー
-9. anthropics/claude-code-action がコードレビューを実施
+7. GitHubClient.create_pr_comment(repo, pr_number, "@claude /review-impl") 実行
+8. GitHub Actions の claude-impl-review.yml がトリガー
+9. anthropics/claude-code-action が実装コードレビューを実施（バグ・品質・セキュリティ観点）
 10. github-actions[bot] がレビューコメントを PR に投稿
 11. EventRouter が IMPL_PR_COMMENTED イベントを受信
 12. comment.user.login == "github-actions[bot]" → スキップ（無視）
@@ -366,9 +476,9 @@ async def _handle_design_pr_commented(self, event: PollEvent) -> None:
 3. 遷移成功 → _transition_hooks[Phase.DESIGN_REVIEW] が起動
 4. EventRouter._on_review_phase_entered(issue_number, Phase.DESIGN_REVIEW) 呼び出し
 5. IssueState から design_pr_number を取得
-6. GitHubClient.create_pr_comment(repo, design_pr_number, "@claude /review") 実行
-7. GitHub Actions の claude-review.yml がトリガー
-8. anthropics/claude-code-action が設計書をレビュー
+6. GitHubClient.create_pr_comment(repo, design_pr_number, "@claude /review-design") 実行
+7. GitHub Actions の claude-design-review.yml がトリガー
+8. anthropics/claude-code-action が設計書をレビュー（設計品質・アーキテクチャ観点）
 9. github-actions[bot] がレビューコメントを設計 PR に投稿
 10. EventRouter が DESIGN_PR_COMMENTED イベントを受信
 11. comment.user.login == "github-actions[bot]" → スキップ（無視）
@@ -420,21 +530,23 @@ async def _handle_design_pr_commented(self, event: PollEvent) -> None:
 
 ## 実装手順
 
-1. `.github/workflows/claude-review.yml` を新規作成
-2. `StateMachineManager` に `_transition_hooks` フィールドと `register_transition_hook()` メソッドを追加
-3. `StateMachineManager.transition()` にフック実行ロジックを追加
-4. `EventRouter` に `_BOT_COMMENT_AUTHORS` 定数と `_post_claude_review_comment()` メソッドを追加
-5. `EventRouter.__init__()` でトランジションフックを登録（`_on_review_phase_entered`）
-6. `EventRouter._handle_impl_pr_commented()` にボットフィルタリングを追加
-7. `EventRouter._handle_design_pr_commented()` にボットフィルタリングを追加
-8. 単体テストを追加
-9. `docs/specs/event-router.md` を更新
+1. `.github/workflows/claude-impl-review.yml` を新規作成（実装レビュー用ワークフロー）
+2. `.github/workflows/claude-design-review.yml` を新規作成（設計レビュー用ワークフロー）
+3. `StateMachineManager` に `_transition_hooks` フィールドと `register_transition_hook()` メソッドを追加
+4. `StateMachineManager.transition()` にフック実行ロジックを追加
+5. `EventRouter` に `_BOT_COMMENT_AUTHORS` / `_REVIEW_COMMANDS` 定数と `_post_claude_review_comment()` メソッドを追加
+6. `EventRouter.__init__()` でトランジションフックを登録（`_on_review_phase_entered`）
+7. `EventRouter._handle_impl_pr_commented()` にボットフィルタリングを追加
+8. `EventRouter._handle_design_pr_commented()` にボットフィルタリングを追加
+9. 単体テストを追加
+10. `docs/specs/event-router.md` を更新
 
 ---
 
 ## 影響範囲
 
-- `.github/workflows/claude-review.yml`（新規）
+- `.github/workflows/claude-impl-review.yml`（新規）
+- `.github/workflows/claude-design-review.yml`（新規）
 - `src/ai_agent_orchestrator/orchestrator/state_machine.py`
 - `src/ai_agent_orchestrator/poller/event_router.py`
 - `tests/unit/test_event_router.py`
