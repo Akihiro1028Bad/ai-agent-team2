@@ -664,8 +664,6 @@ class EventRouter:
                 await self._sm.transition(event.issue.number, Phase.IMPL_REVIEW)
                 # フェーズ遷移が実際に発生した場合のみ @claude /review を投稿（冪等性保証）
                 await self._post_impl_review_comment(event)
-            # current == Phase.IMPL_REVIEW の場合（CI が再度 success を発火した等）は
-            # 既にレビュー済みのため投稿をスキップする
             # ラベルを impl-review に更新 (ci-fix → impl-review)
             try:
                 client = await self._get_client(event.repo)
@@ -681,7 +679,8 @@ class EventRouter:
         Args:
             event: CI 結果イベント。
         """
-        assert event.issue is not None
+        if event.issue is None:
+            return
         try:
             client = await self._get_client(event.repo)
             if client is None:

@@ -113,7 +113,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"src/**/*.py" = [
+"src/ai_agent_orchestrator/phases/*.py" = [
+    "RUF001",  # ambiguous unicode in strings (Japanese fullwidth characters)
+    "RUF002",  # ambiguous unicode in docstrings (Japanese parentheses)
+    "RUF003",  # ambiguous unicode in comments (Japanese parentheses)
+]
+"src/ai_agent_orchestrator/poller/*.py" = [
     "RUF001",  # ambiguous unicode in strings (Japanese fullwidth characters)
     "RUF002",  # ambiguous unicode in docstrings (Japanese parentheses)
     "RUF003",  # ambiguous unicode in comments (Japanese parentheses)

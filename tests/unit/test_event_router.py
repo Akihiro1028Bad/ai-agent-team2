@@ -328,11 +328,6 @@ class TestEventRouterCIResultWithReview:
         return sm
 
     @pytest.fixture
-    def mock_tq(self) -> AsyncMock:
-        """TaskQueue のモック."""
-        return AsyncMock()
-
-    @pytest.fixture
     def router_with_am(
         self,
         mock_sm_with_state: AsyncMock,

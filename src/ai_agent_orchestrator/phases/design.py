@@ -9,6 +9,7 @@ from ai_agent_orchestrator.phases.base import PhaseExecutor
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.models import AgentResult, TaskRequest
+    from ai_agent_orchestrator.phases.base import GitHubClientProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ class DesignExecutor(PhaseExecutor):
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:design-review")
         await self._sm.transition(request.issue_number, "design-review")
-        await self._post_design_review_comment(request, pr_number)
+        await self._post_design_review_comment(request, pr_number, client)
         repo_full_name = self._get_repo_full_name(request)
         pr_url = self._build_pr_url(request, pr_number)
         issue = await client.get_issue(request.repo, request.issue_number)
@@ -138,15 +139,16 @@ class DesignExecutor(PhaseExecutor):
         self,
         request: TaskRequest,
         pr_number: int,
+        client: GitHubClientProtocol,
     ) -> None:
         """設計PRに @claude /review コメントを投稿する。
 
         Args:
             request: タスクリクエスト。
             pr_number: 設計 PR 番号。
+            client: GitHub クライアント。
         """
         try:
-            client = await self._get_client(request.repo)
             await client.create_comment(request.repo, pr_number, _DESIGN_REVIEW_PROMPT)
             logger.info(
                 "Issue #%d: posted @claude /review comment to design PR #%d",
