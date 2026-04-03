@@ -643,7 +643,7 @@ class GitHubPoller:
                 if body.strip() == self._approve_comment:
                     approved.append({"state": "approved", "body": body, "id": str(comment.id)})
                     break
-        # 承認後に新たなコメントレビューがある場合はコメントを優先（修正要求の検知）
+        # 承認後に新たなコメントレビューがある場合はコメントを優先(修正要求の検知)
         if approved and commented and last_commented_at > last_approved_at:
             return commented
         # 承認があればコメントは無視(遷移競合を防止)

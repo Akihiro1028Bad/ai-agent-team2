@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
-
 from ai_agent_orchestrator.models import Subtask
 from ai_agent_orchestrator.phases.implement import parse_subtasks
-
 
 # ---------------------------------------------------------------------------
 # parse_subtasks のテスト
