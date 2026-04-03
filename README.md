@@ -1,67 +1,91 @@
-# AI Multi-Agent Orchestrator
+```
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║        AI Multi-Agent Orchestrator                           ║
+║                                                              ║
+║   ░█████╗░██╗  ░█████╗░░██████╗░███████╗███╗░░██╗████████╗  ║
+║   ██╔══██╗██║  ██╔══██╗██╔════╝░██╔════╝████╗░██║╚══██╔══╝  ║
+║   ███████║██║  ███████║██║░░██╗░█████╗░░██╔██╗██║░░░██║░░░  ║
+║   ██╔══██║██║  ██╔══██║██║░░╚██╗██╔══╝░░██║╚████║░░░██║░░░  ║
+║   ██║░░██║██║  ██║░░██║╚██████╔╝███████╗██║░╚███║░░░██║░░░  ║
+║   ╚═╝░░╚═╝╚═╝  ╚═╝░░╚═╝░╚═════╝░╚══════╝╚═╝░░╚══╝░░░╚═╝░░░  ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+```
 
-GitHub Issue を自動で処理する AI マルチエージェントオーケストレーター。
-Issue の受付 → ヒアリング → 設計 → 実装 → PR作成 → レビュー対応を自動化します。
+> **あなたのリポジトリに、眠らないエンジニアを。**
+> Issue を投げれば、ヒアリング・設計・実装・PR まで全自動。
+> AI チームメンバーをそのまま雇う感覚でお使いください。
 
 [![CI](https://github.com/Akihiro1028Bad/ai-agent-team2/actions/workflows/ci.yml/badge.svg)](https://github.com/Akihiro1028Bad/ai-agent-team2/actions/workflows/ci.yml)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![uv](https://img.shields.io/badge/package%20manager-uv-blueviolet.svg)](https://docs.astral.sh/uv/)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-orange.svg)](https://github.com/astral-sh/ruff)
 
 ---
 
-## 概要
+## 🌟 概要
 
 24時間稼働するPCにAIマルチエージェントを配置し、**1人のエンジニアとして自律的に稼働**させるシステムです。
 GitHub Issue ベースでタスクをアサインし、要件ヒアリング・設計・実装計画・実装・レビュー対応までを自動で行い、Pull Request を作成します。
 
 ### 主な特徴
 
-- **Issue 駆動**: `ai-agent` ラベルを付けるだけで自動処理開始
-- **タイプ別ワークフロー**: Bug / Feature-S / Feature-M / Feature-L を自動判定し、最適なフローで処理
-- **人間との協調**: 設計承認・PR レビューなど重要なポイントで人間の判断を介入
-- **並行処理**: 最大2 Issue を同時処理（git worktree による物理的分離）
-- **マルチリポジトリ対応**: YAML 設定で複数リポジトリを一元監視
-- **マルチアカウント対応**: リポジトリごとに異なる GitHub アカウントを使用可能
-- **自己改善**: エピソード記憶・パターン抽出により、使うほど精度が向上
+| 機能 | 説明 |
+|-----|------|
+| 🤖 **Issue 駆動** | `ai-agent` ラベルを付けるだけで全自動起動 |
+| 🔀 **タイプ別フロー** | Bug / Feature-S / Feature-M / Feature-L を自動判定し最適なフローで処理 |
+| 🤝 **人間との協調** | 設計承認・PR レビューなど重要なポイントで人間の判断を介入 |
+| ⚡ **並行処理** | 最大2 Issue を同時処理（git worktree による物理的分離） |
+| 🏢 **マルチリポジトリ** | YAML 1ファイルで複数リポジトリを一元管理 |
+| 🔑 **マルチアカウント** | リポジトリごとに異なる GitHub アカウントを切り替え |
+| 🧠 **自己改善ループ** | エピソード → パターン → Skill 抽出で使うほど賢くなる |
 
 ---
 
-## アーキテクチャ
+## 🏛️ アーキテクチャ
 
 ```
-┌──────────────────────────────────────────────────────┐
-│              Orchestrator (asyncio 常駐)              │
-│                                                      │
-│  Poller ──→ Event Router ──→ Task Queue              │
-│  (2分間隔)                    (Priority + Semaphore)  │
-│                                   │                  │
-│                            ┌──────┴──────┐           │
-│                            │ Claude Agent │           │
-│                            │  SDK Runner  │           │
-│                            └──────┬──────┘           │
-│                                   │                  │
-│                       ┌───────────┼───────────┐      │
-│                       ▼           ▼           ▼      │
-│                   GitHub      Slack       Event      │
-│                   Client     Notifier     Logger     │
-└──────────────────────────────────────────────────────┘
+╔══════════════════════════════════════════════════════╗
+║           AI Multi-Agent Orchestrator                ║
+║                   (asyncio 常駐)                     ║
+╠══════════════════════════════════════════════════════╣
+║                                                      ║
+║  GitHub Poller ──→ Event Router ──→ Task Queue       ║
+║   (2分間隔)                         (Priority+Sem)   ║
+║                                          │           ║
+║                                   Claude Agent       ║
+║                                    SDK Runner        ║
+║                                          │           ║
+║                         ┌────────────────┼────────┐  ║
+║                         ▼                ▼        ▼  ║
+║                     GitHub           Slack    Event  ║
+║                     Client          Notifier Logger  ║
+║                                                      ║
+║  ┌─────────────────────────────────────────────────┐ ║
+║  │            Knowledge (自己改善ループ)             │ ║
+║  │  Episode Store → Pattern Extractor → Skill Mgr  │ ║
+║  └─────────────────────────────────────────────────┘ ║
+╚══════════════════════════════════════════════════════╝
 ```
 
 ---
 
-## ワークフロー
+## 🔀 ワークフロー
 
 Issue は内容に応じて4つのタイプに自動分類され、タイプごとに最適化されたワークフローで処理されます。
 
-| タイプ | 判定基準 | フロー | コスト目安 |
-|-------|---------|-------|-----------|
-| 🐛 **Bug** | エラー・不具合 | ANALYSIS → 👍承認 → FIX → PR | ~$0.80 |
-| ⚡ **Feature-S** | 1-3ファイル変更 | HEARING → PLAN_BRIEF → 👍承認 → IMPLEMENT → PR | ~$0.90 |
-| 🏗️ **Feature-M** | 複数ファイル、設計必要 | HEARING → DESIGN PR → approve → PLANNING → IMPLEMENT → PR | ~$1.50 |
-| 🏢 **Feature-L** | 大規模、分割必要 | HEARING → 分割提案 → 子Issue作成 → 各子をタイプ別処理 | $2.0 + N×$1.50 |
+| タイプ | 自動判定 | フェーズ | コスト目安 |
+|-------|---------|---------|-----------|
+| 🐛 **Bug** | エラー・不具合 | `ANALYSIS` → 👍承認 → `FIX` → PR | ~$0.80 |
+| ⚡ **Feature-S** | 1〜3ファイル変更 | `HEARING` → `PLAN_BRIEF` → 👍承認 → `IMPLEMENT` → PR | ~$0.90 |
+| 🏗️ **Feature-M** | 複数ファイル・設計必要 | `HEARING` → 設計PR → approve → `PLANNING` → `IMPLEMENT` → PR | ~$1.50 |
+| 🏢 **Feature-L** | 大規模・分割必要 | `HEARING` → 分割提案 → 子Issue作成 → 各子をタイプ別処理 | $2.0 + N×$1.50 |
 
 ---
 
-## クイックスタート
+## 🚀 クイックスタート
 
 ### 前提条件
 
@@ -73,7 +97,7 @@ Issue は内容に応じて4つのタイプに自動分類され、タイプご�
 | [gh (GitHub CLI)](https://cli.github.com/) | 2.0+ |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | 最新版 |
 
-### インストール
+### ① インストール
 
 ```bash
 # リポジトリのクローン
@@ -87,29 +111,34 @@ uv sync --all-extras
 uv run ai-agent --help
 ```
 
-### 初期セットアップ
+### ② 初期セットアップ
 
 ```bash
-# 1. GitHub アカウントを登録 (トークンを keyring に保存)
+# GitHub アカウントを登録 (トークンを keyring に保存)
 uv run ai-agent account add my-org
 
-# 2. 対象リポジトリをセットアップ (clone + ラベル作成 + config.yaml 更新)
+# 対象リポジトリをセットアップ (clone + ラベル作成 + config.yaml 更新)
 uv run ai-agent setup myorg/my-app --account my-org
 
-# 3. 認証・接続チェック
+# 認証・接続チェック
 uv run ai-agent health
+```
 
-# 4. オーケストレーターを起動
+### ③ 起動
+
+```bash
 uv run ai-agent start --foreground
 ```
 
-### 動作確認
+### ④ 動作確認
 
 対象リポジトリで `ai-agent` ラベルを付けた Issue を作成すると、2分以内にポーリングで検知され、自動処理が開始されます。
 
 ---
 
-## CLI コマンド
+## 🛠️ CLI コマンド
+
+### 📦 アカウント管理
 
 | コマンド | 説明 |
 |---------|------|
@@ -117,8 +146,18 @@ uv run ai-agent start --foreground
 | `ai-agent account list` | 登録済みアカウント一覧 |
 | `ai-agent account verify [name]` | トークンの有効性を検証 |
 | `ai-agent account remove <name>` | アカウントを削除 |
+
+### ⚙️ リポジトリ設定
+
+| コマンド | 説明 |
+|---------|------|
 | `ai-agent setup <owner/repo>` | リポジトリの初期セットアップ |
 | `ai-agent unregister <owner/repo>` | リポジトリの登録解除 |
+
+### 🚀 稼働操作
+
+| コマンド | 説明 |
+|---------|------|
 | `ai-agent start [--foreground]` | オーケストレーターを起動 |
 | `ai-agent stop` | オーケストレーターを停止 |
 | `ai-agent status [--json]` | 稼働状況を表示 |
@@ -127,7 +166,7 @@ uv run ai-agent start --foreground
 
 ---
 
-## 設定
+## ⚙️ 設定
 
 `config.yaml` でリポジトリ・アカウント・動作パラメータを管理します。
 
@@ -177,37 +216,39 @@ slack:
 
 主な設定項目については [セットアップガイド](docs/setup-guide.md) を参照してください。
 
-### クレデンシャル
+### クレデンシャル解決順序
 
 GitHub トークンは以下の優先順位で解決されます:
 
-1. **keyring** (OS セキュアストレージ) — `ai-agent account add` で登録。推奨
-2. **環境変数** — `GITHUB_TOKEN_{NAME}` 形式
-3. **token_command** — 外部コマンド (1Password CLI, AWS Secrets Manager 等)
-4. **gh auth token** — GitHub CLI のフォールバック
+| 優先度 | 方式 | 説明 |
+|-------|------|------|
+| 1️⃣ | **keyring** | OS セキュアストレージ — `ai-agent account add` で登録。**推奨** |
+| 2️⃣ | **環境変数** | `GITHUB_TOKEN_{NAME}` 形式 |
+| 3️⃣ | **token_command** | 外部コマンド (1Password CLI, AWS Secrets Manager 等) |
+| 4️⃣ | **gh auth token** | GitHub CLI のフォールバック |
 
 ---
 
-## 技術スタック
+## 🧰 技術スタック
 
-| カテゴリ | 技術 | 用途 |
-|---------|------|------|
-| 言語 | Python 3.13+ | 実行環境 |
-| パッケージ管理 | uv | 依存関係管理・仮想環境 |
-| CLI | Typer + Rich | CLI フレームワーク |
-| GitHub API | githubkit | 非同期 GitHub API 操作 (型付き) |
-| HTTP | httpx | 非同期 HTTP クライアント |
-| AI 基盤 | Claude Agent SDK | AI エージェント実行 |
-| 状態機械 | python-statemachine | フェーズ遷移管理 |
-| 設定 | pydantic-settings + PyYAML | YAML 設定 + 環境変数 |
-| 認証 | keyring | OS Keychain によるトークン管理 |
-| テスト | pytest + pytest-asyncio + respx + hypothesis | テストフレームワーク |
-| Lint / Format | ruff | Linter + Formatter |
-| 型チェック | mypy (strict) | 静的型チェック |
+| カテゴリ | 技術 | バージョン | 用途 |
+|---------|------|-----------|------|
+| 言語 | Python | 3.13+ | 実行環境 |
+| パッケージ管理 | uv | 最新版 | 依存関係管理・仮想環境 |
+| CLI | Typer + Rich | >=0.15 / >=13 | CLI フレームワーク |
+| GitHub API | githubkit | >=0.14 | 非同期 GitHub API 操作 (型付き) |
+| HTTP | httpx | >=0.28 | 非同期 HTTP クライアント |
+| AI 基盤 | claude-agent-sdk | >=0.1.50 | AI エージェント実行 |
+| 状態機械 | python-statemachine | >=2.5 | フェーズ遷移管理 |
+| 設定 | pydantic-settings + PyYAML | >=2.7 / >=6 | YAML 設定 + 環境変数 |
+| 認証 | keyring | >=25 | OS Keychain によるトークン管理 |
+| テスト | pytest + pytest-asyncio + respx + hypothesis | >=8 / >=0.25 / >=0.22 / >=6.120 | テストフレームワーク |
+| Lint / Format | ruff | >=0.11 | Linter + Formatter |
+| 型チェック | mypy (strict) | >=1.15 | 静的型チェック |
 
 ---
 
-## 開発
+## 💻 開発
 
 ### コマンド
 
@@ -248,17 +289,27 @@ src/ai_agent_orchestrator/
 ├── orchestrator/
 │   ├── orchestrator.py       # メインオーケストレーター
 │   ├── state_machine.py      # フェーズ遷移ロジック
-│   └── task_queue.py         # asyncio.PriorityQueue + Semaphore
+│   ├── task_queue.py         # asyncio.PriorityQueue + Semaphore
+│   └── execution_guard.py    # 二重実行防止ガード
 ├── poller/
 │   ├── github_poller.py      # GitHub Polling (2分間隔)
 │   └── event_router.py       # イベント → フェーズ遷移
 ├── phases/                   # フェーズ実行ロジック
 │   ├── base.py               # PhaseExecutor 基底
+│   ├── type_detection.py     # タイプ自動判定
+│   ├── dispatcher.py         # フェーズ分岐ディスパッチャ
 │   ├── hearing.py            # ヒアリング
+│   ├── analysis.py           # Bug 原因分析
 │   ├── design.py             # 設計書作成
+│   ├── design_revise.py      # 設計書修正対応
 │   ├── planning.py           # 実装計画
 │   ├── implement.py          # 実装
-│   └── ...                   # その他フェーズ
+│   ├── impl_revise.py        # 実装修正対応
+│   ├── fix.py                # Bug 修正
+│   ├── ci_fix.py             # CI 失敗修正
+│   ├── revise.py             # レビュー対応
+│   ├── split.py              # Feature-L 分割
+│   └── done.py               # 完了処理
 ├── knowledge/                # 自己改善ループ
 │   ├── episode_store.py      # エピソード記憶
 │   ├── pattern_extractor.py  # パターン抽出
@@ -271,20 +322,23 @@ src/ai_agent_orchestrator/
 tests/
 ├── unit/                     # 単体テスト (モック使用、高速)
 ├── integration/              # 結合テスト
+├── scenario/                 # シナリオテスト (実 API)
 └── e2e/                      # E2E テスト
 ```
 
 ### 設計原則
 
-1. **Protocol ベース** — 全外部依存を `typing.Protocol` で抽象化し、テスタビリティを確保
-2. **完全非同期** — `asyncio` ベースの非同期設計。ブロッキング呼び出し禁止
-3. **イミュータブルデータ** — `dataclass(frozen=True)` で状態を表現
-4. **Fail-safe** — 全フェーズでタイムアウト・リトライ・エラー通知を実装
-5. **Observability** — 構造化イベントログ (`events.jsonl`) による全アクション追跡
+| # | 原則 | 説明 |
+|---|------|------|
+| 🔌 1 | **Protocol ベース** | 全外部依存を `typing.Protocol` で抽象化し、テスタビリティを確保 |
+| ⚡ 2 | **完全非同期** | `asyncio` ベースの非同期設計。ブロッキング呼び出し禁止 |
+| 🧊 3 | **イミュータブルデータ** | `dataclass(frozen=True)` で状態を表現 |
+| 🛡️ 4 | **Fail-safe** | 全フェーズでタイムアウト・リトライ・エラー通知を実装 |
+| 🔭 5 | **Observability** | 構造化イベントログ (`events.jsonl`) による全アクション追跡 |
 
 ---
 
-## ドキュメント
+## 📚 ドキュメント
 
 | ドキュメント | 説明 |
 |------------|------|
@@ -296,7 +350,7 @@ tests/
 
 ---
 
-## GitHub Labels
+## 🏷️ GitHub Labels
 
 オーケストレーターは GitHub Labels でフェーズを管理します。`ai-agent setup` で自動作成されます。
 
@@ -313,7 +367,7 @@ tests/
 
 ---
 
-## 検証結果
+## ✅ 検証結果
 
 実際のテストリポジトリでの検証結果:
 
@@ -328,6 +382,6 @@ tests/
 
 ---
 
-## ライセンス
+## 📄 ライセンス
 
 MIT License
