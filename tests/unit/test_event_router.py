@@ -16,14 +16,22 @@ from ai_agent_orchestrator.poller.event_router import EventRouter
 
 
 @pytest.fixture
-def mock_sm() -> AsyncMock:
-    """StateMachineManager のモック."""
-    sm = AsyncMock()
+def mock_sm() -> MagicMock:
+    """StateMachineManager のモック.
+
+    MagicMock ベースで、非同期メソッドのみ AsyncMock で上書きする。
+    AsyncMock をベースにすると EventRouter.__init__ 内で同期メソッド
+    register_transition_hook() を呼び出した際に unawaited coroutine 警告が発生するため。
+    """
+    sm = MagicMock()
+    sm.transition = AsyncMock()
     sm.register_issue = MagicMock()
     sm.get_phase = MagicMock(return_value="plan-review")  # 同期メソッド
     sm.get_issue_type = MagicMock(return_value="bug")
     sm.set_issue_type = MagicMock()  # 同期メソッド
     sm.get_ci_retry_count = AsyncMock(return_value=0)
+    sm.get_state = MagicMock(return_value=None)
+    sm.register_transition_hook = MagicMock()
     return sm
 
 
@@ -481,3 +489,266 @@ class TestEventRouterHearingWait:
 
         mock_sm.transition.assert_not_called()
         mock_tq.enqueue.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tests: ボットコメントフィルタ (TC-63-02, TC-63-03, TC-63-05)
+# ---------------------------------------------------------------------------
+
+
+class TestBotCommentFiltering:
+    """TC-63-02, TC-63-03, TC-63-05: ボットコメントが IMPL_REVISE/DESIGN_REVISE をトリガーしないことを確認."""
+
+    @pytest.fixture
+    def mock_sm(self) -> MagicMock:
+        # AsyncMock() を使うと register_transition_hook() が AsyncMock になり
+        # EventRouter.__init__ 内の同期呼び出しで unawaited coroutine 警告が出るため
+        # MagicMock() を使い、非同期メソッドだけ AsyncMock で上書きする
+        sm = MagicMock()
+        sm.transition = AsyncMock()
+        sm.register_issue = MagicMock()
+        sm.get_phase = MagicMock(return_value=Phase.IMPL_REVIEW)
+        sm.get_issue_type = MagicMock(return_value="feature-m")
+        sm.set_issue_type = MagicMock()
+        sm.get_ci_retry_count = AsyncMock(return_value=0)
+        sm.get_state = MagicMock(return_value=None)
+        sm.register_transition_hook = MagicMock()
+        return sm
+
+    @pytest.fixture
+    def mock_tq(self) -> AsyncMock:
+        return AsyncMock()
+
+    @pytest.fixture
+    def router(self, mock_sm: MagicMock, mock_tq: AsyncMock) -> EventRouter:
+        return EventRouter(state_machine=mock_sm, task_queue=mock_tq)
+
+    async def test_bot_impl_pr_commented_not_routed_to_impl_revise(
+        self,
+        router: EventRouter,
+        mock_sm: AsyncMock,
+        mock_tq: AsyncMock,
+    ) -> None:
+        """TC-63-02: github-actions[bot] の IMPL_PR_COMMENTED は IMPL_REVISE 遷移をトリガーしないこと."""
+        comment = MagicMock()
+        comment.user = MagicMock()
+        comment.user.login = "github-actions[bot]"
+        event = _make_event(EventType.IMPL_PR_COMMENTED, comment=comment)
+
+        await router.route(event)
+
+        mock_sm.transition.assert_not_called()
+        mock_tq.enqueue.assert_not_called()
+
+    async def test_human_impl_pr_commented_routes_to_impl_revise(
+        self,
+        router: EventRouter,
+        mock_sm: AsyncMock,
+        mock_tq: AsyncMock,
+    ) -> None:
+        """TC-63-03: 人間の IMPL_PR_COMMENTED は IMPL_REVISE 遷移をトリガーすること (既存動作の維持確認)."""
+        comment = MagicMock()
+        comment.user = MagicMock()
+        comment.user.login = "human-reviewer"
+        event = _make_event(
+            EventType.IMPL_PR_COMMENTED,
+            comment=comment,
+            extra={"comments": "要修正"},
+        )
+
+        await router.route(event)
+
+        mock_sm.transition.assert_called_once()
+        args = mock_sm.transition.call_args[0]
+        assert args[1].value == "impl-revise"
+
+    async def test_bot_design_pr_commented_not_routed_to_design_revise(
+        self,
+        router: EventRouter,
+        mock_sm: AsyncMock,
+        mock_tq: AsyncMock,
+    ) -> None:
+        """TC-63-05: github-actions[bot] の DESIGN_PR_COMMENTED は DESIGN_REVISE 遷移をトリガーしないこと."""
+        mock_sm.get_phase.return_value = Phase.DESIGN_REVIEW
+        comment = MagicMock()
+        comment.user = MagicMock()
+        comment.user.login = "github-actions[bot]"
+        event = _make_event(EventType.DESIGN_PR_COMMENTED, comment=comment)
+
+        await router.route(event)
+
+        mock_sm.transition.assert_not_called()
+        mock_tq.enqueue.assert_not_called()
+
+    async def test_claude_bot_impl_pr_commented_also_ignored(
+        self,
+        router: EventRouter,
+        mock_sm: AsyncMock,
+        mock_tq: AsyncMock,
+    ) -> None:
+        """claude[bot] の IMPL_PR_COMMENTED も IMPL_REVISE 遷移をトリガーしないこと."""
+        comment = MagicMock()
+        comment.user = MagicMock()
+        comment.user.login = "claude[bot]"
+        event = _make_event(EventType.IMPL_PR_COMMENTED, comment=comment)
+
+        await router.route(event)
+
+        mock_sm.transition.assert_not_called()
+        mock_tq.enqueue.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests: @claude /review 自動投稿 (TC-63-01, TC-63-04, TC-63-06, TC-63-07)
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeReviewHook:
+    """TC-63-01, TC-63-04, TC-63-06, TC-63-07: @claude /review-* 自動投稿のテスト."""
+
+    @pytest.fixture
+    def mock_client(self) -> AsyncMock:
+        """GitHubClient のモック."""
+        return AsyncMock()
+
+    @pytest.fixture
+    def mock_account_manager(self, mock_client: AsyncMock) -> AsyncMock:
+        """AccountManager のモック。get_client_for_repo が mock_client を返す."""
+        am = AsyncMock()
+        am.get_client_for_repo = AsyncMock(return_value=mock_client)
+        return am
+
+    @pytest.fixture
+    def mock_sm(self) -> MagicMock:
+        """StateMachineManager のモック。MagicMock ベースで非同期メソッドのみ AsyncMock。"""
+        sm = MagicMock()
+        sm.transition = AsyncMock()
+        sm.register_issue = MagicMock()
+        sm.get_phase = MagicMock(return_value=Phase.IMPL_REVIEW)
+        sm.get_issue_type = MagicMock(return_value="feature-m")
+        sm.set_issue_type = MagicMock()
+        sm.get_ci_retry_count = AsyncMock(return_value=0)
+        sm.get_state = MagicMock(return_value=None)
+        sm.register_transition_hook = MagicMock()
+        return sm
+
+    @pytest.fixture
+    def mock_tq(self) -> AsyncMock:
+        return AsyncMock()
+
+    @pytest.fixture
+    def router(
+        self,
+        mock_sm: MagicMock,
+        mock_tq: AsyncMock,
+        mock_account_manager: AsyncMock,
+    ) -> EventRouter:
+        return EventRouter(
+            state_machine=mock_sm,
+            task_queue=mock_tq,
+            account_manager=mock_account_manager,
+        )
+
+    async def test_impl_review_hook_posts_review_impl_comment(
+        self,
+        router: EventRouter,
+        mock_sm: MagicMock,
+        mock_client: AsyncMock,
+    ) -> None:
+        """TC-63-01: IMPL_REVIEW 遷移後のフックで @claude /review-impl が PR に投稿されること."""
+        from ai_agent_orchestrator.models import IssueState
+
+        mock_sm.get_state.return_value = IssueState(
+            issue_number=1,
+            phase=Phase.IMPL_REVIEW,
+            repo="owner/repo",
+            pr_number=42,
+        )
+
+        await router._on_review_phase_entered(1, Phase.IMPL_REVIEW)
+
+        mock_client.create_comment.assert_called_once()
+        call_args = mock_client.create_comment.call_args
+        # create_comment(repo_config, pr_number, body) の第3引数を確認
+        assert call_args[0][2] == "@claude /review-impl"
+        assert call_args[0][1] == 42
+
+    async def test_pr_number_none_skips_comment_without_error(
+        self,
+        router: EventRouter,
+        mock_sm: MagicMock,
+        mock_client: AsyncMock,
+    ) -> None:
+        """TC-63-04: pr_number が None の場合、コメント投稿をスキップしてもエラーにならないこと."""
+        from ai_agent_orchestrator.models import IssueState
+
+        mock_sm.get_state.return_value = IssueState(
+            issue_number=1,
+            phase=Phase.IMPL_REVIEW,
+            repo="owner/repo",
+            pr_number=None,
+        )
+
+        # 例外が発生しないこと
+        await router._post_claude_review_comment(1, "impl")
+
+        mock_client.create_comment.assert_not_called()
+
+    async def test_create_comment_exception_does_not_propagate(
+        self,
+        router: EventRouter,
+        mock_sm: MagicMock,
+        mock_client: AsyncMock,
+    ) -> None:
+        """TC-63-06: create_comment が例外を投げても CI 成功フローが継続すること."""
+        from ai_agent_orchestrator.models import IssueState
+
+        mock_sm.get_state.return_value = IssueState(
+            issue_number=1,
+            phase=Phase.IMPL_REVIEW,
+            repo="owner/repo",
+            pr_number=42,
+        )
+        mock_client.create_comment.side_effect = Exception("GitHub API error")
+
+        # 例外が伝播しないこと
+        await router._on_review_phase_entered(1, Phase.IMPL_REVIEW)
+        # ここに到達できれば OK
+
+    async def test_design_review_hook_posts_review_design_comment(
+        self,
+        router: EventRouter,
+        mock_sm: MagicMock,
+        mock_client: AsyncMock,
+    ) -> None:
+        """TC-63-07: DESIGN_REVIEW 遷移フックで design_pr_number の PR に @claude /review-design が投稿されること."""
+        from ai_agent_orchestrator.models import IssueState
+
+        mock_sm.get_state.return_value = IssueState(
+            issue_number=1,
+            phase=Phase.DESIGN_REVIEW,
+            repo="owner/repo",
+            design_pr_number=99,
+        )
+
+        await router._on_review_phase_entered(1, Phase.DESIGN_REVIEW)
+
+        mock_client.create_comment.assert_called_once()
+        call_args = mock_client.create_comment.call_args
+        # create_comment(repo_config, design_pr_number, body)
+        assert call_args[0][2] == "@claude /review-design"
+        assert call_args[0][1] == 99
+
+    async def test_issue_state_none_skips_comment_without_error(
+        self,
+        router: EventRouter,
+        mock_sm: MagicMock,
+        mock_client: AsyncMock,
+    ) -> None:
+        """issue_state が None の場合、コメント投稿をスキップしてもエラーにならないこと."""
+        mock_sm.get_state.return_value = None
+
+        # 例外が発生しないこと
+        await router._post_claude_review_comment(1, "impl")
+
+        mock_client.create_comment.assert_not_called()

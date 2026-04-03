@@ -564,3 +564,94 @@ class TestHearingWaitWorkflow:
         await sm.transition(1, Phase.HEARING_WAIT)
         await sm.transition(1, Phase.SUSPENDED)
         assert sm.get_phase(1) == Phase.SUSPENDED
+
+
+# ---------------------------------------------------------------------------
+# Transition hooks (TC-63-08〜TC-63-11)
+# ---------------------------------------------------------------------------
+
+
+class TestTransitionHooks:
+    """TC-63-08〜TC-63-11: register_transition_hook() / transition フック機能のテスト."""
+
+    @pytest.fixture
+    def sm(self, mock_persistence: MagicMock, mock_tracker: AsyncMock) -> StateMachineManager:
+        return StateMachineManager(persistence=mock_persistence, tracker=mock_tracker)
+
+    @pytest.mark.asyncio
+    async def test_hook_called_after_transition(self, sm: StateMachineManager) -> None:
+        """TC-63-08: register_transition_hook() で登録したコールバックが遷移後に呼ばれること."""
+        sm.register_issue(200, "owner/repo")
+        sm.set_issue_type(200, "bug")
+
+        called_with: list[tuple[int, Phase]] = []
+
+        async def hook(issue_number: int, phase: Phase) -> None:
+            called_with.append((issue_number, phase))
+
+        sm.register_transition_hook([Phase.ANALYSIS], hook)
+
+        await sm.transition(200, Phase.ANALYSIS)
+
+        assert len(called_with) == 1
+        assert called_with[0] == (200, Phase.ANALYSIS)
+
+    @pytest.mark.asyncio
+    async def test_hook_exception_does_not_affect_transition(self, sm: StateMachineManager) -> None:
+        """TC-63-09: フック内の例外が遷移の成否に影響しないこと (遷移は成功する)."""
+        sm.register_issue(201, "owner/repo")
+        sm.set_issue_type(201, "bug")
+
+        async def failing_hook(issue_number: int, phase: Phase) -> None:
+            raise RuntimeError("hook failure")
+
+        sm.register_transition_hook([Phase.ANALYSIS], failing_hook)
+
+        # 例外が伝播しないこと
+        await sm.transition(201, Phase.ANALYSIS)
+
+        # 遷移は成功している
+        assert sm.get_phase(201) == Phase.ANALYSIS
+
+    @pytest.mark.asyncio
+    async def test_multiple_hooks_all_called_in_order(self, sm: StateMachineManager) -> None:
+        """TC-63-10: 複数フックが登録された場合、全て登録順に呼ばれること."""
+        sm.register_issue(202, "owner/repo")
+        sm.set_issue_type(202, "bug")
+
+        call_order: list[str] = []
+
+        async def hook1(issue_number: int, phase: Phase) -> None:
+            call_order.append("hook1")
+
+        async def hook2(issue_number: int, phase: Phase) -> None:
+            call_order.append("hook2")
+
+        sm.register_transition_hook([Phase.ANALYSIS], hook1)
+        sm.register_transition_hook([Phase.ANALYSIS], hook2)
+
+        await sm.transition(202, Phase.ANALYSIS)
+
+        assert call_order == ["hook1", "hook2"]
+
+    @pytest.mark.asyncio
+    async def test_hook_not_called_for_other_phase(self, sm: StateMachineManager) -> None:
+        """TC-63-11: 対象フェーズ以外への遷移ではフックが呼ばれないこと."""
+        sm.register_issue(203, "owner/repo")
+        sm.set_issue_type(203, "bug")
+
+        called: list[Phase] = []
+
+        async def hook(issue_number: int, phase: Phase) -> None:
+            called.append(phase)
+
+        # PLAN_REVIEW フェーズへの遷移にフックを登録
+        sm.register_transition_hook([Phase.PLAN_REVIEW], hook)
+
+        # ANALYSIS への遷移ではフックが呼ばれない
+        await sm.transition(203, Phase.ANALYSIS)
+        assert called == []
+
+        # PLAN_REVIEW への遷移ではフックが呼ばれる
+        await sm.transition(203, Phase.PLAN_REVIEW)
+        assert called == [Phase.PLAN_REVIEW]
