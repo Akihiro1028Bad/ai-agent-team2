@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -320,6 +321,9 @@ class StateMachineManager:
         self._states: dict[int, IssueState] = {}
         self._workflows: dict[int, IssueWorkflow] = {}
         self._locks: dict[int, asyncio.Lock] = {}
+        self._transition_hooks: dict[
+            Phase, list[Callable[[int, Phase], Awaitable[None]]]
+        ] = {}
 
     def register_issue(
         self,
@@ -355,6 +359,25 @@ class StateMachineManager:
         )
         self._auto_save()
 
+    def register_transition_hook(
+        self,
+        target_phases: list[Phase],
+        callback: Callable[[int, Phase], Awaitable[None]],
+    ) -> None:
+        """指定フェーズへの遷移後に呼び出されるコールバックを登録する.
+
+        遷移が成功した(no-op でない実際の遷移が発生した)場合のみ、
+        ロック解放後にコールバックが非同期で呼び出される。
+        複数のコールバックを登録した場合は登録順に全て実行される。
+        コールバック内で例外が発生しても、遷移の成否には影響しない。
+
+        Args:
+            target_phases: フックを設定するターゲットフェーズのリスト。
+            callback: 遷移後に呼び出す非同期コールバック (issue_number, phase) -> None。
+        """
+        for phase in target_phases:
+            self._transition_hooks.setdefault(phase, []).append(callback)
+
     def _get_lock(self, issue_number: int) -> asyncio.Lock:
         """Issue 単位のロックを取得する。存在しなければ作成."""
         if issue_number not in self._locks:
@@ -373,6 +396,10 @@ class StateMachineManager:
         Issue 単位の asyncio.Lock で排他制御を行い、
         ポーラーとワーカーの同時遷移による競合を防止する。
 
+        遷移成功後(no-op でない実際の遷移が発生した場合)、
+        ロック解放後に register_transition_hook() で登録されたコールバックを実行する。
+        コールバック内で例外が発生しても、遷移の成否には影響しない。
+
         Args:
             issue_number: Issue 番号。
             new_phase: 遷移先のフェーズ (Phase enum or str)。
@@ -382,14 +409,34 @@ class StateMachineManager:
             InvalidTransitionError: 許可されていない遷移。
         """
         async with self._get_lock(issue_number):
-            await self._transition_inner(issue_number, new_phase)
+            transitioned = await self._transition_inner(issue_number, new_phase)
+
+        # ロック解放後にトランジションフックを実行(実際に遷移が発生した場合のみ)
+        if transitioned:
+            target = Phase(new_phase) if isinstance(new_phase, str) else new_phase
+            hooks = self._transition_hooks.get(target, [])
+            for hook in hooks:
+                try:
+                    await hook(issue_number, target)
+                except Exception as e:
+                    logger.error(
+                        "transition hook failed: issue_number=%d, target_phase=%s, error=%s",
+                        issue_number,
+                        target.value,
+                        str(e),
+                    )
 
     async def _transition_inner(
         self,
         issue_number: int,
         new_phase: Phase | str,
-    ) -> None:
-        """ロック保持下でフェーズ遷移を実行する内部メソッド."""
+    ) -> bool:
+        """ロック保持下でフェーズ遷移を実行する内部メソッド.
+
+        Returns:
+            True: 実際に遷移が発生した場合。
+            False: no-op(すでに同一フェーズ)の場合。
+        """
         if issue_number not in self._states:
             msg = f"Issue #{issue_number} is not registered"
             raise KeyError(msg)
@@ -406,7 +453,7 @@ class StateMachineManager:
                 issue_number,
                 target.value,
             )
-            return
+            return False
 
         try:
             self._execute_transition(workflow, old_phase, target)
@@ -427,6 +474,7 @@ class StateMachineManager:
             phase=target.value,
             data={"from": old_phase.value, "to": target.value},
         )
+        return True
 
     def _execute_transition(
         self,
