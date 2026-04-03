@@ -827,6 +827,7 @@ class Orchestrator:
                 issue_number=issue_number,
                 phase=phase,
                 data={
+                    "status": "success",
                     "output_summary": result.output_summary,
                     "cost_usd": result.cost_usd,
                     "next_phase": result.next_phase,
@@ -957,17 +958,24 @@ class Orchestrator:
                     transition_err,
                 )
 
-            await self._notifier.notify(
-                f"Issue #{issue_number} suspended due to error: {error}",
-                level="error",
-                metadata={
-                    "notification_type": "suspended",
-                    "issue": issue_number,
-                    "phase": task.phase,
-                    "error": str(error),
-                    "next_action": "→ 手動での確認をお願いします",
-                },
-            )
+            try:
+                await self._notifier.notify(
+                    f"Issue #{issue_number} suspended due to error: {error}",
+                    level="error",
+                    metadata={
+                        "notification_type": "suspended",
+                        "issue": issue_number,
+                        "phase": task.phase,
+                        "error": str(error),
+                        "next_action": "→ 手動での確認をお願いします",
+                    },
+                )
+            except Exception as notify_err:
+                logger.warning(
+                    "Failed to send suspension notification for issue #%d: %s",
+                    issue_number,
+                    notify_err,
+                )
 
     @staticmethod
     def _classify_error(error: Exception) -> str:

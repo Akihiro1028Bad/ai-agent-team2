@@ -430,23 +430,47 @@ class PhaseExecutor(ABC):
             await self._runner.interrupt(state.session_id)
 
         await self._sm.transition(request.issue_number, "suspended")
+
+        # events.jsonl にタイムアウト情報を記録
+        try:
+            await self._tracker.track(
+                "phase_suspended",
+                issue_number=request.issue_number,
+                phase=str(request.phase),
+                data={"suspend_reason": "timeout"},
+            )
+        except Exception:
+            logger.warning("Failed to track phase_suspended event for issue #%d", request.issue_number)
+
         try:
             client = await self._get_client(request.repo)
             await client.replace_phase_label(request.repo, request.issue_number, "phase:suspended")
+            # Issue にタイムアウト理由をコメント
+            try:
+                await client.create_comment(
+                    request.repo,
+                    request.issue_number,
+                    f"⏱ タイムアウトしました (phase: {request.phase})。手動での確認をお願いします。",
+                )
+            except Exception:
+                logger.warning("Failed to post timeout comment for issue #%d", request.issue_number)
         except Exception:
             logger.warning("Failed to update phase label to suspended for issue #%d", request.issue_number)
         repo_full_name = self._get_repo_full_name(request)
-        await self._notifier.notify(
-            f"Issue #{request.issue_number} がタイムアウトしました (phase: {request.phase})",
-            level="error",
-            metadata={
-                "notification_type": "timeout",
-                "issue": request.issue_number,
-                "phase": str(request.phase),
-                "repo": repo_full_name,
-                "next_action": "→ 手動での確認をお願いします",
-            },
-        )
+        try:
+            await self._notifier.notify(
+                f"Issue #{request.issue_number} がタイムアウトしました (phase: {request.phase})",
+                level="error",
+                metadata={
+                    "notification_type": "timeout",
+                    "issue": request.issue_number,
+                    "phase": str(request.phase),
+                    "repo": repo_full_name,
+                    "next_action": "→ 手動での確認をお願いします",
+                },
+            )
+        except Exception:
+            logger.warning("Failed to send timeout notification for issue #%d", request.issue_number)
 
     async def _handle_error(self, request: TaskRequest, error: Exception) -> None:
         """エラー処理: SUSPENDED 遷移 + Issue コメント + 通知。
@@ -462,28 +486,62 @@ class PhaseExecutor(ABC):
             )
             return
         await self._sm.transition(request.issue_number, "suspended")
-        client = await self._get_client(request.repo)
+
+        # events.jsonl にエラー情報を記録 (最優先: 以降の処理が失敗しても残す)
         try:
-            await client.replace_phase_label(request.repo, request.issue_number, "phase:suspended")
+            await self._tracker.track(
+                "phase_suspended",
+                issue_number=request.issue_number,
+                phase=str(request.phase),
+                data={
+                    "suspend_reason": "exception",
+                    "error_type": type(error).__name__,
+                    "error_message": str(error)[:500],
+                },
+            )
         except Exception:
-            logger.warning("Failed to update phase label to suspended for issue #%d", request.issue_number)
-        await client.create_comment(
-            request.repo,
-            request.issue_number,
-            f"エラーが発生しました: {error}",
-        )
+            logger.warning("Failed to track phase_suspended event for issue #%d", request.issue_number)
+
+        try:
+            client = await self._get_client(request.repo)
+            try:
+                await client.replace_phase_label(request.repo, request.issue_number, "phase:suspended")
+            except Exception:
+                logger.warning("Failed to update phase label to suspended for issue #%d", request.issue_number)
+            try:
+                await client.create_comment(
+                    request.repo,
+                    request.issue_number,
+                    f"エラーが発生しました: {error}",
+                )
+            except Exception:
+                logger.error(
+                    "Failed to post error comment for issue #%d (original error: %s)",
+                    request.issue_number,
+                    error,
+                )
+        except Exception:
+            logger.error(
+                "Failed to get GitHub client for issue #%d (original error: %s)",
+                request.issue_number,
+                error,
+            )
+
         repo_full_name = self._get_repo_full_name(request)
-        await self._notifier.notify(
-            f"Issue #{request.issue_number} でエラー: {error} (phase: {request.phase})",
-            level="error",
-            metadata={
-                "notification_type": "error",
-                "issue": request.issue_number,
-                "phase": str(request.phase),
-                "repo": repo_full_name,
-                "next_action": "→ 手動での確認をお願いします",
-            },
-        )
+        try:
+            await self._notifier.notify(
+                f"Issue #{request.issue_number} でエラー: {error} (phase: {request.phase})",
+                level="error",
+                metadata={
+                    "notification_type": "error",
+                    "issue": request.issue_number,
+                    "phase": str(request.phase),
+                    "repo": repo_full_name,
+                    "next_action": "→ 手動での確認をお願いします",
+                },
+            )
+        except Exception:
+            logger.warning("Failed to send error notification for issue #%d", request.issue_number)
 
     # ------------------------------------------------------------------
     # Git state validation & recovery
@@ -683,13 +741,22 @@ class PhaseExecutor(ABC):
         client = await self._get_client(request.repo)
 
         # Step 1: エージェント出力からPR番号を抽出
+        logger.info(
+            "Issue #%d: _ensure_pr_created step1 (extract from output) output_len=%d",
+            request.issue_number,
+            len(agent_output),
+        )
         pr_number = self._extract_pr_number(agent_output)
         if pr_number is not None:
-            logger.info("PR #%d extracted from agent output for issue #%d", pr_number, request.issue_number)
+            logger.info(
+                "Issue #%d: _ensure_pr_created step1 succeeded PR #%d",
+                request.issue_number,
+                pr_number,
+            )
             return pr_number
 
         logger.warning(
-            "PR number not found in agent output for issue #%d, attempting fallback",
+            "Issue #%d: _ensure_pr_created step1 failed (no PR number in output), trying step2",
             request.issue_number,
         )
 
@@ -701,6 +768,12 @@ class PhaseExecutor(ABC):
             search_branches.append(f"feature/issue-{request.issue_number}")
 
         owner = getattr(request.repo, "owner", "")
+        logger.info(
+            "Issue #%d: _ensure_pr_created step2 (search by branch) owner=%r branches=%s",
+            request.issue_number,
+            owner,
+            search_branches,
+        )
         for search_branch in search_branches:
             head_filter = f"{owner}:{search_branch}"
             try:
@@ -713,20 +786,31 @@ class PhaseExecutor(ABC):
                     found_pr = getattr(existing_prs[0], "number", None)
                     if found_pr is not None:
                         logger.info(
-                            "Found existing PR #%d for branch %s (issue #%d)",
+                            "Issue #%d: _ensure_pr_created step2 succeeded PR #%d (branch=%s)",
+                            request.issue_number,
                             found_pr,
                             search_branch,
-                            request.issue_number,
                         )
                         return int(found_pr)
-            except Exception:
+                else:
+                    logger.warning(
+                        "Issue #%d: _ensure_pr_created step2 no PRs found for head=%r",
+                        request.issue_number,
+                        head_filter,
+                    )
+            except Exception as search_err:
                 logger.warning(
-                    "Failed to search existing PRs for branch %s (issue #%d)",
-                    search_branch,
+                    "Issue #%d: _ensure_pr_created step2 search failed for branch %s: %s",
                     request.issue_number,
+                    search_branch,
+                    search_err,
                 )
 
         # Step 3: GitHub API で新規PR作成
+        logger.warning(
+            "Issue #%d: _ensure_pr_created step2 failed for all branches, trying step3 (create PR)",
+            request.issue_number,
+        )
         try:
             issue = await client.get_issue(request.repo, request.issue_number)
             title = f"{title_prefix}#{request.issue_number} {issue.title}".strip()
@@ -746,14 +830,14 @@ class PhaseExecutor(ABC):
             created_number = getattr(pr, "number", None)
             if created_number is not None:
                 logger.info(
-                    "Created fallback PR #%d for issue #%d",
-                    created_number,
+                    "Issue #%d: _ensure_pr_created step3 succeeded PR #%d",
                     request.issue_number,
+                    created_number,
                 )
                 return int(created_number)
         except Exception as exc:
             logger.error(
-                "Failed to create fallback PR for issue #%d: %s",
+                "Issue #%d: _ensure_pr_created step3 failed: %s",
                 request.issue_number,
                 exc,
             )

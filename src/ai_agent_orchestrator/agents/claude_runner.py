@@ -267,32 +267,45 @@ class ClaudeAgentRunner:
                 all_messages.extend(attempt_messages)  # PRESERVE partial messages
 
                 if "Unknown message type" in str(e):
-                    # Check if we already have useful TextBlock content
+                    # Claude SDK が未知のメッセージタイプを受信した場合のリトライ
+                    # (Claude API のオーバーロード時にストリームが不完全な形で終了することがある)
                     has_text = any(
                         isinstance(m, AssistantMessage) and any(isinstance(b, TextBlock) for b in m.content)
                         for m in all_messages
                     )
                     if has_text:
-                        logger.info("TextBlock found in accumulated messages, proceeding")
+                        logger.info(
+                            "sdk_unknown_message on attempt %d/%d: TextBlock found, proceeding (error=%s, messages=%d)",
+                            attempt + 1,
+                            max_retries,
+                            str(e)[:200],
+                            len(all_messages),
+                        )
                         break
 
                     if attempt < max_retries - 1:
                         wait = 60.0 * (2**attempt)  # 60s, 120s exponential backoff
                         logger.warning(
-                            "rate_limit_event on attempt %d/%d (collected %d messages total). Retrying in %.0fs...",
+                            "sdk_unknown_message on attempt %d/%d: no TextBlock yet,"
+                            " retrying in %.0fs (error=%s, messages=%d)",
                             attempt + 1,
                             max_retries,
-                            len(all_messages),
                             wait,
+                            str(e)[:200],
+                            len(all_messages),
                         )
                         await asyncio.sleep(wait)
                     else:
                         logger.error(
-                            "Max retries reached with no TextBlock (total messages: %d)",
+                            "sdk_unknown_message on attempt %d/%d: max retries reached"
+                            " with no TextBlock (error=%s, messages=%d)",
+                            attempt + 1,
+                            max_retries,
+                            str(e)[:200],
                             len(all_messages),
                         )
                 else:
-                    raise  # re-raise non-rate-limit errors
+                    raise  # re-raise non-sdk-unknown-message errors
 
         elapsed = time.monotonic() - start
         logger.info(

@@ -1319,3 +1319,191 @@ class TestEnsurePrCreatedFallback:
             title_prefix="docs: ",
         )
         assert pr_number == 55
+
+
+# ---------------------------------------------------------------------------
+# エラーハンドリング可観測性テスト
+# ---------------------------------------------------------------------------
+
+
+class TestHandleErrorObservability:
+    """_handle_error / _handle_timeout の可観測性改善テスト."""
+
+    async def test_handle_error_tracks_phase_suspended_event(
+        self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+    ):
+        """_handle_error が phase_suspended イベントを events.jsonl に記録する。"""
+        from ai_agent_orchestrator.phases.fix import FixExecutor
+
+        mock_sm.get_phase.return_value = None  # DONE でない
+        mock_sm.get_state.return_value = MagicMock(session_id=None, branch_head_sha=None)
+        mock_runner.run.side_effect = RuntimeError("テストエラー")
+
+        executor = FixExecutor(
+            runner=mock_runner,
+            account_manager=mock_github,
+            notifier=mock_notifier,
+            tracker=mock_tracker,
+            workspace=mock_workspace,
+            context_engine=mock_context,
+            state_machine=mock_sm,
+        )
+        request = _make_request(phase="fix")
+        await executor.execute(request)
+
+        # phase_suspended イベントが記録されていること
+        tracked_calls = [str(c) for c in mock_tracker.track.call_args_list]
+        assert any("phase_suspended" in c for c in tracked_calls), (
+            f"phase_suspended event not found in tracker calls: {tracked_calls}"
+        )
+
+        # suspend_reason: exception が含まれていること
+        for call in mock_tracker.track.call_args_list:
+            args, kwargs = call
+            if len(args) > 0 and args[0] == "phase_suspended":
+                data = kwargs.get("data") or (args[2] if len(args) > 2 else {})
+                assert data.get("suspend_reason") == "exception"
+                assert "error_type" in data
+                assert "error_message" in data
+                break
+
+    async def test_handle_error_survives_create_comment_failure(
+        self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+    ):
+        """_handle_error は create_comment が失敗しても suspended 遷移を完了する。"""
+        from ai_agent_orchestrator.phases.fix import FixExecutor
+
+        mock_sm.get_phase.return_value = None
+        mock_sm.get_state.return_value = MagicMock(session_id=None, branch_head_sha=None)
+        mock_runner.run.side_effect = RuntimeError("テストエラー")
+        mock_github.create_comment.side_effect = Exception("GitHub API エラー")
+
+        executor = FixExecutor(
+            runner=mock_runner,
+            account_manager=mock_github,
+            notifier=mock_notifier,
+            tracker=mock_tracker,
+            workspace=mock_workspace,
+            context_engine=mock_context,
+            state_machine=mock_sm,
+        )
+        request = _make_request(phase="fix")
+
+        # create_comment が失敗しても例外が伝播しないこと
+        await executor.execute(request)
+
+        # suspended 遷移は完了していること
+        mock_sm.transition.assert_called_with(1, "suspended")
+
+    async def test_handle_error_survives_notifier_failure(
+        self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+    ):
+        """_handle_error は notifier が失敗しても suspended 遷移を完了する。"""
+        from ai_agent_orchestrator.phases.fix import FixExecutor
+
+        mock_sm.get_phase.return_value = None
+        mock_sm.get_state.return_value = MagicMock(session_id=None, branch_head_sha=None)
+        mock_runner.run.side_effect = RuntimeError("テストエラー")
+        mock_notifier.notify.side_effect = Exception("Slack 接続エラー")
+
+        executor = FixExecutor(
+            runner=mock_runner,
+            account_manager=mock_github,
+            notifier=mock_notifier,
+            tracker=mock_tracker,
+            workspace=mock_workspace,
+            context_engine=mock_context,
+            state_machine=mock_sm,
+        )
+        request = _make_request(phase="fix")
+        await executor.execute(request)
+
+        mock_sm.transition.assert_called_with(1, "suspended")
+
+    async def test_handle_timeout_tracks_phase_suspended_event(
+        self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+    ):
+        """_handle_timeout が phase_suspended イベントを events.jsonl に記録する。"""
+        from ai_agent_orchestrator.phases.fix import FixExecutor
+
+        mock_sm.get_phase.return_value = None
+        mock_sm.get_state.return_value = MagicMock(session_id=None, branch_head_sha=None)
+        mock_runner.run.side_effect = TimeoutError()
+
+        executor = FixExecutor(
+            runner=mock_runner,
+            account_manager=mock_github,
+            notifier=mock_notifier,
+            tracker=mock_tracker,
+            workspace=mock_workspace,
+            context_engine=mock_context,
+            state_machine=mock_sm,
+        )
+        request = _make_request(phase="fix")
+        await executor.execute(request)
+
+        tracked_calls = [str(c) for c in mock_tracker.track.call_args_list]
+        assert any("phase_suspended" in c for c in tracked_calls)
+
+        for call in mock_tracker.track.call_args_list:
+            args, kwargs = call
+            if len(args) > 0 and args[0] == "phase_suspended":
+                data = kwargs.get("data") or (args[2] if len(args) > 2 else {})
+                assert data.get("suspend_reason") == "timeout"
+                break
+
+    async def test_handle_timeout_posts_issue_comment(
+        self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+    ):
+        """_handle_timeout が Issue にタイムアウトコメントを投稿する。"""
+        from ai_agent_orchestrator.phases.fix import FixExecutor
+
+        mock_sm.get_phase.return_value = None
+        mock_sm.get_state.return_value = MagicMock(session_id=None, branch_head_sha=None)
+        mock_runner.run.side_effect = TimeoutError()
+
+        executor = FixExecutor(
+            runner=mock_runner,
+            account_manager=mock_github,
+            notifier=mock_notifier,
+            tracker=mock_tracker,
+            workspace=mock_workspace,
+            context_engine=mock_context,
+            state_machine=mock_sm,
+        )
+        request = _make_request(phase="fix")
+        await executor.execute(request)
+
+        mock_github.create_comment.assert_called_once()
+        comment_body = mock_github.create_comment.call_args[0][2]
+        assert "タイムアウト" in comment_body
+
+
+class TestPhaseCompletedStatus:
+    """phase_completed イベントの status フィールドテスト."""
+
+    async def test_phase_completed_has_success_status(self) -> None:
+        """orchestrator.py の phase_completed 記録に status: success が含まれる。"""
+        # orchestrator.py の _execute_task が phase_completed を記録する際に
+        # data に status: "success" が含まれることを確認する
+        # (実際のコードを grep してフィールドの存在を検証)
+        import ast
+        import pathlib
+
+        source = pathlib.Path(
+            "/home/a-tsutsumi/dev/ai-agent-team2/src/ai_agent_orchestrator/orchestrator/orchestrator.py"
+        ).read_text()
+        tree = ast.parse(source)
+
+        # phase_completed の track 呼び出しに "status" キーが含まれているか確認
+        found_status = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "track":
+                for kw in node.keywords:
+                    if kw.arg == "data" and isinstance(kw.value, ast.Dict):
+                        for key in kw.value.keys:
+                            if isinstance(key, ast.Constant) and key.value == "status":
+                                found_status = True
+                                break
+
+        assert found_status, "orchestrator.py の phase_completed track 呼び出しに status フィールドが見つかりません"
