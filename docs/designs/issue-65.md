@@ -324,7 +324,6 @@ sequenceDiagram
 permissions:
   contents: read       # リポジトリのコードを読む
   pull-requests: write # PR にコメントを投稿する
-  issues: write        # Issue にコメントを投稿する
 ```
 
 ---
