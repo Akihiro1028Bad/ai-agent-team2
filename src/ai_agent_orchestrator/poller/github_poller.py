@@ -617,16 +617,23 @@ class GitHubPoller:
                 approved.append({"state": "approved", "body": "PR merged", "id": f"merged-{pr.number}"})
                 continue
             reviews = await client.get_pr_reviews(repo.owner, repo.repo, pr.number)
+            last_approved_at: str = ""
+            last_commented_at: str = ""
             for review in reviews:
                 state = review.get("state", "")
                 body = review.get("body", "") or ""
                 review_id = str(review.get("id", ""))
+                submitted_at = review.get("submitted_at", "") or ""
                 is_approved = state == "APPROVED"
                 is_lgtm = state == "COMMENTED" and body.strip().upper() == self._approve_comment.upper()
                 if is_approved or is_lgtm:
                     approved.append({"state": "approved", "body": body, "id": review_id})
+                    if submitted_at > last_approved_at:
+                        last_approved_at = submitted_at
                 elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and body):
                     commented.append({"state": "commented", "body": body, "id": review_id})
+                    if submitted_at > last_commented_at:
+                        last_commented_at = submitted_at
             # コメントによる承認: PR の一般コメントを確認
             pr_comments = await client.list_comments(repo, pr.number)
             for comment in pr_comments:
@@ -636,6 +643,9 @@ class GitHubPoller:
                 if body.strip() == self._approve_comment:
                     approved.append({"state": "approved", "body": body, "id": str(comment.id)})
                     break
+        # 承認後に新たなコメントレビューがある場合はコメントを優先（修正要求の検知）
+        if approved and commented and last_commented_at > last_approved_at:
+            return commented
         # 承認があればコメントは無視(遷移競合を防止)
         return approved if approved else commented
 
