@@ -83,9 +83,7 @@ def parse_subtasks(impl_plan_text: str) -> list[Subtask]:
         Subtask オブジェクトのリスト。サブタスクセクションがない場合は空リスト。
     """
     # ## サブタスク セクションが存在するか確認
-    subtask_section_match = re.search(
-        r"##\s+サブタスク(.+?)(?=\n##\s|\Z)", impl_plan_text, re.DOTALL
-    )
+    subtask_section_match = re.search(r"##\s+サブタスク(.+?)(?=\n##\s|\Z)", impl_plan_text, re.DOTALL)
     if not subtask_section_match:
         return []
 
@@ -102,11 +100,7 @@ def parse_subtasks(impl_plan_text: str) -> list[Subtask]:
         inline = _FILES_INLINE_PATTERN.search(block)
         if inline:
             raw = inline.group(1)
-            files = [
-                f.strip('`\'"').strip()
-                for f in re.split(r"[,\s]+", raw)
-                if f.strip('`\'"').strip()
-            ]
+            files = [f.strip("`'\"").strip() for f in re.split(r"[,\s]+", raw) if f.strip("`'\"").strip()]
         else:
             # 箇条書き形式: files:\n  - `a.py`
             bullet = _FILES_BULLET_PATTERN.search(block)
@@ -190,9 +184,7 @@ class ImplementExecutor(PhaseExecutor):
                     request.issue_number,
                     len(subtasks),
                 )
-                total_cost, total_duration, last_result = await self._execute_subtasks(
-                    request, subtasks, wt_path
-                )
+                total_cost, total_duration, last_result = await self._execute_subtasks(request, subtasks, wt_path)
             else:
                 logger.info(
                     "Issue #%d: legacy multipass mode (no subtasks found)",
@@ -288,9 +280,7 @@ class ImplementExecutor(PhaseExecutor):
                 subtask.title,
             )
 
-            prompt = await self._build_subtask_prompt(
-                request, subtask, idx, len(subtasks), wt_path, completed_ids
-            )
+            prompt = await self._build_subtask_prompt(request, subtask, idx, len(subtasks), wt_path, completed_ids)
             await self._record_branch_baseline(request)
 
             result = await self.run_agent(request, prompt)
@@ -358,9 +348,7 @@ class ImplementExecutor(PhaseExecutor):
 
         # 前のサブタスクの変更サマリーを取得
         base_branch = getattr(request.repo, "base_branch", "main")
-        rc, diff_stat, _ = await self._workspace._run_git(
-            "diff", f"origin/{base_branch}", "--stat", cwd=wt_path
-        )
+        rc, diff_stat, _ = await self._workspace._run_git("diff", f"origin/{base_branch}", "--stat", cwd=wt_path)
         prior_diff = diff_stat.strip() if rc == 0 and diff_stat.strip() else "(変更なし)"
 
         files_list = "\n".join(f"  - `{f}`" for f in subtask.files)

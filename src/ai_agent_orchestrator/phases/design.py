@@ -128,15 +128,18 @@ class DesignExecutor(PhaseExecutor):
             )
             base = getattr(request.repo, "base_branch", "main")
             rc, stdout, _ = await self._workspace._run_git(
-                "diff", f"origin/{base}", "--name-only", cwd=str(worktree),
+                "diff",
+                f"origin/{base}",
+                "--name-only",
+                cwd=str(worktree),
             )
             if rc != 0 or not stdout.strip():
                 return
             source_exts = {".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs", ".java", ".kt"}
             source_files = [
-                f for f in stdout.strip().splitlines()
-                if any(f.endswith(ext) for ext in source_exts)
-                and not f.startswith("docs/")
+                f
+                for f in stdout.strip().splitlines()
+                if any(f.endswith(ext) for ext in source_exts) and not f.startswith("docs/")
             ]
             if source_files:
                 logger.warning(

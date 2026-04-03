@@ -708,7 +708,9 @@ class TestFeatureLWorkflowE2E:
     ) -> None:
         """Feature-L 分割修正: SPLIT_MODIFIED -> HEARING 再ヒアリング -> 再提案 -> 承認."""
         issue = FakeIssue(number=801, title="Large feature with revision", body="desc")
-        comment = FakeComment(id=10, body="Split differently please", issue_url="https://api.github.com/repos/test/repo/issues/801")
+        comment = FakeComment(
+            id=10, body="Split differently please", issue_url="https://api.github.com/repos/test/repo/issues/801"
+        )
 
         # Setup to SPLIT_PROPOSAL
         await event_router.route(_make_event(EventType.NEW_ISSUE, repo_config, issue=issue))
@@ -718,9 +720,7 @@ class TestFeatureLWorkflowE2E:
         await _drain_queue(task_queue)
 
         # SPLIT_MODIFIED -> HEARING (re-gather requirements)
-        await event_router.route(
-            _make_event(EventType.SPLIT_MODIFIED, repo_config, issue=issue, comment=comment)
-        )
+        await event_router.route(_make_event(EventType.SPLIT_MODIFIED, repo_config, issue=issue, comment=comment))
         assert state_machine.get_phase(801) == Phase.HEARING
         tasks = await _drain_queue(task_queue)
         assert any(t.phase == Phase.HEARING.value for t in tasks)
@@ -768,9 +768,7 @@ class TestHearingWaitWorkflow:
         assert state_machine.get_phase(810) == Phase.HEARING_WAIT
 
         # ISSUE_COMMENT from HEARING_WAIT -> HEARING
-        await event_router.route(
-            _make_event(EventType.ISSUE_COMMENT, repo_config, comment=comment)
-        )
+        await event_router.route(_make_event(EventType.ISSUE_COMMENT, repo_config, comment=comment))
         assert state_machine.get_phase(810) == Phase.HEARING
         tasks = await _drain_queue(task_queue)
         assert any(t.phase == Phase.HEARING.value for t in tasks)
@@ -802,9 +800,7 @@ class TestHearingWaitWorkflow:
         await _drain_queue(task_queue)
 
         # User replies -> HEARING
-        await event_router.route(
-            _make_event(EventType.ISSUE_COMMENT, repo_config, comment=comment)
-        )
+        await event_router.route(_make_event(EventType.ISSUE_COMMENT, repo_config, comment=comment))
         assert state_machine.get_phase(811) == Phase.HEARING
         await _drain_queue(task_queue)
 
@@ -842,15 +838,11 @@ class TestHearingWaitWorkflow:
         await _drain_queue(task_queue)
 
         # Timeout -> SUSPENDED
-        await event_router.route(
-            _make_event(EventType.HEARING_TIMEOUT, repo_config, issue=issue)
-        )
+        await event_router.route(_make_event(EventType.HEARING_TIMEOUT, repo_config, issue=issue))
         assert state_machine.get_phase(812) == Phase.SUSPENDED
 
         # Late reply -> HEARING (resume from SUSPENDED)
-        await event_router.route(
-            _make_event(EventType.ISSUE_COMMENT, repo_config, comment=comment)
-        )
+        await event_router.route(_make_event(EventType.ISSUE_COMMENT, repo_config, comment=comment))
         assert state_machine.get_phase(812) == Phase.HEARING
         tasks = await _drain_queue(task_queue)
         assert any(t.phase == Phase.HEARING.value for t in tasks)
@@ -888,9 +880,7 @@ class TestBugPlanRejection:
         assert state_machine.get_phase(820) == Phase.PLAN_REVIEW
 
         # PLAN_COMMENT -> ANALYSIS (re-analyze)
-        await event_router.route(
-            _make_event(EventType.PLAN_COMMENT_ADDED, repo_config, issue=issue, comment=comment)
-        )
+        await event_router.route(_make_event(EventType.PLAN_COMMENT_ADDED, repo_config, issue=issue, comment=comment))
         assert state_machine.get_phase(820) == Phase.ANALYSIS
         tasks = await _drain_queue(task_queue)
         assert any(t.phase == Phase.ANALYSIS.value for t in tasks)
@@ -933,17 +923,13 @@ class TestBugPlanRejection:
         assert state_machine.get_phase(821) == Phase.PLAN_REVIEW
 
         # 3. Approval -> FIX
-        await event_router.route(
-            _make_event(EventType.PLAN_REACTION_ADDED, repo_config, issue=issue)
-        )
+        await event_router.route(_make_event(EventType.PLAN_REACTION_ADDED, repo_config, issue=issue))
         assert state_machine.get_phase(821) == Phase.FIX
         await _drain_queue(task_queue)
 
         # 4. FIX -> IMPL_REVIEW -> merge -> DONE
         await state_machine.transition(821, Phase.IMPL_REVIEW)
-        await event_router.route(
-            _make_event(EventType.IMPL_PR_MERGED, repo_config, issue=issue)
-        )
+        await event_router.route(_make_event(EventType.IMPL_PR_MERGED, repo_config, issue=issue))
         assert state_machine.get_phase(821) == Phase.DONE
 
         # Verify ANALYSIS was visited twice
@@ -975,25 +961,19 @@ class TestImplPrApprovedInfoOnly:
         state_machine.set_issue_type(830, "bug")
         await state_machine.transition(830, Phase.ANALYSIS)
         await state_machine.transition(830, Phase.PLAN_REVIEW)
-        await event_router.route(
-            _make_event(EventType.PLAN_REACTION_ADDED, repo_config, issue=issue)
-        )
+        await event_router.route(_make_event(EventType.PLAN_REACTION_ADDED, repo_config, issue=issue))
         await _drain_queue(task_queue)
         await state_machine.transition(830, Phase.IMPL_REVIEW)
         assert state_machine.get_phase(830) == Phase.IMPL_REVIEW
 
         # IMPL_PR_APPROVED -> still IMPL_REVIEW (info only)
-        await event_router.route(
-            _make_event(EventType.IMPL_PR_APPROVED, repo_config, issue=issue)
-        )
+        await event_router.route(_make_event(EventType.IMPL_PR_APPROVED, repo_config, issue=issue))
         assert state_machine.get_phase(830) == Phase.IMPL_REVIEW
         tasks = await _drain_queue(task_queue)
         assert len(tasks) == 0  # No task enqueued
 
         # Only IMPL_PR_MERGED completes the flow
-        await event_router.route(
-            _make_event(EventType.IMPL_PR_MERGED, repo_config, issue=issue)
-        )
+        await event_router.route(_make_event(EventType.IMPL_PR_MERGED, repo_config, issue=issue))
         assert state_machine.get_phase(830) == Phase.DONE
 
 
@@ -1022,9 +1002,7 @@ class TestFeatureMWithCI:
         await state_machine.transition(840, Phase.HEARING)
         await state_machine.transition(840, Phase.DESIGN)
         await state_machine.transition(840, Phase.DESIGN_REVIEW)
-        await event_router.route(
-            _make_event(EventType.DESIGN_PR_APPROVED, repo_config, issue=issue)
-        )
+        await event_router.route(_make_event(EventType.DESIGN_PR_APPROVED, repo_config, issue=issue))
         await _drain_queue(task_queue)
         await state_machine.transition(840, Phase.IMPLEMENT)
         assert state_machine.get_phase(840) == Phase.IMPLEMENT
@@ -1054,9 +1032,7 @@ class TestFeatureMWithCI:
         assert state_machine.get_phase(840) == Phase.IMPL_REVIEW
 
         # merge -> DONE
-        await event_router.route(
-            _make_event(EventType.IMPL_PR_MERGED, repo_config, issue=issue)
-        )
+        await event_router.route(_make_event(EventType.IMPL_PR_MERGED, repo_config, issue=issue))
         assert state_machine.get_phase(840) == Phase.DONE
 
         # Verify CI_FIX was visited
