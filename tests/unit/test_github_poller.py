@@ -704,10 +704,12 @@ class TestDetectCiResultsDuplicate:
         client = AsyncMock()
 
         # ci-fix ラベルの Issue を返す
-        client.get_issues_with_label = AsyncMock(side_effect=[
-            [issue],  # ci-fix
-            [],       # impl-review
-        ])
+        client.get_issues_with_label = AsyncMock(
+            side_effect=[
+                [issue],  # ci-fix
+                [],  # impl-review
+            ]
+        )
         client.list_pull_requests = AsyncMock(return_value=[])
 
         async def fake_check_status(c: object, r: object, i: object) -> str:
@@ -724,10 +726,12 @@ class TestDetectCiResultsDuplicate:
         assert len(events1) == 1
 
         # 2回目: ci-fix は _seen_events を無視するため再検知される
-        client.get_issues_with_label = AsyncMock(side_effect=[
-            [issue],
-            [],
-        ])
+        client.get_issues_with_label = AsyncMock(
+            side_effect=[
+                [issue],
+                [],
+            ]
+        )
         events2 = await poller._detect_ci_results(client, repo)  # type: ignore[arg-type]
         assert len(events2) == 1
 
@@ -738,10 +742,12 @@ class TestDetectCiResultsDuplicate:
         issue = _make_issue(number=88, labels=["ai-agent", "phase:impl-review"])
         client = AsyncMock()
 
-        client.get_issues_with_label = AsyncMock(side_effect=[
-            [],      # ci-fix
-            [issue], # impl-review
-        ])
+        client.get_issues_with_label = AsyncMock(
+            side_effect=[
+                [],  # ci-fix
+                [issue],  # impl-review
+            ]
+        )
         client.list_pull_requests = AsyncMock(return_value=[])
 
         async def fake_check_status(c: object, r: object, i: object) -> str:
@@ -758,9 +764,11 @@ class TestDetectCiResultsDuplicate:
         assert len(events1) == 1
 
         # 2回目: impl-review は _seen_events で重複排除される
-        client.get_issues_with_label = AsyncMock(side_effect=[
-            [],
-            [issue],
-        ])
+        client.get_issues_with_label = AsyncMock(
+            side_effect=[
+                [],
+                [issue],
+            ]
+        )
         events2 = await poller._detect_ci_results(client, repo)  # type: ignore[arg-type]
         assert len(events2) == 0
