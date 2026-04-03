@@ -102,13 +102,13 @@ jobs:
 
       - uses: anthropics/claude-code-action@beta
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
 **ポイント**:
 - `github.event.issue.pull_request != null` で PR コメントのみに限定し、Issue コメントでの誤発火を防ぐ
 - `fetch-depth: 0` で PR の全差分を取得可能にする
-- `ANTHROPIC_API_KEY` はリポジトリシークレットとして設定が必要 (セクション 6 参照)
+- `CLAUDE_CODE_OAUTH_TOKEN` はリポジトリシークレットとして設定が必要 (セクション 6 参照)
 
 ### 4.2 `phases/design.py` の変更
 
@@ -304,7 +304,7 @@ sequenceDiagram
 
 | シークレット名 | 値 | 説明 |
 |-------------|---|------|
-| `ANTHROPIC_API_KEY` | Anthropic API キー | Claude Code の認証に使用 |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth トークン | Claude Code の認証に使用 |
 
 ### 6.2 GitHub Actions 権限
 
