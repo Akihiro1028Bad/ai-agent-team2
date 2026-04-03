@@ -55,6 +55,7 @@ addopts = [
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks integration tests requiring real APIs",
+    "scenario: marks scenario tests with real GitHub API + Claude SDK (very slow, expensive)",
 ]
 filterwarnings = [
     "error",
@@ -119,6 +120,7 @@ ignore = [
     "S107",    # hardcoded password in function default (false positive in test fixtures)
     "S108",    # insecure temp file (test data only)
     "ANN",     # don't require annotations in tests
+    "RUF001",  # ambiguous unicode in strings (Japanese fullwidth characters)
     "RUF002",  # ambiguous unicode in docstrings (Japanese parentheses)
     "RUF003",  # ambiguous unicode in comments (Japanese parentheses)
     "SIM117",  # nested with statements (pytest.raises + patch)

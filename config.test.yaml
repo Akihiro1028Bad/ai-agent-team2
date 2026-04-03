@@ -17,8 +17,8 @@ concurrency:
   max_per_repo: 1
 
 timeouts:
-  hearing_timeout_hours: 24
-  phase_timeout_sec: 600
+  hearing_hours: 24
+  hearing_phase_sec: 600
 
 slack:
   webhook_url: "https://hooks.slack.com/services/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"

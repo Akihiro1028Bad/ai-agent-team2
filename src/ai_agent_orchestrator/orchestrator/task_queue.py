@@ -319,6 +319,10 @@ class TaskQueue:
         """指定 Issue が現在実行中かどうかを返す。"""
         return issue_number in self._active_tasks
 
+    def is_task_queued(self, issue_number: int, phase: str) -> bool:
+        """指定 Issue + phase がキューまたは実行中かどうかを返す。"""
+        return (issue_number, phase) in self._queued_tasks
+
     async def cancel_task(self, issue_number: int) -> bool:
         """実行中のタスクをキャンセルする。
 
