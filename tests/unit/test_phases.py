@@ -478,9 +478,7 @@ class TestDesignExecutor:
         # create_comment が呼ばれ、@claude /review を含むコメントが投稿される
         assert mock_github.create_comment.call_count >= 1
         review_calls = [
-            call
-            for call in mock_github.create_comment.call_args_list
-            if "@claude /review" in str(call.args[2])
+            call for call in mock_github.create_comment.call_args_list if "@claude /review" in str(call.args[2])
         ]
         assert len(review_calls) == 1
         # PR番号 5 に投稿されていることを確認
