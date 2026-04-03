@@ -1490,9 +1490,10 @@ class TestPhaseCompletedStatus:
         import ast
         import pathlib
 
-        source = pathlib.Path(
-            "/home/a-tsutsumi/dev/ai-agent-team2/src/ai_agent_orchestrator/orchestrator/orchestrator.py"
-        ).read_text()
+        # パッケージの場所を動的に解決
+        import ai_agent_orchestrator.orchestrator.orchestrator as _orch_mod
+
+        source = pathlib.Path(_orch_mod.__file__).read_text()
         tree = ast.parse(source)
 
         # phase_completed の track 呼び出しに "status" キーが含まれているか確認
