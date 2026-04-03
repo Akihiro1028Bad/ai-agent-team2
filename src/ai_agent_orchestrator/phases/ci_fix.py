@@ -99,6 +99,5 @@ class CiFixExecutor(PhaseExecutor):
                 )
             return
 
-        # CI結果待ちラベルを付与
-        client = await self._get_client(request.repo)
-        await client.replace_phase_label(request.repo, request.issue_number, "phase:ci-wait")
+        # CI結果待ち: phase:ci-fix ラベルを維持
+        # (ポーラーが ci-fix ラベルの Issue を監視して CI 結果を検知するため)

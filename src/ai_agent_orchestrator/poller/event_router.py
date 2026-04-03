@@ -642,6 +642,13 @@ class EventRouter:
             current = self._sm.get_phase(event.issue.number)
             if current != Phase.IMPL_REVIEW:
                 await self._sm.transition(event.issue.number, Phase.IMPL_REVIEW)
+            # ラベルを impl-review に更新 (ci-fix → impl-review)
+            try:
+                client = await self._get_client(event.repo)
+                if client:
+                    await client.replace_phase_label(event.repo, event.issue.number, "phase:impl-review")
+            except Exception:
+                logger.warning("Failed to update phase label to impl-review for issue #%d", event.issue.number)
             # IMPL_REVIEW はポーリングで PR approve/comment を待つため、エンキュー不要
 
     async def _handle_split_approved(self, event: PollEvent) -> None:

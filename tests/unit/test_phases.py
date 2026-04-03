@@ -775,7 +775,7 @@ class TestCiFixExecutor:
         with pytest.raises(RuntimeError, match="no commit"):
             await executor.process_result(request, result)
 
-    async def test_successful_commit_sets_ci_wait_label(
+    async def test_successful_commit_keeps_ci_fix_label(
         self,
         mock_runner: AsyncMock,
         mock_github: AsyncMock,
@@ -785,7 +785,7 @@ class TestCiFixExecutor:
         mock_context: AsyncMock,
         mock_sm: MagicMock,
     ) -> None:
-        """正常コミット時に phase:ci-wait ラベルが付与される."""
+        """正常コミット時に phase:ci-fix ラベルを維持する (ラベル変更しない)."""
         executor = self._make_ci_fix_executor(
             mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
         )
@@ -799,9 +799,8 @@ class TestCiFixExecutor:
         result = AgentResult(session_id="s1", output="fixed", tool_uses=[], cost_usd=0.1, duration_sec=5.0)
         await executor.process_result(request, result)
 
-        mock_github.replace_phase_label.assert_called_once()
-        call_args = mock_github.replace_phase_label.call_args
-        assert "phase:ci-wait" in str(call_args)
+        # phase:ci-fix を維持するため replace_phase_label は呼ばれない
+        mock_github.replace_phase_label.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
