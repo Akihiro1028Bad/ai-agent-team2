@@ -36,10 +36,11 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
+from ai_agent_orchestrator.config.settings import RepositoryConfig
+
 if TYPE_CHECKING:
     from githubkit.versions.latest.models import Issue, IssueComment, PullRequest
 
-    from ai_agent_orchestrator.config.settings import RepositoryConfig
     from ai_agent_orchestrator.orchestrator.state_machine import (
         Phase,
         StateMachineManager,
@@ -47,6 +48,18 @@ if TYPE_CHECKING:
     from ai_agent_orchestrator.orchestrator.task_queue import TaskQueue, TaskRequest
 
 logger = logging.getLogger(__name__)
+
+# ボットコメントの判定定数（IMPL_PR_COMMENTED / DESIGN_PR_COMMENTED のフィルタに使用）
+_BOT_COMMENT_AUTHORS: frozenset[str] = frozenset({
+    "github-actions[bot]",
+    "claude[bot]",
+})
+
+# レビュータイプごとのトリガーコマンド
+_REVIEW_COMMANDS: dict[str, str] = {
+    "impl": "@claude /review-impl",    # claude-impl-review.yml をトリガー
+    "design": "@claude /review-design", # claude-design-review.yml をトリガー
+}
 ```
 
 ### 3.2 EventType Enum
@@ -124,15 +137,30 @@ class EventRouter:
         self,
         state_machine: StateMachineManager,
         task_queue: TaskQueue,
+        account_manager: object | None = None,
+        notifier: Notifier | None = None,
+        execution_guard: ExecutionGuard | None = None,
     ) -> None:
         """EventRouter を初期化する。
 
         Args:
             state_machine: ステートマシンマネージャ
             task_queue: タスクキュー
+            account_manager: AccountManager (GitHub ラベル更新用、省略可)
+            notifier: 通知送信 (Slack 等、省略可)
+            execution_guard: フェーズ実行中の状態遷移を防止するガード (省略可)
         """
         self._sm = state_machine
         self._tq = task_queue
+        self._account_manager = account_manager
+        self._notifier = notifier
+        self._guard = execution_guard
+
+        # IMPL_REVIEW / DESIGN_REVIEW 遷移後に @claude /review を自動投稿
+        self._sm.register_transition_hook(
+            target_phases=[Phase.IMPL_REVIEW, Phase.DESIGN_REVIEW],
+            callback=self._on_review_phase_entered,
+        )
 ```
 
 ### 3.5 公開メソッド: route()
@@ -309,7 +337,18 @@ class EventRouter:
         )
 
     async def _handle_design_pr_commented(self, event: PollEvent) -> None:
-        """設計 PR コメント (指摘): DESIGN_REVISE へ遷移してエンキュー。"""
+        """設計 PR コメント (指摘): DESIGN_REVISE へ遷移してエンキュー。
+
+        ボットコメント（github-actions[bot] 等）は無視する。
+        @claude /review-design の応答コメントが DESIGN_REVISE を
+        トリガーしないようにする。
+        """
+        # ボットコメントは無視する
+        comment_author = event.comment.user.login if event.comment else None
+        if comment_author in _BOT_COMMENT_AUTHORS:
+            logger.debug("ignoring bot comment on design PR: author=%s", comment_author)
+            return
+
         from ai_agent_orchestrator.orchestrator.state_machine import Phase
         from ai_agent_orchestrator.orchestrator.task_queue import TaskRequest, Priority
 
@@ -340,7 +379,18 @@ class EventRouter:
         )
 
     async def _handle_impl_pr_commented(self, event: PollEvent) -> None:
-        """実装 PR コメント (指摘): IMPL_REVISE へ遷移してエンキュー。"""
+        """実装 PR コメント (指摘): IMPL_REVISE へ遷移してエンキュー。
+
+        ボットコメント（github-actions[bot] 等）は無視する。
+        @claude /review-impl の応答コメントが IMPL_REVISE を
+        トリガーしないようにする。
+        """
+        # ボットコメントは無視する
+        comment_author = event.comment.user.login if event.comment else None
+        if comment_author in _BOT_COMMENT_AUTHORS:
+            logger.debug("ignoring bot comment on impl PR: author=%s", comment_author)
+            return
+
         from ai_agent_orchestrator.orchestrator.state_machine import Phase
         from ai_agent_orchestrator.orchestrator.task_queue import TaskRequest, Priority
 
@@ -354,6 +404,98 @@ class EventRouter:
                 extra={"comments": event.extra or {}},
             )
         )
+
+    async def _on_review_phase_entered(
+        self, issue_number: int, phase: Phase
+    ) -> None:
+        """IMPL_REVIEW または DESIGN_REVIEW フェーズ遷移後のフック。
+
+        IMPL_REVIEW の場合は "@claude /review-impl" を、
+        DESIGN_REVIEW の場合は "@claude /review-design" を投稿し、
+        それぞれ専用のワークフロー（claude-impl-review.yml / claude-design-review.yml）
+        をトリガーする。
+
+        Args:
+            issue_number: Issue 番号。
+            phase: 遷移先フェーズ (IMPL_REVIEW または DESIGN_REVIEW)。
+        """
+        review_type = "impl" if phase == Phase.IMPL_REVIEW else "design"
+        await self._post_claude_review_comment(issue_number, review_type)
+
+    async def _post_claude_review_comment(
+        self, issue_number: int, review_type: str
+    ) -> None:
+        """IMPL_REVIEW または DESIGN_REVIEW 遷移後に @claude /review-* を PR に投稿する。
+
+        Args:
+            issue_number: Issue 番号。
+            review_type: "impl" または "design"。
+                - "impl"   → "@claude /review-impl"   を投稿（実装レビュー用ワークフロー起動）
+                - "design" → "@claude /review-design" を投稿（設計レビュー用ワークフロー起動）
+
+        エラーハンドリング:
+            - issue_state が None → WARNING ログ出力 → return
+            - pr_number が None → WARNING ログ出力 → return
+            - repo 形式が不正 → WARNING ログ出力 → return
+            - GitHub クライアント取得失敗 → WARNING ログ出力 → return
+            - コメント投稿失敗 → ERROR ログ出力（ワークフロー継続）
+        """
+        issue_state = self._sm.get_state(issue_number)
+        if issue_state is None:
+            logger.warning(
+                "issue_state not found for auto claude review: issue_number=%d",
+                issue_number,
+            )
+            return
+
+        pr_number = (
+            issue_state.pr_number
+            if review_type == "impl"
+            else issue_state.design_pr_number
+        )
+        if pr_number is None:
+            logger.warning(
+                "pr_number not found for auto claude review: issue_number=%d, review_type=%s",
+                issue_number,
+                review_type,
+            )
+            return
+
+        # issue_state.repo は "owner/repo" 形式の文字列
+        repo_parts = issue_state.repo.split("/", 1)
+        if len(repo_parts) != 2:
+            logger.warning(
+                "invalid repo format for auto claude review: issue_number=%d, repo=%s",
+                issue_number,
+                issue_state.repo,
+            )
+            return
+
+        repo_config = RepositoryConfig(owner=repo_parts[0], repo=repo_parts[1])
+        comment_body = _REVIEW_COMMANDS[review_type]
+        try:
+            client = await self._get_client(repo_config)
+            if client is None:
+                logger.warning(
+                    "github_client not available for auto claude review: issue_number=%d",
+                    issue_number,
+                )
+                return
+            await client.create_comment(repo_config, pr_number, comment_body)
+            logger.info(
+                "posted @claude /review comment: issue_number=%d, pr_number=%d, review_type=%s",
+                issue_number,
+                pr_number,
+                review_type,
+            )
+        except Exception as e:
+            # レビューコメント投稿失敗はワークフロー継続を妨げない
+            logger.error(
+                "failed to post @claude /review comment: issue_number=%d, pr_number=%d, error=%s",
+                issue_number,
+                pr_number,
+                str(e),
+            )
 
     async def _handle_ci_failure(self, event: PollEvent) -> None:
         """CI 失敗: リトライ回数に応じて CI_FIX or SUSPENDED。

@@ -11,6 +11,7 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
+from ai_agent_orchestrator.config.settings import RepositoryConfig
 from ai_agent_orchestrator.models import EventType, Phase, PollEvent
 from ai_agent_orchestrator.orchestrator.task_queue import Priority, TaskRequest
 
@@ -22,6 +23,18 @@ if TYPE_CHECKING:
     from ai_agent_orchestrator.orchestrator.task_queue import TaskQueue
 
 logger = logging.getLogger(__name__)
+
+# ボットコメントの判定定数
+_BOT_COMMENT_AUTHORS: frozenset[str] = frozenset({
+    "github-actions[bot]",
+    "claude[bot]",
+})
+
+# レビュータイプごとのトリガーコマンド
+_REVIEW_COMMANDS: dict[str, str] = {
+    "impl": "@claude /review-impl",
+    "design": "@claude /review-design",
+}
 
 
 class EventRouter:
@@ -54,6 +67,12 @@ class EventRouter:
         self._account_manager = account_manager
         self._notifier = notifier
         self._guard = execution_guard
+
+        # IMPL_REVIEW / DESIGN_REVIEW 遷移後に @claude /review を自動投稿
+        self._sm.register_transition_hook(
+            target_phases=[Phase.IMPL_REVIEW, Phase.DESIGN_REVIEW],
+            callback=self._on_review_phase_entered,
+        )
 
     async def _get_client(self, repo: object) -> GitHubClient | None:
         """リポジトリに対応する GitHubClient を取得する (省略可能).
@@ -479,6 +498,18 @@ class EventRouter:
     async def _handle_design_pr_commented(self, event: PollEvent) -> None:
         """設計 PR コメント (指摘): DESIGN_REVISE へ遷移してエンキュー."""
         assert event.issue is not None
+
+        # ボットコメントは無視する(@claude /review の応答が DESIGN_REVISE を
+        # トリガーしないようにする)
+        comment_author = event.comment.user.login if event.comment else None
+        if comment_author in _BOT_COMMENT_AUTHORS:
+            logger.debug(
+                "ignoring bot comment on design PR: author=%s, issue_number=%d",
+                comment_author,
+                event.issue.number,
+            )
+            return
+
         current_phase = self._sm.get_phase(event.issue.number)
         if current_phase != Phase.DESIGN_REVIEW:
             logger.info(
@@ -539,6 +570,17 @@ class EventRouter:
     async def _handle_impl_pr_commented(self, event: PollEvent) -> None:
         """実装 PR コメント (指摘): IMPL_REVISE へ遷移してエンキュー."""
         assert event.issue is not None
+
+        # ボットコメントは無視する(@claude /review の応答が IMPL_REVISE を
+        # トリガーしないようにする)
+        comment_author = event.comment.user.login if event.comment else None
+        if comment_author in _BOT_COMMENT_AUTHORS:
+            logger.debug(
+                "ignoring bot comment on impl PR: author=%s, issue_number=%d",
+                comment_author,
+                event.issue.number,
+            )
+            return
 
         # 既に修正中またはまだ実装中の場合はスキップ
         current_phase = self._sm.get_phase(event.issue.number)
@@ -680,3 +722,96 @@ class EventRouter:
                 },
             )
         )
+
+    # ------------------------------------------------------------------
+    # Review phase hooks
+    # ------------------------------------------------------------------
+
+    async def _on_review_phase_entered(
+        self, issue_number: int, phase: Phase
+    ) -> None:
+        """IMPL_REVIEW または DESIGN_REVIEW フェーズ遷移後のフック.
+
+        IMPL_REVIEW の場合は "@claude /review-impl" を、
+        DESIGN_REVIEW の場合は "@claude /review-design" を投稿し、
+        それぞれ専用のワークフロー(claude-impl-review.yml / claude-design-review.yml)
+        をトリガーする。
+
+        Args:
+            issue_number: Issue 番号。
+            phase: 遷移先フェーズ (IMPL_REVIEW または DESIGN_REVIEW)。
+        """
+        review_type = "impl" if phase == Phase.IMPL_REVIEW else "design"
+        await self._post_claude_review_comment(issue_number, review_type)
+
+    async def _post_claude_review_comment(
+        self, issue_number: int, review_type: str
+    ) -> None:
+        """IMPL_REVIEW または DESIGN_REVIEW 遷移後に @claude /review-* を PR に投稿する.
+
+        Args:
+            issue_number: Issue 番号。
+            review_type: "impl" または "design"。
+                - "impl"   → "@claude /review-impl"   を投稿(実装レビュー用ワークフロー起動)
+                - "design" → "@claude /review-design" を投稿(設計レビュー用ワークフロー起動)
+        """
+        issue_state = self._sm.get_state(issue_number)
+        if issue_state is None:
+            logger.warning(
+                "issue_state not found for auto claude review: issue_number=%d",
+                issue_number,
+            )
+            return
+
+        pr_number = (
+            issue_state.pr_number
+            if review_type == "impl"
+            else issue_state.design_pr_number
+        )
+        if pr_number is None:
+            logger.warning(
+                "pr_number not found for auto claude review: issue_number=%d, review_type=%s",
+                issue_number,
+                review_type,
+            )
+            return
+
+        # issue_state.repo は "owner/repo" 形式の文字列
+        repo_parts = issue_state.repo.split("/", 1)
+        if len(repo_parts) != 2:
+            logger.warning(
+                "invalid repo format for auto claude review: issue_number=%d, repo=%s",
+                issue_number,
+                issue_state.repo,
+            )
+            return
+
+        repo_config = RepositoryConfig(owner=repo_parts[0], repo=repo_parts[1])
+        comment_body = _REVIEW_COMMANDS[review_type]
+        try:
+            client = await self._get_client(repo_config)
+            if client is None:
+                logger.warning(
+                    "github_client not available for auto claude review: issue_number=%d",
+                    issue_number,
+                )
+                return
+            await client.create_comment(
+                repo_config,
+                pr_number,
+                comment_body,
+            )
+            logger.info(
+                "posted @claude /review comment: issue_number=%d, pr_number=%d, review_type=%s",
+                issue_number,
+                pr_number,
+                review_type,
+            )
+        except Exception as e:
+            # レビューコメント投稿失敗はワークフロー継続を妨げない
+            logger.error(
+                "failed to post @claude /review comment: issue_number=%d, pr_number=%d, error=%s",
+                issue_number,
+                pr_number,
+                str(e),
+            )
