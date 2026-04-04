@@ -132,9 +132,7 @@ class ImplReviseExecutor(PhaseExecutor):
         extra = getattr(request, "extra", {}) or {}
         review_comment_ids: list[int] = extra.get("review_comment_ids", [])
         if impl_pr and review_comment_ids:
-            await self._reply_completion_to_review_comments(
-                request, impl_pr, review_comment_ids
-            )
+            await self._reply_completion_to_review_comments(request, impl_pr, review_comment_ids)
         issue = await client.get_issue(request.repo, request.issue_number)
         await self._notifier.notify(
             f"Issue #{request.issue_number} の実装を修正しました",

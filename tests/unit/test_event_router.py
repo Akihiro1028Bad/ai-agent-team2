@@ -721,10 +721,7 @@ class TestEventRouterImplPRCommentedMultiple:
         # 各レビューコメントに着手通知が送られる
         assert mock_client.reply_to_review_comment.call_count == 2
         # 着手通知の文言確認
-        call_bodies = [
-            mock_client.reply_to_review_comment.call_args_list[i].args[3]
-            for i in range(2)
-        ]
+        call_bodies = [mock_client.reply_to_review_comment.call_args_list[i].args[3] for i in range(2)]
         assert all("修正を開始します" in body for body in call_bodies)
 
     async def test_second_impl_pr_commented_is_skipped(

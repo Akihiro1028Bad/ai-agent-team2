@@ -864,9 +864,7 @@ async def test_reply_to_review_comment_calls_api(
     repo_config: RepositoryConfig,
 ) -> None:
     """TC-GH-11: reply_to_review_comment が正しい API エンドポイントを呼び出すことを検証する."""
-    route = respx.post(
-        "https://api.github.com/repos/test-org/test-repo/pulls/10/comments/200/replies"
-    ).mock(
+    route = respx.post("https://api.github.com/repos/test-org/test-repo/pulls/10/comments/200/replies").mock(
         return_value=httpx.Response(
             201,
             json=_review_comment_json(comment_id=300, body="修正します\n\n<!-- ai-agent-bot -->"),
@@ -886,9 +884,7 @@ async def test_get_pr_review_comments_excludes_bot_comments(
     repo_config: RepositoryConfig,
 ) -> None:
     """TC-GH-12: get_pr_review_comments がボットコメントを除外することを検証する."""
-    respx.get(
-        "https://api.github.com/repos/test-org/test-repo/pulls/10/comments"
-    ).mock(
+    respx.get("https://api.github.com/repos/test-org/test-repo/pulls/10/comments").mock(
         return_value=httpx.Response(
             200,
             json=[
@@ -919,9 +915,7 @@ async def test_get_pr_review_comments_returns_expected_fields(
     repo_config: RepositoryConfig,
 ) -> None:
     """TC-GH-13: get_pr_review_comments が期待フィールドを含む辞書を返すことを検証する."""
-    respx.get(
-        "https://api.github.com/repos/test-org/test-repo/pulls/10/comments"
-    ).mock(
+    respx.get("https://api.github.com/repos/test-org/test-repo/pulls/10/comments").mock(
         return_value=httpx.Response(
             200,
             json=[

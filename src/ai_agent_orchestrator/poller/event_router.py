@@ -594,8 +594,7 @@ class EventRouter:
             # 既に IMPL_REVISE 中: スキップするが、全コメント収集により
             # 先発タスクが全コメントを包含済みのため問題なし
             logger.info(
-                "Issue #%d is already in impl-revise, "
-                "skipping (all comments already included in pending task)",
+                "Issue #%d is already in impl-revise, skipping (all comments already included in pending task)",
                 event.issue.number,
             )
             return
@@ -606,9 +605,7 @@ class EventRouter:
         client = await self._get_client(event.repo)  # 1回だけ取得して再利用
         if client and state and state.pr_number:
             try:
-                all_review_comments = await client.get_pr_review_comments(
-                    event.repo, state.pr_number
-                )
+                all_review_comments = await client.get_pr_review_comments(event.repo, state.pr_number)
             except Exception:
                 logger.warning(
                     "Issue #%d: failed to fetch review comments, using event comments",
@@ -673,7 +670,10 @@ class EventRouter:
                 continue
             try:
                 await client.reply_to_review_comment(
-                    repo, pr_number, comment_id, body  # type: ignore[arg-type]
+                    repo,
+                    pr_number,
+                    comment_id,
+                    body,  # type: ignore[arg-type]
                 )
             except Exception:
                 logger.debug(
