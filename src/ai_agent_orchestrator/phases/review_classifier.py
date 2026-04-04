@@ -37,17 +37,19 @@ class ClassifiedComment:
 # ---------------------------------------------------------------------------
 
 _BLOCKING_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(p, re.IGNORECASE)
-    for p in [
-        r"\bblocking\b",
-        r"\bcritical\b",
-        r"\bsecurity\b",
-        r"\bvulnerability\b",
-        r"\bMUST\b",
-        r"必須",
-        r"セキュリティ",
-        r"脆弱性",
-    ]
+    *[
+        re.compile(p, re.IGNORECASE)
+        for p in [
+            r"\bblocking\b",
+            r"\bcritical\b",
+            r"\bsecurity\b",
+            r"\bvulnerability\b",
+            r"必須",
+            r"セキュリティ",
+            r"脆弱性",
+        ]
+    ],
+    re.compile(r"\bMUST\b"),  # 大文字のみ (小文字 "must" は一般的すぎるため除外)
 ]
 
 _NIT_PATTERNS: list[re.Pattern[str]] = [

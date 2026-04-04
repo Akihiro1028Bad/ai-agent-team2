@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 from typing import Any
@@ -189,6 +190,6 @@ def get_phase_mcp_config(phase: str) -> tuple[dict[str, Any], list[str]]:
                 resolved[name] = built
             # None の場合はスキップ (トークン未設定)
         else:
-            resolved[name] = server
+            resolved[name] = copy.deepcopy(server)
     tools: list[str] = config.get("tools", [])
     return resolved, tools

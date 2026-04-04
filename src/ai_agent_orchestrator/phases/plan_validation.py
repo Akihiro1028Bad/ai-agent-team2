@@ -39,13 +39,8 @@ class PlanValidationExecutor(PhaseExecutor):
 
         plan_path = Path(str(worktree)) / "docs" / "designs" / f"issue-{request.issue_number}-plan.md"
         if not plan_path.exists():
-            return AgentResult(
-                session_id="",
-                output=f"計画ファイルが見つかりません: {plan_path.name}",
-                tool_uses=[],
-                cost_usd=0.0,
-                duration_sec=0.0,
-            )
+            msg = f"計画ファイルが見つかりません: {plan_path}. PLANNING フェーズが正常完了していない可能性があります。"
+            raise RuntimeError(msg)
 
         plan_text = plan_path.read_text(encoding="utf-8")
         errors = validate_plan(plan_text, str(worktree))
