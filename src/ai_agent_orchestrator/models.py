@@ -17,6 +17,33 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# 0. IssueKey 型エイリアス
+# ---------------------------------------------------------------------------
+
+IssueKey = tuple[str, int]
+"""リポジトリ横断で Issue を一意に識別するキー。("owner/repo", issue_number) 形式。"""
+
+
+def make_issue_key(repo: str, issue_number: int) -> IssueKey:
+    """IssueKey を生成する.
+
+    Args:
+        repo: "owner/repo" 形式のリポジトリ識別子。
+        issue_number: Issue 番号。
+
+    Returns:
+        (repo, issue_number) のタプル。
+
+    Raises:
+        ValueError: repo が "owner/repo" 形式でない場合。
+    """
+    if "/" not in repo:
+        msg = f"repo must be 'owner/repo' format, got: {repo!r}"
+        raise ValueError(msg)
+    return (repo, issue_number)
+
+
+# ---------------------------------------------------------------------------
 # 1. Enum 定義
 # ---------------------------------------------------------------------------
 

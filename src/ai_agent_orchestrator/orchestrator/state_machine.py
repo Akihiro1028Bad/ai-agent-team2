@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from statemachine import State, StateMachine
 from statemachine.exceptions import TransitionNotAllowed
 
-from ai_agent_orchestrator.models import IssueState, Phase
+from ai_agent_orchestrator.models import IssueKey, IssueState, Phase, make_issue_key
 
 logger = logging.getLogger(__name__)
 
@@ -300,8 +300,8 @@ class StateMachineManager:
     Attributes:
         _persistence: 状態永続化ストレージ。
         _tracker: イベントトラッカー。
-        _states: Issue番号 -> IssueState のマッピング。
-        _workflows: Issue番号 -> IssueWorkflow のマッピング。
+        _states: IssueKey -> IssueState のマッピング。
+        _workflows: IssueKey -> IssueWorkflow のマッピング。
     """
 
     def __init__(
@@ -317,9 +317,9 @@ class StateMachineManager:
         """
         self._persistence = persistence
         self._tracker = tracker
-        self._states: dict[int, IssueState] = {}
-        self._workflows: dict[int, IssueWorkflow] = {}
-        self._locks: dict[int, asyncio.Lock] = {}
+        self._states: dict[IssueKey, IssueState] = {}
+        self._workflows: dict[IssueKey, IssueWorkflow] = {}
+        self._locks: dict[IssueKey, asyncio.Lock] = {}
 
     def register_issue(
         self,
@@ -335,10 +335,11 @@ class StateMachineManager:
             initial_phase: 初期フェーズ (デフォルト: TYPE_DETECTION)。
 
         Raises:
-            ValueError: 既に登録済みの Issue 番号を指定した場合。
+            ValueError: 既に登録済みの Issue を指定した場合。
         """
-        if issue_number in self._states:
-            msg = f"Issue #{issue_number} is already registered"
+        key = make_issue_key(repo, issue_number)
+        if key in self._states:
+            msg = f"Issue #{issue_number} ({repo}) is already registered"
             raise ValueError(msg)
 
         now = datetime.now(UTC).isoformat()
@@ -349,21 +350,21 @@ class StateMachineManager:
             created_at=now,
             updated_at=now,
         )
-        self._states[issue_number] = state
-        self._workflows[issue_number] = IssueWorkflow(
+        self._states[key] = state
+        self._workflows[key] = IssueWorkflow(
             start_value=self._phase_to_state_id(initial_phase),
         )
         self._auto_save()
 
-    def _get_lock(self, issue_number: int) -> asyncio.Lock:
+    def _get_lock(self, issue_key: IssueKey) -> asyncio.Lock:
         """Issue 単位のロックを取得する。存在しなければ作成."""
-        if issue_number not in self._locks:
-            self._locks[issue_number] = asyncio.Lock()
-        return self._locks[issue_number]
+        if issue_key not in self._locks:
+            self._locks[issue_key] = asyncio.Lock()
+        return self._locks[issue_key]
 
     async def transition(
         self,
-        issue_number: int,
+        issue_key: IssueKey,
         new_phase: Phase | str,
     ) -> None:
         """フェーズ遷移を実行する.
@@ -374,28 +375,28 @@ class StateMachineManager:
         ポーラーとワーカーの同時遷移による競合を防止する。
 
         Args:
-            issue_number: Issue 番号。
+            issue_key: IssueKey (repo, issue_number)。
             new_phase: 遷移先のフェーズ (Phase enum or str)。
 
         Raises:
-            KeyError: 未登録の Issue 番号。
+            KeyError: 未登録の Issue。
             InvalidTransitionError: 許可されていない遷移。
         """
-        async with self._get_lock(issue_number):
-            await self._transition_inner(issue_number, new_phase)
+        async with self._get_lock(issue_key):
+            await self._transition_inner(issue_key, new_phase)
 
     async def _transition_inner(
         self,
-        issue_number: int,
+        issue_key: IssueKey,
         new_phase: Phase | str,
     ) -> None:
         """ロック保持下でフェーズ遷移を実行する内部メソッド."""
-        if issue_number not in self._states:
-            msg = f"Issue #{issue_number} is not registered"
+        if issue_key not in self._states:
+            msg = f"Issue #{issue_key[1]} ({issue_key[0]}) is not registered"
             raise KeyError(msg)
 
-        state = self._states[issue_number]
-        workflow = self._workflows[issue_number]
+        state = self._states[issue_key]
+        workflow = self._workflows[issue_key]
         old_phase = state.phase
         target = Phase(new_phase) if isinstance(new_phase, str) else new_phase
 
@@ -403,7 +404,7 @@ class StateMachineManager:
         if old_phase == target:
             logger.info(
                 "Issue #%d is already in %s, skipping no-op transition",
-                issue_number,
+                issue_key[1],
                 target.value,
             )
             return
@@ -414,7 +415,7 @@ class StateMachineManager:
             raise
         except TransitionNotAllowed as e:
             raise InvalidTransitionError(
-                f"Cannot transition Issue #{issue_number} from {old_phase} to {target}: {e}"
+                f"Cannot transition Issue #{issue_key[1]} ({issue_key[0]}) from {old_phase} to {target}: {e}"
             ) from e
 
         state.phase = target
@@ -423,7 +424,7 @@ class StateMachineManager:
 
         await self._tracker.track(
             "phase_transition",
-            issue_number=issue_number,
+            issue_number=issue_key[1],
             phase=target.value,
             data={"from": old_phase.value, "to": target.value},
         )
@@ -473,67 +474,67 @@ class StateMachineManager:
             raise InvalidTransitionError(msg)
         return transition_name
 
-    def get_phase(self, issue_number: int) -> Phase:
+    def get_phase(self, issue_key: IssueKey) -> Phase:
         """Issue の現在のフェーズを取得する.
 
         Args:
-            issue_number: Issue 番号。
+            issue_key: IssueKey (repo, issue_number)。
 
         Returns:
             現在の Phase。
 
         Raises:
-            KeyError: 未登録の Issue 番号。
+            KeyError: 未登録の Issue。
         """
-        return self._states[issue_number].phase
+        return self._states[issue_key].phase
 
-    def get_issue_type(self, issue_number: int) -> str:
+    def get_issue_type(self, issue_key: IssueKey) -> str:
         """Issue のタイプを取得する.
 
         Args:
-            issue_number: Issue 番号。
+            issue_key: IssueKey (repo, issue_number)。
 
         Returns:
             Issue タイプ文字列 ("bug" | "feature-m" | "feature-l" | "")。
         """
-        state = self._states.get(issue_number)
+        state = self._states.get(issue_key)
         return state.issue_type if state else ""
 
-    def set_issue_type(self, issue_number: int, issue_type: str) -> None:
+    def set_issue_type(self, issue_key: IssueKey, issue_type: str) -> None:
         """Issue のタイプを設定する.
 
         IssueWorkflow のガード関数で使用される issue_type も同時に更新する。
 
         Args:
-            issue_number: Issue 番号。
+            issue_key: IssueKey (repo, issue_number)。
             issue_type: "bug" | "feature-m" | "feature-l"。
 
         Raises:
-            KeyError: 未登録の Issue 番号。
+            KeyError: 未登録の Issue。
             ValueError: 不正なタイプ文字列。
         """
         valid_types = {"bug", "feature-m", "feature-l"}
         if issue_type not in valid_types:
             msg = f"Invalid issue type: {issue_type}. Must be one of {valid_types}"
             raise ValueError(msg)
-        self._states[issue_number].issue_type = issue_type
-        self._workflows[issue_number].issue_type = issue_type
+        self._states[issue_key].issue_type = issue_type
+        self._workflows[issue_key].issue_type = issue_type
         self._auto_save()
 
-    async def get_ci_retry_count(self, issue_number: int) -> int:
+    async def get_ci_retry_count(self, issue_key: IssueKey) -> int:
         """CI 修正リトライ回数を取得する."""
-        state = self._states.get(issue_number)
+        state = self._states.get(issue_key)
         return state.retry_count if state else 0
 
-    async def increment_ci_retry(self, issue_number: int) -> None:
+    async def increment_ci_retry(self, issue_key: IssueKey) -> None:
         """CI 修正リトライ回数をインクリメントする."""
-        if issue_number in self._states:
-            self._states[issue_number].retry_count += 1
+        if issue_key in self._states:
+            self._states[issue_key].retry_count += 1
             self._auto_save()
 
-    def get_state(self, issue_number: int) -> IssueState | None:
+    def get_state(self, issue_key: IssueKey) -> IssueState | None:
         """IssueState を取得する。未登録の場合は None."""
-        return self._states.get(issue_number)
+        return self._states.get(issue_key)
 
     def load_from_persistence(self) -> None:
         """永続化ストレージから状態を復元する。起動時に呼び出す.
@@ -553,12 +554,12 @@ class StateMachineManager:
                     state.issue_number,
                     state.phase.value,
                 )
-        for issue_number, state in self._states.items():
+        for issue_key, state in self._states.items():
             wf = IssueWorkflow(
                 issue_type=state.issue_type,
                 start_value=self._phase_to_state_id(state.phase),
             )
-            self._workflows[issue_number] = wf
+            self._workflows[issue_key] = wf
 
     @staticmethod
     def _phase_to_state_id(phase: Phase) -> str:

@@ -36,7 +36,7 @@ class ImplReviseExecutor(PhaseExecutor):
         issue = await client.get_issue(request.repo, request.issue_number)
 
         # PR 番号を取得 (state から、なければ API 検索)
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         pr_info = ""
         if state and state.pr_number:
             pr_info = f"PR #{state.pr_number}"
@@ -94,7 +94,7 @@ class ImplReviseExecutor(PhaseExecutor):
         Returns:
             エージェント実行結果。
         """
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
@@ -114,7 +114,7 @@ class ImplReviseExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         if state:
             state.session_id = result.session_id
 
@@ -122,9 +122,9 @@ class ImplReviseExecutor(PhaseExecutor):
 
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:impl-review")
-        await self._sm.transition(request.issue_number, "impl-review")
+        await self._sm.transition(self._issue_key(request), "impl-review")
         repo_full_name = self._get_repo_full_name(request)
-        state_data = self._sm.get_state(request.issue_number)
+        state_data = self._sm.get_state(self._issue_key(request))
         impl_pr = state_data.pr_number if state_data else None
         pr_url_val = self._build_pr_url(request, impl_pr) if impl_pr else None
 

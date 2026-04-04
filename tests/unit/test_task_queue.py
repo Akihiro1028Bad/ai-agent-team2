@@ -251,10 +251,11 @@ class TestDuplicateHandling:
         """実行中でも次フェーズはキューに入り、2回目はスキップ。"""
         tq = TaskQueue(max_total=2, max_per_repo=1)
         repo = _make_repo()
+        issue_key = ("org/app", 1)
 
         # Issue #1 を実行中にする
         dummy_task = asyncio.create_task(asyncio.sleep(10))
-        tq._active_tasks[1] = dummy_task
+        tq._active_tasks[issue_key] = dummy_task
 
         # 1回目: 次フェーズとしてキューに入る
         await tq.enqueue(TaskRequest(issue_number=1, repo=repo, phase="hearing"))
@@ -271,12 +272,13 @@ class TestDuplicateHandling:
         """キューに入った Issue が _queued_issues で追跡される。"""
         tq = TaskQueue(max_total=2, max_per_repo=1)
         repo = _make_repo()
+        issue_key = ("org/app", 42)
 
         await tq.enqueue(TaskRequest(issue_number=42, repo=repo, phase="hearing"))
-        assert 42 in tq._queued_issues
+        assert issue_key in tq._queued_issues
 
         _ = await tq.dequeue()
-        assert 42 not in tq._queued_issues
+        assert issue_key not in tq._queued_issues
 
 
 # ---------------------------------------------------------------------------
@@ -303,13 +305,14 @@ class TestGetStatus:
     async def test_cancel_task(self) -> None:
         """実行中タスクをキャンセルできる。"""
         tq = TaskQueue(max_total=2, max_per_repo=1)
+        issue_key = ("org/app", 1)
         dummy_task = asyncio.create_task(asyncio.sleep(10))
-        tq._active_tasks[1] = dummy_task
+        tq._active_tasks[issue_key] = dummy_task
 
-        result = await tq.cancel_task(1)
+        result = await tq.cancel_task(issue_key)
         assert result is True
 
-        result = await tq.cancel_task(999)
+        result = await tq.cancel_task(("org/app", 999))
         assert result is False
 
         dummy_task.cancel()
@@ -318,11 +321,12 @@ class TestGetStatus:
     async def test_is_issue_active(self) -> None:
         """is_issue_active() が正しく動作する。"""
         tq = TaskQueue()
-        assert tq.is_issue_active(1) is False
+        issue_key = ("org/app", 1)
+        assert tq.is_issue_active(issue_key) is False
 
         dummy_task = asyncio.create_task(asyncio.sleep(10))
-        tq._active_tasks[1] = dummy_task
-        assert tq.is_issue_active(1) is True
+        tq._active_tasks[issue_key] = dummy_task
+        assert tq.is_issue_active(issue_key) is True
 
         dummy_task.cancel()
         await asyncio.gather(dummy_task, return_exceptions=True)

@@ -60,7 +60,7 @@ class DesignReviseExecutor(PhaseExecutor):
         Returns:
             エージェント実行結果。
         """
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         worktree = await self._workspace.create_worktree(
             request.repo,
             request.issue_number,
@@ -80,7 +80,7 @@ class DesignReviseExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         if state:
             state.session_id = result.session_id
 
@@ -88,9 +88,9 @@ class DesignReviseExecutor(PhaseExecutor):
 
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:design-review")
-        await self._sm.transition(request.issue_number, "design-review")
+        await self._sm.transition(self._issue_key(request), "design-review")
         repo_full_name = self._get_repo_full_name(request)
-        state_data = self._sm.get_state(request.issue_number)
+        state_data = self._sm.get_state(self._issue_key(request))
         design_pr = state_data.design_pr_number if state_data else None
         pr_url_val = self._build_pr_url(request, design_pr) if design_pr else None
         issue = await client.get_issue(request.repo, request.issue_number)

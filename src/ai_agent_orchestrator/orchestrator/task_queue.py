@@ -10,7 +10,10 @@ import asyncio
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from ai_agent_orchestrator.models import IssueKey
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +83,11 @@ class TaskRequest:
         """リポジトリを一意に識別するキー。"""
         return f"{self.repo.owner}/{self.repo.repo}"
 
+    @property
+    def issue_key(self) -> IssueKey:
+        """リポジトリ横断で Issue を一意に識別するキー。"""
+        return (self.repo_key, self.issue_number)
+
 
 # ---------------------------------------------------------------------------
 # TaskQueue
@@ -111,23 +119,24 @@ class TaskQueue:
         self._queue: asyncio.PriorityQueue[tuple[int, int, TaskRequest]] = asyncio.PriorityQueue()
         self._global_sem = asyncio.Semaphore(max_total)
         self._repo_sems: dict[str, asyncio.Semaphore] = defaultdict(lambda: asyncio.Semaphore(max_per_repo))
-        self._active_tasks: dict[int, asyncio.Task[None]] = {}
-        self._queued_issues: set[int] = set()  # 重複排除用
-        self._queued_tasks: set[tuple[int, str]] = set()  # (issue_number, phase) 重複排除用
+        self._active_tasks: dict[IssueKey, asyncio.Task[None]] = {}
+        self._queued_issues: set[IssueKey] = set()  # 重複排除用
+        self._queued_tasks: set[tuple[IssueKey, str]] = set()  # (issue_key, phase) 重複排除用
 
     # --- public methods ---
 
     async def enqueue(self, request: TaskRequest) -> None:
         """タスクをキューに追加する。
 
-        同一 Issue 番号のタスクが既にキューにある場合は、
+        同一 Issue のタスクが既にキューにある場合は、
         新しいリクエストで置換される (priority が反映される)。
         既に実行中の Issue は重複投入しない。
 
         Args:
             request: 実行するタスクリクエスト
         """
-        task_key: tuple[int, str] = (request.issue_number, request.phase)
+        ik = request.issue_key
+        task_key: tuple[IssueKey, str] = (ik, request.phase)
         if task_key in self._queued_tasks:
             logger.info(
                 "Issue #%d phase=%s already queued, skipping duplicate",
@@ -139,8 +148,8 @@ class TaskQueue:
         # 同一Issueが実行中でも、フェーズが変わった場合は
         # 次フェーズのタスクとしてエンキューを許可する
         # (auto-enqueue は _execute_task 完了直前に呼ばれるため)
-        if request.issue_number in self._active_tasks:
-            if request.issue_number not in self._queued_issues:
+        if ik in self._active_tasks:
+            if ik not in self._queued_issues:
                 # 実行中だが未キューイング -> 次フェーズとしてキューに入れる
                 logger.info(
                     "Issue #%d is executing, queueing next phase=%s",
@@ -154,13 +163,13 @@ class TaskQueue:
                 )
                 return
 
-        if request.issue_number in self._queued_issues:
+        if ik in self._queued_issues:
             logger.info(
                 "Issue #%d already in queue, will be replaced on dequeue",
                 request.issue_number,
             )
 
-        self._queued_issues.add(request.issue_number)
+        self._queued_issues.add(ik)
         self._queued_tasks.add(task_key)
         self._seq += 1
         await self._queue.put((request.priority, self._seq, request))
@@ -180,7 +189,7 @@ class TaskQueue:
             最も優先度の高い TaskRequest
         """
         _, _, request = await self._queue.get()
-        self._queued_issues.discard(request.issue_number)
+        self._queued_issues.discard(request.issue_key)
         # _queued_tasks はタスク完了時に除去する (実行中の重複防止)
         return request
 
@@ -204,7 +213,7 @@ class TaskQueue:
         while True:
             _priority, _seq, request = await self._queue.get()
             try:
-                self._queued_issues.discard(request.issue_number)
+                self._queued_issues.discard(request.issue_key)
                 # _queued_tasks はデキュー時に除去しない (実行中の重複防止)
                 await self._try_execute(executor, request)
             except Exception as e:
@@ -214,8 +223,8 @@ class TaskQueue:
                     e,
                 )
             finally:
-                self._queued_tasks.discard((request.issue_number, request.phase))
-                self._active_tasks.pop(request.issue_number, None)
+                self._queued_tasks.discard((request.issue_key, request.phase))
+                self._active_tasks.pop(request.issue_key, None)
                 self._queue.task_done()  # always called after get()
 
     async def _try_execute(
@@ -234,12 +243,13 @@ class TaskQueue:
         repo_sem = self._repo_sems[repo_key]
 
         await self._global_sem.acquire()
+        global_sem_held = True
         try:
-            # repo_sem を非ブロッキングで試行
-            acquired = repo_sem._value > 0
-            if not acquired:
+            # repo_sem を非ブロッキングで試行 (locked() は公開 API)
+            if repo_sem.locked():
                 # global_sem を解放して再キューイング
                 self._global_sem.release()
+                global_sem_held = False
                 logger.info(
                     "Repo semaphore busy for %s, re-enqueuing Issue #%d",
                     repo_key,
@@ -248,24 +258,19 @@ class TaskQueue:
                 await asyncio.sleep(5)
                 self._seq += 1
                 await self._queue.put((request.priority, self._seq, request))
-                self._queued_issues.add(request.issue_number)
+                self._queued_issues.add(request.issue_key)
                 return
 
             await repo_sem.acquire()
             try:
                 task = asyncio.current_task()
                 if task is not None:
-                    self._active_tasks[request.issue_number] = task
+                    self._active_tasks[request.issue_key] = task
                 await self._execute_task(executor, request)
             finally:
                 repo_sem.release()
         finally:
-            # Only release global_sem if we didn't already release it above
-            # We track this by checking if we're still holding it
-            if request.issue_number in self._active_tasks:
-                self._global_sem.release()
-            elif repo_sem._value <= self._max_per_repo:
-                # We acquired global_sem and repo_sem, need to release global
+            if global_sem_held:
                 self._global_sem.release()
 
     async def _execute_task(
@@ -306,7 +311,7 @@ class TaskQueue:
 
         Returns:
             {"active": int, "max_total": int, "queued": int,
-             "active_issues": list[int]}
+             "active_issues": list[IssueKey]}
         """
         return {
             "active": self.active_count,
@@ -315,26 +320,26 @@ class TaskQueue:
             "active_issues": list(self._active_tasks.keys()),
         }
 
-    def is_issue_active(self, issue_number: int) -> bool:
+    def is_issue_active(self, issue_key: IssueKey) -> bool:
         """指定 Issue が現在実行中かどうかを返す。"""
-        return issue_number in self._active_tasks
+        return issue_key in self._active_tasks
 
-    def is_task_queued(self, issue_number: int, phase: str) -> bool:
+    def is_task_queued(self, issue_key: IssueKey, phase: str) -> bool:
         """指定 Issue + phase がキューまたは実行中かどうかを返す。"""
-        return (issue_number, phase) in self._queued_tasks
+        return (issue_key, phase) in self._queued_tasks
 
-    async def cancel_task(self, issue_number: int) -> bool:
+    async def cancel_task(self, issue_key: IssueKey) -> bool:
         """実行中のタスクをキャンセルする。
 
         Args:
-            issue_number: キャンセルする Issue 番号
+            issue_key: キャンセルする IssueKey (repo, issue_number)
 
         Returns:
             キャンセルに成功した場合 True
         """
-        task = self._active_tasks.get(issue_number)
+        task = self._active_tasks.get(issue_key)
         if task and not task.done():
             task.cancel()
-            logger.info("Cancelled task for Issue #%d", issue_number)
+            logger.info("Cancelled task for Issue #%d (%s)", issue_key[1], issue_key[0])
             return True
         return False

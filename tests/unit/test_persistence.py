@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from ai_agent_orchestrator.models import IssueState, Phase
+from ai_agent_orchestrator.models import IssueKey, IssueState, Phase
 from ai_agent_orchestrator.state_persistence import StatePersistence
 
 
@@ -23,9 +23,9 @@ def persistence(state_file: Path) -> StatePersistence:
 
 
 @pytest.fixture
-def sample_states() -> dict[int, IssueState]:
+def sample_states() -> dict[IssueKey, IssueState]:
     return {
-        42: IssueState(
+        ("myorg/myapp", 42): IssueState(
             issue_number=42,
             phase=Phase.HEARING,
             issue_type="feature-m",
@@ -33,7 +33,7 @@ def sample_states() -> dict[int, IssueState]:
             created_at="2026-03-24T10:00:00",
             updated_at="2026-03-24T10:00:00",
         ),
-        55: IssueState(
+        ("myorg/myapp", 55): IssueState(
             issue_number=55,
             phase=Phase.IMPLEMENT,
             issue_type="bug",
@@ -49,21 +49,21 @@ def sample_states() -> dict[int, IssueState]:
 
 def test_save_load_roundtrip(
     persistence: StatePersistence,
-    sample_states: dict[int, IssueState],
+    sample_states: dict[IssueKey, IssueState],
 ) -> None:
     """save()で保存した状態がload()で正しく復元されること."""
     persistence.save(sample_states)
     loaded = persistence.load()
 
     assert len(loaded) == 2
-    assert loaded[42].issue_number == 42
-    assert loaded[42].phase == Phase.HEARING
-    assert loaded[42].issue_type == "feature-m"
-    assert loaded[42].repo == "myorg/myapp"
-    assert loaded[55].phase == Phase.IMPLEMENT
-    assert loaded[55].session_id == "sess_abc"
-    assert loaded[55].pr_number == 101
-    assert loaded[55].retry_count == 1
+    assert loaded[("myorg/myapp", 42)].issue_number == 42
+    assert loaded[("myorg/myapp", 42)].phase == Phase.HEARING
+    assert loaded[("myorg/myapp", 42)].issue_type == "feature-m"
+    assert loaded[("myorg/myapp", 42)].repo == "myorg/myapp"
+    assert loaded[("myorg/myapp", 55)].phase == Phase.IMPLEMENT
+    assert loaded[("myorg/myapp", 55)].session_id == "sess_abc"
+    assert loaded[("myorg/myapp", 55)].pr_number == 101
+    assert loaded[("myorg/myapp", 55)].retry_count == 1
 
 
 def test_save_load_empty_states(persistence: StatePersistence) -> None:
@@ -98,7 +98,7 @@ def test_load_corrupted_file_recovers(
 
 def test_save_atomic_write(
     persistence: StatePersistence,
-    sample_states: dict[int, IssueState],
+    sample_states: dict[IssueKey, IssueState],
     state_file: Path,
 ) -> None:
     """save()がatomic writeで書き込むこと（.tmpファイルが残らない）."""
@@ -110,8 +110,8 @@ def test_save_atomic_write(
 
     # ファイル内容がvalid JSONであること
     content = json.loads(state_file.read_text(encoding="utf-8"))
-    assert "42" in content
-    assert "55" in content
+    assert "myorg/myapp:42" in content
+    assert "myorg/myapp:55" in content
 
 
 def test_load_skips_invalid_phase(
@@ -121,13 +121,13 @@ def test_load_skips_invalid_phase(
     """不正なPhase値を持つエントリがスキップされること."""
     state_file.parent.mkdir(parents=True, exist_ok=True)
     data = {
-        "42": {
+        "org/repo:42": {
             "issue_number": 42,
             "phase": "hearing",
             "issue_type": "bug",
             "repo": "org/repo",
         },
-        "99": {
+        "org/repo:99": {
             "issue_number": 99,
             "phase": "nonexistent-phase",  # 不正な値
             "issue_type": "bug",
@@ -138,14 +138,14 @@ def test_load_skips_invalid_phase(
 
     loaded = persistence.load()
 
-    assert 42 in loaded
-    assert 99 not in loaded  # 不正なエントリはスキップ
+    assert ("org/repo", 42) in loaded
+    assert ("org/repo", 99) not in loaded  # 不正なエントリはスキップ
 
 
 @pytest.mark.asyncio
 async def test_auto_save_debounce(
     state_file: Path,
-    sample_states: dict[int, IssueState],
+    sample_states: dict[IssueKey, IssueState],
 ) -> None:
     """auto_save()が短期間の複数回呼び出しをデバウンスすること."""
     persistence = StatePersistence(state_file, debounce_sec=0.1)
@@ -174,7 +174,7 @@ def test_save_creates_parent_directories(tmp_path: Path) -> None:
 
     persistence.save(
         {
-            1: IssueState(issue_number=1, phase=Phase.HEARING),
+            ("org/repo", 1): IssueState(issue_number=1, phase=Phase.HEARING, repo="org/repo"),
         }
     )
 
@@ -183,7 +183,7 @@ def test_save_creates_parent_directories(tmp_path: Path) -> None:
 
 def test_save_json_format(
     persistence: StatePersistence,
-    sample_states: dict[int, IssueState],
+    sample_states: dict[IssueKey, IssueState],
     state_file: Path,
 ) -> None:
     """保存されたJSONがインデント付きで、日本語がエスケープされないこと."""
@@ -202,22 +202,26 @@ def test_save_overwrites_existing(
     state_file: Path,
 ) -> None:
     """save()が既存ファイルを上書きすること."""
-    state1 = {42: IssueState(issue_number=42, phase=Phase.HEARING)}
-    state2 = {99: IssueState(issue_number=99, phase=Phase.DONE)}
+    state1: dict[IssueKey, IssueState] = {
+        ("org/repo", 42): IssueState(issue_number=42, phase=Phase.HEARING, repo="org/repo"),
+    }
+    state2: dict[IssueKey, IssueState] = {
+        ("org/repo", 99): IssueState(issue_number=99, phase=Phase.DONE, repo="org/repo"),
+    }
 
     persistence.save(state1)
     persistence.save(state2)
 
     loaded = persistence.load()
-    assert 42 not in loaded
-    assert 99 in loaded
-    assert loaded[99].phase == Phase.DONE
+    assert ("org/repo", 42) not in loaded
+    assert ("org/repo", 99) in loaded
+    assert loaded[("org/repo", 99)].phase == Phase.DONE
 
 
 @pytest.mark.asyncio
 async def test_flush_saves_immediately(
     state_file: Path,
-    sample_states: dict[int, IssueState],
+    sample_states: dict[IssueKey, IssueState],
 ) -> None:
     """flush()が保留中のデバウンスをキャンセルし即座に保存すること."""
     persistence = StatePersistence(state_file, debounce_sec=10.0)

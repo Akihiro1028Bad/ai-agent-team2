@@ -69,7 +69,7 @@ class SplitProposalExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         if state:
             state.session_id = result.session_id
 
@@ -154,7 +154,7 @@ class SplitExecuteExecutor(PhaseExecutor):
             f"分割が完了しました。子Issueが作成されています。\n\n{output_text}",
         )
         await client.replace_phase_label(request.repo, request.issue_number, "phase:done")
-        await self._sm.transition(request.issue_number, "done")
+        await self._sm.transition(self._issue_key(request), "done")
         issue = await client.get_issue(request.repo, request.issue_number)
         repo_full_name = self._get_repo_full_name(request)
         await self._notifier.notify(

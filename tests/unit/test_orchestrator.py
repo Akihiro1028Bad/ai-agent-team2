@@ -273,7 +273,7 @@ class TestExecuteTask:
             notifier=NullNotifier(),
         )
         orch.state_machine.register_issue(42, "test-owner/test-repo")
-        orch.state_machine.set_issue_type(42, "bug")
+        orch.state_machine.set_issue_type(("test-owner/test-repo", 42), "bug")
 
         task = TaskRequest(
             issue_number=42,
@@ -284,7 +284,7 @@ class TestExecuteTask:
 
         await orch._execute_task(task)
 
-        assert orch.state_machine.get_phase(42) == Phase.ANALYSIS
+        assert orch.state_machine.get_phase(("test-owner/test-repo", 42)) == Phase.ANALYSIS
 
     async def test_execute_task_handles_error_and_suspends(self, tmp_path: Path) -> None:
         """dispatch でエラーが発生した場合に SUSPENDED に遷移すること."""
@@ -304,8 +304,8 @@ class TestExecuteTask:
         )
         # Register issue and move to ANALYSIS (which can transition to SUSPENDED)
         orch.state_machine.register_issue(42, "test-owner/test-repo")
-        orch.state_machine.set_issue_type(42, "bug")
-        await orch.state_machine.transition(42, Phase.ANALYSIS)
+        orch.state_machine.set_issue_type(("test-owner/test-repo", 42), "bug")
+        await orch.state_machine.transition(("test-owner/test-repo", 42), Phase.ANALYSIS)
 
         task = TaskRequest(
             issue_number=42,
@@ -316,7 +316,7 @@ class TestExecuteTask:
 
         await orch._execute_task(task)
 
-        assert orch.state_machine.get_phase(42) == Phase.SUSPENDED
+        assert orch.state_machine.get_phase(("test-owner/test-repo", 42)) == Phase.SUSPENDED
         notifier.notify.assert_awaited()
 
     async def test_execute_task_builds_context(self, tmp_path: Path) -> None:

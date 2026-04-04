@@ -71,9 +71,9 @@ class CiFixExecutor(PhaseExecutor):
             result: エージェント実行結果。
         """
         # リトライカウンタを先にインクリメント (例外発生時も確実に更新されるよう先行実行)
-        await self._sm.increment_ci_retry(request.issue_number)
+        await self._sm.increment_ci_retry(self._issue_key(request))
 
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         if state:
             state.session_id = result.session_id
 

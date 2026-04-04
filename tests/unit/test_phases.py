@@ -116,6 +116,8 @@ def _make_request(
     req = MagicMock()
     req.issue_number = issue_number
     req.repo = repo
+    req.repo_key = "org/app"
+    req.issue_key = ("org/app", issue_number)
     req.phase = phase
     req.extra = extra or {}
     return req
@@ -163,9 +165,9 @@ class TestTypeDetectionExecutor:
         request = _make_request(phase="type-detection")
         await executor.execute(request)
 
-        mock_sm.set_issue_type.assert_called_with(1, "bug")
+        mock_sm.set_issue_type.assert_called_with(("org/app", 1), "bug")
         mock_github.add_label.assert_called_once()
-        mock_sm.transition.assert_called_with(1, "analysis")
+        mock_sm.transition.assert_called_with(("org/app", 1), "analysis")
 
     async def test_detects_small_feature_as_feature_m(
         self,
@@ -201,8 +203,8 @@ class TestTypeDetectionExecutor:
         request = _make_request(phase="type-detection")
         await executor.execute(request)
 
-        mock_sm.set_issue_type.assert_called_with(1, "feature-m")
-        mock_sm.transition.assert_called_with(1, "hearing")
+        mock_sm.set_issue_type.assert_called_with(("org/app", 1), "feature-m")
+        mock_sm.transition.assert_called_with(("org/app", 1), "hearing")
 
     async def test_fallback_detection_on_invalid_json(
         self,
@@ -239,7 +241,7 @@ class TestTypeDetectionExecutor:
         await executor.execute(request)
 
         # "バグ" keyword triggers bug detection
-        mock_sm.set_issue_type.assert_called_with(1, "bug")
+        mock_sm.set_issue_type.assert_called_with(("org/app", 1), "bug")
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +320,7 @@ class TestHearingExecutor:
         request = _make_request(phase="hearing")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(1, "design")
+        mock_sm.transition.assert_called_with(("org/app", 1), "design")
 
     async def test_transitions_to_split_when_needs_split(
         self,
@@ -352,7 +354,7 @@ class TestHearingExecutor:
         request = _make_request(phase="hearing")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(1, "split-proposal")
+        mock_sm.transition.assert_called_with(("org/app", 1), "split-proposal")
 
 
 # ---------------------------------------------------------------------------
@@ -396,7 +398,7 @@ class TestAnalysisExecutor:
         await executor.execute(request)
 
         mock_github.create_comment.assert_called_once()
-        mock_sm.transition.assert_called_with(1, "plan-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "plan-review")
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +441,7 @@ class TestDesignExecutor:
         request = _make_request(phase="design")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(1, "design-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
         state = mock_sm.get_state(1)
         assert state.design_pr_number == 5
 
@@ -519,7 +521,7 @@ class TestDesignExecutor:
         await executor.execute(request)
 
         # DESIGN_REVIEW への遷移は完了している
-        mock_sm.transition.assert_called_with(1, "design-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
 
 
 # ---------------------------------------------------------------------------
@@ -596,7 +598,7 @@ class TestPlanningExecutor:
         request = _make_request(phase="planning")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(1, "plan-validation")
+        mock_sm.transition.assert_called_with(("org/app", 1), "plan-validation")
 
 
 # ---------------------------------------------------------------------------
@@ -642,7 +644,7 @@ class TestImplementExecutor:
         request = _make_request(phase="implement")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(1, "impl-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
         state = mock_sm.get_state(1)
         assert state.pr_number == 42
 
@@ -688,7 +690,7 @@ class TestFixExecutor:
         await executor.execute(request)
 
         # transition to impl-review should be called
-        mock_sm.transition.assert_called_with(1, "impl-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
         # tracker should record fix_complete with pr_number
         mock_tracker.track.assert_any_call(
             "fix_complete",
@@ -737,7 +739,7 @@ class TestCiFixExecutor:
         )
         await executor.execute(request)
 
-        mock_sm.increment_ci_retry.assert_called_with(1)
+        mock_sm.increment_ci_retry.assert_called_with(("org/app", 1))
 
     def _make_ci_fix_executor(
         self,
@@ -925,7 +927,7 @@ class TestImplReviseExecutor:
         mock_runner.run.assert_called_once()
         call_kwargs = mock_runner.run.call_args.kwargs
         assert call_kwargs["resume_session_id"] == "prev-impl-session"
-        mock_sm.transition.assert_called_with(1, "impl-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
 
     async def test_process_result_sends_completion_reply_to_each_comment(
         self,
@@ -1006,7 +1008,7 @@ class TestImplReviseExecutor:
 
         mock_github.reply_to_review_comment.assert_not_called()
         # IMPL_REVIEW 遷移は継続する
-        mock_sm.transition.assert_called_with(1, "impl-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
 
     async def test_process_result_completion_reply_failure_does_not_block_transition(
         self,
@@ -1045,7 +1047,7 @@ class TestImplReviseExecutor:
         await executor.execute(request)
 
         # IMPL_REVIEW 遷移は完了している
-        mock_sm.transition.assert_called_with(1, "impl-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
         # Slack 通知も送られている
         mock_notifier.notify.assert_called_once()
 
@@ -1181,7 +1183,7 @@ class TestSplitExecuteExecutor:
         request = _make_request(phase="split-execute")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(1, "done")
+        mock_sm.transition.assert_called_with(("org/app", 1), "done")
         mock_github.create_comment.assert_called_once()
 
 
@@ -1287,7 +1289,7 @@ class TestPhaseExecutorErrorHandling:
         request = _make_request(phase="hearing")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(1, "suspended")
+        mock_sm.transition.assert_called_with(("org/app", 1), "suspended")
         mock_notifier.notify.assert_called_once()
 
     async def test_generic_error_transitions_to_suspended(
@@ -1316,7 +1318,7 @@ class TestPhaseExecutorErrorHandling:
         request = _make_request(phase="implement")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(1, "suspended")
+        mock_sm.transition.assert_called_with(("org/app", 1), "suspended")
         mock_github.create_comment.assert_called_once()
         mock_notifier.notify.assert_called_once()
 
@@ -1410,7 +1412,7 @@ class TestEnsurePrCreated:
         await executor.execute(request)
 
         # 既存PRが見つかるのでimpl-reviewに遷移
-        mock_sm.transition.assert_called_with(1, "impl-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
         state = mock_sm.get_state(1)
         assert state.pr_number == 99
 
@@ -1458,7 +1460,7 @@ class TestEnsurePrCreated:
 
         # APIでPR作成 → impl-reviewに遷移
         mock_github.create_pull_request.assert_called_once()
-        mock_sm.transition.assert_called_with(1, "impl-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
         state = mock_sm.get_state(1)
         assert state.pr_number == 101
 
@@ -1501,7 +1503,7 @@ class TestEnsurePrCreated:
         await executor.execute(request)
 
         mock_github.create_pull_request.assert_called_once()
-        mock_sm.transition.assert_called_with(1, "design-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
         state = mock_sm.get_state(1)
         assert state.design_pr_number == 55
 
@@ -1542,7 +1544,7 @@ class TestEnsurePrCreated:
         await executor.execute(request)
 
         # RuntimeError → _handle_error → suspended
-        mock_sm.transition.assert_called_with(1, "suspended")
+        mock_sm.transition.assert_called_with(("org/app", 1), "suspended")
         mock_notifier.notify.assert_called_once()
 
 
@@ -1605,7 +1607,7 @@ class TestHearingWaitTransition:
         await executor.process_result(request, result)
 
         # hearing-wait へ遷移したことを確認
-        mock_sm.transition.assert_called_once_with(42, "hearing-wait")
+        mock_sm.transition.assert_called_once_with(("org/app", 42), "hearing-wait")
         # ラベルが hearing-wait に更新されたことを確認
         mock_github.replace_phase_label.assert_called_once()
         label_args = mock_github.replace_phase_label.call_args
@@ -1775,7 +1777,7 @@ class TestHandleErrorObservability:
         await executor.execute(request)
 
         # suspended 遷移は完了していること
-        mock_sm.transition.assert_called_with(1, "suspended")
+        mock_sm.transition.assert_called_with(("org/app", 1), "suspended")
 
     async def test_handle_error_survives_notifier_failure(
         self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
@@ -1800,7 +1802,7 @@ class TestHandleErrorObservability:
         request = _make_request(phase="fix")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(1, "suspended")
+        mock_sm.transition.assert_called_with(("org/app", 1), "suspended")
 
     async def test_handle_timeout_tracks_phase_suspended_event(
         self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
