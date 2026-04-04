@@ -5,8 +5,6 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
-import pytest
-
 from ai_agent_orchestrator.agents.mcp_config import (
     CONTEXT7_TOOLS,
     FETCH_TOOLS,
@@ -109,8 +107,9 @@ class TestGetPhaseMcpConfig:
         assert "context7" in servers
         assert "github" in servers
 
-    def test_github_phase_raises_without_token(self) -> None:
-        """GITHUB_TOKEN 未設定で GitHub フェーズは ValueError."""
+    def test_github_skipped_without_token(self) -> None:
+        """GITHUB_TOKEN 未設定で GitHub サーバーがスキップされる."""
         with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValueError, match="GITHUB_TOKEN"):
-                get_phase_mcp_config("implement")
+            servers, _tools = get_phase_mcp_config("implement")
+            assert "github" not in servers
+            assert "context7" in servers

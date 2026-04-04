@@ -5,8 +5,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # MCP サーバー定義
@@ -19,11 +22,16 @@ CONTEXT7_SERVER: dict[str, Any] = {
 }
 
 
-def _build_github_server() -> dict[str, Any]:
-    """GitHub MCP サーバー設定を返す。GITHUB_TOKEN を実行時に解決する。"""
+def _build_github_server() -> dict[str, Any] | None:
+    """GitHub MCP サーバー設定を返す。GITHUB_TOKEN を実行時に解決する。
+
+    Returns:
+        サーバー設定辞書。GITHUB_TOKEN 未設定時は None (スキップ)。
+    """
     token = os.environ.get("GITHUB_TOKEN", "")
     if not token:
-        raise ValueError("GITHUB_TOKEN environment variable is not set. GitHub MCP server requires a valid token.")
+        logger.warning("GITHUB_TOKEN が未設定のため GitHub MCP サーバーをスキップします")
+        return None
     return {
         "type": "stdio",
         "command": "npx",
@@ -167,16 +175,20 @@ def get_phase_mcp_config(phase: str) -> tuple[dict[str, Any], list[str]]:
         (mcp_servers, mcp_tools) のタプル。
         MCP 未設定のフェーズでは ({}, []) を返す。
 
-    Raises:
-        ValueError: GitHub サーバーが必要なフェーズで GITHUB_TOKEN が未設定の場合。
     """
     config = _PHASE_MCP_MAP.get(phase, {})
     if not config:
         return {}, []
     raw_servers: dict[str, Any] = config.get("servers", {})
     # None プレースホルダーを実行時に解決する (GITHUB_TOKEN の遅延評価)
-    servers: dict[str, Any] = {
-        name: (_build_github_server() if server is None else server) for name, server in raw_servers.items()
-    }
+    resolved: dict[str, Any] = {}
+    for name, server in raw_servers.items():
+        if server is None:
+            built = _build_github_server()
+            if built is not None:
+                resolved[name] = built
+            # None の場合はスキップ (トークン未設定)
+        else:
+            resolved[name] = server
     tools: list[str] = config.get("tools", [])
-    return servers, tools
+    return resolved, tools
