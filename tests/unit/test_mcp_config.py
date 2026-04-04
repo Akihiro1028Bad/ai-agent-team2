@@ -6,11 +6,15 @@ import os
 from unittest.mock import patch
 
 from ai_agent_orchestrator.agents.mcp_config import (
+    CHROME_DEVTOOLS_TOOLS,
     CONTEXT7_TOOLS,
     FETCH_TOOLS,
     GITHUB_TOOLS,
     MEMORY_TOOLS,
+    MERMAID_TOOLS,
+    PLAYWRIGHT_TOOLS,
     SEQUENTIAL_THINKING_TOOLS,
+    SHADCN_UI_TOOLS,
     get_phase_mcp_config,
 )
 
@@ -117,3 +121,47 @@ class TestGetPhaseMcpConfig:
             assert not any(t.startswith("mcp__github__") for t in tools)
             # 他のツールは残っていること
             assert any(t.startswith("mcp__context7__") for t in tools)
+
+    # --- Web 開発向け MCP テスト ---
+
+    def test_design_has_shadcnui_and_mermaid(self) -> None:
+        servers, tools = get_phase_mcp_config("design")
+        assert "shadcnui" in servers
+        assert "mermaid" in servers
+        assert set(SHADCN_UI_TOOLS).issubset(set(tools))
+        assert set(MERMAID_TOOLS).issubset(set(tools))
+
+    @_GITHUB_TOKEN_ENV
+    def test_implement_has_playwright_shadcnui_chromedevtools(self) -> None:
+        servers, tools = get_phase_mcp_config("implement")
+        assert "playwright" in servers
+        assert "shadcnui" in servers
+        assert "chromedevtools" in servers
+        assert set(PLAYWRIGHT_TOOLS).issubset(set(tools))
+        assert set(SHADCN_UI_TOOLS).issubset(set(tools))
+        assert set(CHROME_DEVTOOLS_TOOLS).issubset(set(tools))
+
+    @_GITHUB_TOKEN_ENV
+    def test_fix_has_playwright_chromedevtools(self) -> None:
+        servers, _tools = get_phase_mcp_config("fix")
+        assert "playwright" in servers
+        assert "chromedevtools" in servers
+
+    @_GITHUB_TOKEN_ENV
+    def test_ci_fix_has_playwright_chromedevtools(self) -> None:
+        servers, _tools = get_phase_mcp_config("ci-fix")
+        assert "playwright" in servers
+        assert "chromedevtools" in servers
+
+    @_GITHUB_TOKEN_ENV
+    def test_impl_revise_has_playwright_chromedevtools(self) -> None:
+        servers, _tools = get_phase_mcp_config("impl-revise")
+        assert "playwright" in servers
+        assert "chromedevtools" in servers
+
+    def test_hearing_has_no_web_dev_servers(self) -> None:
+        servers, _tools = get_phase_mcp_config("hearing")
+        assert "playwright" not in servers
+        assert "shadcnui" not in servers
+        assert "chromedevtools" not in servers
+        assert "mermaid" not in servers

@@ -59,6 +59,30 @@ FETCH_SERVER: dict[str, Any] = {
     "args": ["-y", "@modelcontextprotocol/server-fetch"],
 }
 
+PLAYWRIGHT_SERVER: dict[str, Any] = {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@playwright/mcp@latest"],
+}
+
+SHADCN_UI_SERVER: dict[str, Any] = {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@anthropic-ai/shadcn-ui-mcp@latest"],
+}
+
+CHROME_DEVTOOLS_SERVER: dict[str, Any] = {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@anthropic-ai/chrome-devtools-mcp@latest"],
+}
+
+MERMAID_SERVER: dict[str, Any] = {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "mermaid-mcp-server"],
+}
+
 # ---------------------------------------------------------------------------
 # MCP ツール名定義
 # ---------------------------------------------------------------------------
@@ -96,6 +120,42 @@ FETCH_TOOLS: list[str] = [
     "mcp__fetch__fetch",
 ]
 
+PLAYWRIGHT_TOOLS: list[str] = [
+    "mcp__playwright__browser_navigate",
+    "mcp__playwright__browser_take_screenshot",
+    "mcp__playwright__browser_snapshot",
+    "mcp__playwright__browser_click",
+    "mcp__playwright__browser_fill",
+    "mcp__playwright__browser_hover",
+    "mcp__playwright__browser_press_key",
+    "mcp__playwright__browser_close",
+    "mcp__playwright__browser_evaluate",
+    "mcp__playwright__browser_wait_for",
+]
+
+SHADCN_UI_TOOLS: list[str] = [
+    "mcp__shadcnui__get_component",
+    "mcp__shadcnui__list_components",
+    "mcp__shadcnui__get_block",
+    "mcp__shadcnui__list_blocks",
+    "mcp__shadcnui__get_theme",
+]
+
+CHROME_DEVTOOLS_TOOLS: list[str] = [
+    "mcp__chromedevtools__take_screenshot",
+    "mcp__chromedevtools__navigate_page",
+    "mcp__chromedevtools__lighthouse_audit",
+    "mcp__chromedevtools__evaluate_script",
+    "mcp__chromedevtools__click",
+    "mcp__chromedevtools__list_network_requests",
+    "mcp__chromedevtools__take_snapshot",
+]
+
+MERMAID_TOOLS: list[str] = [
+    "mcp__mermaid__mermaid_preview",
+    "mcp__mermaid__mermaid_save",
+]
+
 # ---------------------------------------------------------------------------
 # フェーズ別 MCP 設定マッピング
 # ---------------------------------------------------------------------------
@@ -117,8 +177,10 @@ _PHASE_MCP_MAP: dict[str, dict[str, Any]] = {
             "context7": CONTEXT7_SERVER,
             "sequential-thinking": SEQUENTIAL_THINKING_SERVER,
             "fetch": FETCH_SERVER,
+            "shadcnui": SHADCN_UI_SERVER,
+            "mermaid": MERMAID_SERVER,
         },
-        "tools": [*CONTEXT7_TOOLS, *SEQUENTIAL_THINKING_TOOLS, *FETCH_TOOLS],
+        "tools": [*CONTEXT7_TOOLS, *SEQUENTIAL_THINKING_TOOLS, *FETCH_TOOLS, *SHADCN_UI_TOOLS, *MERMAID_TOOLS],
     },
     "planning": {
         "servers": {
@@ -132,29 +194,45 @@ _PHASE_MCP_MAP: dict[str, dict[str, Any]] = {
             "context7": CONTEXT7_SERVER,
             "github": None,  # _build_github_server() で実行時に解決
             "memory": MEMORY_SERVER,
+            "playwright": PLAYWRIGHT_SERVER,
+            "shadcnui": SHADCN_UI_SERVER,
+            "chromedevtools": CHROME_DEVTOOLS_SERVER,
         },
-        "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS, *MEMORY_TOOLS],
+        "tools": [
+            *CONTEXT7_TOOLS,
+            *GITHUB_TOOLS,
+            *MEMORY_TOOLS,
+            *PLAYWRIGHT_TOOLS,
+            *SHADCN_UI_TOOLS,
+            *CHROME_DEVTOOLS_TOOLS,
+        ],
     },
     "fix": {
         "servers": {
             "context7": CONTEXT7_SERVER,
             "github": None,
+            "playwright": PLAYWRIGHT_SERVER,
+            "chromedevtools": CHROME_DEVTOOLS_SERVER,
         },
-        "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS],
+        "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS, *PLAYWRIGHT_TOOLS, *CHROME_DEVTOOLS_TOOLS],
     },
     "ci-fix": {
         "servers": {
             "context7": CONTEXT7_SERVER,
             "github": None,
+            "playwright": PLAYWRIGHT_SERVER,
+            "chromedevtools": CHROME_DEVTOOLS_SERVER,
         },
-        "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS],
+        "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS, *PLAYWRIGHT_TOOLS, *CHROME_DEVTOOLS_TOOLS],
     },
     "impl-revise": {
         "servers": {
             "context7": CONTEXT7_SERVER,
             "github": None,
+            "playwright": PLAYWRIGHT_SERVER,
+            "chromedevtools": CHROME_DEVTOOLS_SERVER,
         },
-        "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS],
+        "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS, *PLAYWRIGHT_TOOLS, *CHROME_DEVTOOLS_TOOLS],
     },
     "design-revise": {
         "servers": {

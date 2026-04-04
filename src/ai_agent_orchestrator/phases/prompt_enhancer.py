@@ -58,15 +58,24 @@ _DESIGN_SECURITY = """\
 - エラーメッセージで機密情報を露出しないこと
 """
 
+_BROWSER_VERIFICATION = """\
+
+## ブラウザ検証 (エビデンスが必要な場合のみ)
+- UIの見た目を確認したい場合は Playwright でスクリーンショットを取得してください
+- アクセシビリティ・パフォーマンスの検証が必要な場合は Chrome DevTools の Lighthouse を使用してください
+- 毎回使う必要はありません。エビデンスが必要な場合のみ使用してください
+- ブラウザ操作後は必ずブラウザを閉じてください
+"""
+
 # ---------------------------------------------------------------------------
 # フェーズ別マッピング
 # ---------------------------------------------------------------------------
 
 _PHASE_SECTIONS: dict[str, list[str]] = {
-    "implement": [_TEST_REQUIREMENTS, _SECURITY_REQUIREMENTS, _CODING_STANDARDS],
-    "fix": [_TEST_REQUIREMENTS, _SECURITY_REQUIREMENTS, _CODING_STANDARDS],
-    "ci-fix": [_CODING_STANDARDS],
-    "impl-revise": [_TEST_REQUIREMENTS, _CODING_STANDARDS],
+    "implement": [_TEST_REQUIREMENTS, _SECURITY_REQUIREMENTS, _CODING_STANDARDS, _BROWSER_VERIFICATION],
+    "fix": [_TEST_REQUIREMENTS, _SECURITY_REQUIREMENTS, _CODING_STANDARDS, _BROWSER_VERIFICATION],
+    "ci-fix": [_CODING_STANDARDS, _BROWSER_VERIFICATION],
+    "impl-revise": [_TEST_REQUIREMENTS, _CODING_STANDARDS, _BROWSER_VERIFICATION],
     "design": [_DESIGN_TEST_STRATEGY, _DESIGN_SECURITY, _CODING_STANDARDS],
     "design-revise": [_DESIGN_TEST_STRATEGY, _CODING_STANDARDS],
     "planning": [_TEST_REQUIREMENTS],

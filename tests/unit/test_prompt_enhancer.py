@@ -77,3 +77,33 @@ class TestEnhancePrompt:
         result = enhance_prompt(self.BASE, "design-revise")
         assert "テスト戦略" in result
         assert "コーディング規約" in result
+
+    # --- ブラウザ検証セクション ---
+
+    def test_implement_includes_browser_verification(self) -> None:
+        result = enhance_prompt(self.BASE, "implement")
+        assert "ブラウザ検証" in result
+
+    def test_fix_includes_browser_verification(self) -> None:
+        result = enhance_prompt(self.BASE, "fix")
+        assert "ブラウザ検証" in result
+
+    def test_ci_fix_includes_browser_verification(self) -> None:
+        result = enhance_prompt(self.BASE, "ci-fix")
+        assert "ブラウザ検証" in result
+
+    def test_impl_revise_includes_browser_verification(self) -> None:
+        result = enhance_prompt(self.BASE, "impl-revise")
+        assert "ブラウザ検証" in result
+
+    def test_browser_verification_mentions_evidence(self) -> None:
+        result = enhance_prompt(self.BASE, "implement")
+        assert "エビデンス" in result
+
+    def test_design_no_browser_verification(self) -> None:
+        result = enhance_prompt(self.BASE, "design")
+        assert "ブラウザ検証" not in result
+
+    def test_hearing_no_browser_verification(self) -> None:
+        result = enhance_prompt(self.BASE, "hearing")
+        assert "ブラウザ検証" not in result
