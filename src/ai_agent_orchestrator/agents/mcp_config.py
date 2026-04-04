@@ -191,5 +191,13 @@ def get_phase_mcp_config(phase: str) -> tuple[dict[str, Any], list[str]]:
             # None の場合はスキップ (トークン未設定)
         else:
             resolved[name] = copy.deepcopy(server)
-    tools: list[str] = config.get("tools", [])
+    all_tools: list[str] = config.get("tools", [])
+    # スキップされたサーバーのツールを除外する
+    resolved_names = set(resolved.keys())
+    skipped_names = set(raw_servers.keys()) - resolved_names
+    if skipped_names:
+        skipped_prefixes = tuple(f"mcp__{n.replace('-', '')}__" for n in skipped_names)
+        tools = [t for t in all_tools if not t.startswith(skipped_prefixes)]
+    else:
+        tools = list(all_tools)
     return resolved, tools

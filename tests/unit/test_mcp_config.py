@@ -108,8 +108,12 @@ class TestGetPhaseMcpConfig:
         assert "github" in servers
 
     def test_github_skipped_without_token(self) -> None:
-        """GITHUB_TOKEN 未設定で GitHub サーバーがスキップされる."""
+        """GITHUB_TOKEN 未設定で GitHub サーバーとツールがスキップされる."""
         with patch.dict(os.environ, {}, clear=True):
-            servers, _tools = get_phase_mcp_config("implement")
+            servers, tools = get_phase_mcp_config("implement")
             assert "github" not in servers
             assert "context7" in servers
+            # GitHub ツールも除外されていること
+            assert not any(t.startswith("mcp__github__") for t in tools)
+            # 他のツールは残っていること
+            assert any(t.startswith("mcp__context7__") for t in tools)
