@@ -43,7 +43,9 @@ class PlanningExecutor(PhaseExecutor):
             issue_number=request.issue_number,
         )
 
-        return (
+        from ai_agent_orchestrator.phases.prompt_enhancer import enhance_prompt
+
+        raw = (
             f"設計書に基づき、実装計画を作成してください。\n\n"
             f"## Issue #{request.issue_number}: {issue.title}\n\n"
             f"## コンテキスト\n{context}\n\n"
@@ -75,9 +77,10 @@ class PlanningExecutor(PhaseExecutor):
             f"- テストファイルは最後のサブタスクにまとめる\n"
             f"- `depends_on` には依存するサブタスクの番号 (整数) を列挙する\n"
         )
+        return enhance_prompt(raw, "planning")
 
     async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
-        """実装計画作成結果を処理 -> IMPLEMENT 遷移。
+        """実装計画作成結果を処理 -> PLAN_VALIDATION 遷移。
 
         Args:
             request: タスクリクエスト。
@@ -90,5 +93,5 @@ class PlanningExecutor(PhaseExecutor):
         await self._recover_uncommitted_work(request, branch_prefix="feature")
 
         client = await self._get_client(request.repo)
-        await client.replace_phase_label(request.repo, request.issue_number, "phase:implement")
-        await self._sm.transition(request.issue_number, "implement")
+        await client.replace_phase_label(request.repo, request.issue_number, "phase:plan-validation")
+        await self._sm.transition(request.issue_number, "plan-validation")

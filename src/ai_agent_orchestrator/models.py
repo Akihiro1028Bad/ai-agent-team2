@@ -49,6 +49,7 @@ class Phase(str, Enum):  # noqa: UP042
     DESIGN_REVIEW = "design-review"
     DESIGN_REVISE = "design-revise"
     PLANNING = "planning"
+    PLAN_VALIDATION = "plan-validation"
 
     # Feature-L専用
     SPLIT_PROPOSAL = "split-proposal"
@@ -214,6 +215,8 @@ class PhaseConfig:
     permission_mode: str
     resume: bool = False
     model: str = "sonnet"
+    mcp_servers: dict[str, Any] | None = None
+    mcp_allowed_tools: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +241,8 @@ VALID_TRANSITIONS: dict[Phase, list[Phase]] = {
     Phase.DESIGN: [Phase.DESIGN_REVIEW, Phase.SUSPENDED],
     Phase.DESIGN_REVIEW: [Phase.PLANNING, Phase.DESIGN_REVISE, Phase.SUSPENDED],
     Phase.DESIGN_REVISE: [Phase.DESIGN_REVIEW, Phase.SUSPENDED],
-    Phase.PLANNING: [Phase.IMPLEMENT, Phase.SUSPENDED],
+    Phase.PLANNING: [Phase.PLAN_VALIDATION, Phase.SUSPENDED],
+    Phase.PLAN_VALIDATION: [Phase.IMPLEMENT, Phase.PLANNING, Phase.SUSPENDED],
     # Feature-L ワークフロー
     Phase.SPLIT_PROPOSAL: [Phase.SPLIT_EXECUTE, Phase.HEARING, Phase.SUSPENDED],
     Phase.SPLIT_EXECUTE: [Phase.DONE, Phase.SUSPENDED],

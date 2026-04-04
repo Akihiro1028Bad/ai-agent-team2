@@ -30,7 +30,7 @@ from ai_agent_orchestrator.models import (
 
 
 def test_phase_has_19_values() -> None:
-    assert len(Phase) == 19
+    assert len(Phase) == 20
 
 
 def test_phase_values() -> None:
@@ -44,6 +44,7 @@ def test_phase_values() -> None:
         "design-review",
         "design-revise",
         "planning",
+        "plan-validation",
         "split-proposal",
         "split-execute",
         "blocked",

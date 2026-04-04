@@ -23,6 +23,7 @@ from claude_agent_sdk.types import (
     ToolUseBlock,
 )
 
+from ai_agent_orchestrator.agents.mcp_config import get_phase_mcp_config
 from ai_agent_orchestrator.models import AgentResult, PhaseConfig
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,7 @@ PHASE_CONFIG: dict[str, PhaseConfig] = {
         resume=True,
     ),
     "planning": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="bypassPermissions"),
+    "plan-validation": PhaseConfig(max_budget_usd=0.0, timeout_sec=60, permission_mode="plan"),
     "split-proposal": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="bypassPermissions"),
     "implement": PhaseConfig(max_budget_usd=10.0, timeout_sec=3600, permission_mode="bypassPermissions"),
     "fix": PhaseConfig(max_budget_usd=5.0, timeout_sec=1800, permission_mode="bypassPermissions"),
@@ -199,6 +201,7 @@ class ClaudeAgentRunner:
             )
 
         # Build options (max_turns はSDKデフォルトに委任)
+        mcp_servers, mcp_tools = get_phase_mcp_config(phase)
         options = ClaudeAgentOptions(
             cwd=cwd,
             permission_mode=cfg.permission_mode,  # type: ignore[arg-type]
@@ -206,9 +209,15 @@ class ClaudeAgentRunner:
             max_budget_usd=budget,
             model=cfg.model,
         )
+        # MCP サーバーを設定
+        if mcp_servers:
+            options.mcp_servers = mcp_servers  # type: ignore[assignment]
         # 実装系フェーズでは allowed_tools を明示的に設定
         if cfg.permission_mode == "bypassPermissions":
-            options.allowed_tools = list(_BYPASS_ALLOWED_TOOLS)
+            all_tools = list(_BYPASS_ALLOWED_TOOLS)
+            if mcp_tools:
+                all_tools.extend(mcp_tools)
+            options.allowed_tools = all_tools
         if append_prompt:
             options.system_prompt = {
                 "type": "preset",

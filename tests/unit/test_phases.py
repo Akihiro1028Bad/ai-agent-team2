@@ -581,7 +581,7 @@ class TestPlanningExecutor:
         mock_context: AsyncMock,
         mock_sm: AsyncMock,
     ) -> None:
-        """実装計画作成後に IMPLEMENT に遷移する。"""
+        """実装計画作成後に PLAN_VALIDATION に遷移する。"""
         from ai_agent_orchestrator.phases.planning import PlanningExecutor
 
         executor = PlanningExecutor(
@@ -596,7 +596,7 @@ class TestPlanningExecutor:
         request = _make_request(phase="planning")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(1, "implement")
+        mock_sm.transition.assert_called_with(1, "plan-validation")
 
 
 # ---------------------------------------------------------------------------

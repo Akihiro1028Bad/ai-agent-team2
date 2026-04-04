@@ -39,15 +39,23 @@ class CiFixExecutor(PhaseExecutor):
         ci_logs = extra.get("ci_logs", "")
         retry_count = extra.get("retry_count", 1)
 
-        return (
+        from ai_agent_orchestrator.phases.ci_log_parser import format_ci_summary, parse_ci_log
+        from ai_agent_orchestrator.phases.prompt_enhancer import enhance_prompt
+
+        summary = parse_ci_log(ci_logs)
+        structured = format_ci_summary(summary)
+
+        raw = (
             f"CIが失敗しました ({retry_count}/3回目)。修正してください。\n\n"
-            f"## CI失敗ログ\n{ci_logs}\n\n"
+            f"{structured}\n\n"
+            f"## 生ログ (参考)\n```\n{ci_logs[-3000:]}\n```\n\n"
             f"## 指示\n"
-            f"1. CI失敗ログを分析して原因を特定\n"
+            f"1. 上記エラーサマリーを確認して原因を特定\n"
             f"2. コードを修正\n"
             f"3. テスト・lint・ビルドをローカルで再実行して確認\n"
             f"4. git commit して Push (コミットメッセージは日本語で)"
         )
+        return enhance_prompt(raw, "ci-fix")
 
     async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """CI 修正結果を処理。リトライカウンタをインクリメント。

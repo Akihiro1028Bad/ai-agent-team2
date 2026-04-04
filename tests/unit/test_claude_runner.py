@@ -361,7 +361,7 @@ async def test_interrupt_ignores_unknown_session(runner: ClaudeAgentRunner) -> N
 
 
 def test_phase_config_has_all_phases() -> None:
-    """PHASE_CONFIG に全 11 フェーズが定義されている."""
+    """PHASE_CONFIG に全 12 フェーズが定義されている."""
     expected_phases = {
         "type-detection",
         "hearing",
@@ -369,6 +369,7 @@ def test_phase_config_has_all_phases() -> None:
         "design",
         "design-revise",
         "planning",
+        "plan-validation",
         "split-proposal",
         "implement",
         "fix",
@@ -379,7 +380,7 @@ def test_phase_config_has_all_phases() -> None:
 
     for config in PHASE_CONFIG.values():
         assert isinstance(config, PhaseConfig)
-        assert config.max_budget_usd > 0
+        assert config.max_budget_usd >= 0
         assert config.timeout_sec > 0
         assert config.permission_mode in ("plan", "default", "acceptEdits", "bypassPermissions")
         assert config.model == "sonnet"

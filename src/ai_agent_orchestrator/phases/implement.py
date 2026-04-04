@@ -522,7 +522,9 @@ class ImplementExecutor(PhaseExecutor):
             )
             raise RuntimeError(msg)
 
-        return (
+        from ai_agent_orchestrator.phases.prompt_enhancer import enhance_prompt
+
+        raw = (
             f"以下の設計書と実装計画に基づいてコードを実装してください。\n\n"
             f"## Issue #{request.issue_number}: {issue.title}\n\n"
             f"{context}\n\n"
@@ -534,6 +536,7 @@ class ImplementExecutor(PhaseExecutor):
             f"5. PRを作成 (タイトル・本文は日本語で)\n"
             f"6. PR descriptionに変更概要を含める"
         )
+        return enhance_prompt(raw, "implement")
 
     async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """互換性のため残す。execute() から直接は呼ばれない。
