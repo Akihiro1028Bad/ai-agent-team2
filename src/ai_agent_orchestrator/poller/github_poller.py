@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from ai_agent_orchestrator.models import EventType, PollEvent
+from ai_agent_orchestrator.models import EventType, IssueKey, PollEvent
 
 if TYPE_CHECKING:
     from githubkit.versions.latest.models import Issue, IssueComment
@@ -107,10 +107,10 @@ class GitHubPoller:
         self._approve_comment = approve_comment
         self._last_poll: dict[str, datetime] = {}
         self._running = False
-        # BUG #1: Track seen issue numbers to avoid re-detecting as "new"
-        self._seen_issue_numbers: set[int] = set()
-        # BUG #3: Track seen reactions (issue_number, comment_id)
-        self._seen_reactions: set[tuple[int, int]] = set()
+        # BUG #1: Track seen issue keys to avoid re-detecting as "new"
+        self._seen_issue_numbers: set[IssueKey] = set()
+        # BUG #3: Track seen reactions (repo_key, issue_number, comment_id)
+        self._seen_reactions: set[tuple[str, int, int]] = set()
         # BUG #4: General event deduplication
         self._seen_events: set[str] = set()
         # Memory leak prevention: periodic cache cleanup
@@ -242,6 +242,7 @@ class GitHubPoller:
         """
         issues = await client.get_issues_with_label(repo, repo.label)
         new: list[Issue] = []
+        repo_key = f"{repo.owner}/{repo.repo}"
         for issue in issues:
             # BUG #2: Filter out PRs (GitHub API returns both issues and PRs)
             # githubkit uses UNSET sentinel for missing fields; check if it's a real PR object
@@ -249,9 +250,10 @@ class GitHubPoller:
             if pr_field is not None and type(pr_field).__name__ != "Unset":
                 continue
             # BUG #1: Skip already-seen issues to prevent re-detection
-            if self._has_phase_label(issue) or issue.number in self._seen_issue_numbers:
+            ik: IssueKey = (repo_key, issue.number)
+            if self._has_phase_label(issue) or ik in self._seen_issue_numbers:
                 continue
-            self._seen_issue_numbers.add(issue.number)
+            self._seen_issue_numbers.add(ik)
             new.append(issue)
         return new
 
@@ -268,6 +270,7 @@ class GitHubPoller:
         """
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing-wait")
         replies: list[IssueComment] = []
+        repo_key = f"{repo.owner}/{repo.repo}"
         for issue in issues:
             since_str = since.isoformat() if since else None
             comments = await client.list_comments(repo, issue.number, since=since_str)
@@ -276,7 +279,7 @@ class GitHubPoller:
                 if _is_bot_comment(body):
                     continue
                 # BUG #4: Deduplicate hearing reply events
-                event_key = f"hearing_reply:{issue.number}:{comment.id}"
+                event_key = f"hearing_reply:{repo_key}:{issue.number}:{comment.id}"
                 if event_key not in self._seen_events:
                     self._seen_events.add(event_key)
                     replies.append(comment)
@@ -295,10 +298,11 @@ class GitHubPoller:
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing-wait")
         threshold = datetime.now(UTC) - timedelta(hours=self._hearing_timeout_hours)
         timed_out: list[Issue] = []
+        repo_key = f"{repo.owner}/{repo.repo}"
         for issue in issues:
             if issue.updated_at and issue.updated_at < threshold:
                 # BUG #4: Deduplicate timeout events
-                event_key = f"hearing_timeout:{issue.number}"
+                event_key = f"hearing_timeout:{repo_key}:{issue.number}"
                 if event_key not in self._seen_events:
                     self._seen_events.add(event_key)
                     timed_out.append(issue)
@@ -319,6 +323,7 @@ class GitHubPoller:
         """
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:plan-review")
         approved_issues: list[Issue] = []
+        repo_key = f"{repo.owner}/{repo.repo}"
         # 方針コメントを識別するパターン (Markdown 見出し)
         plan_markers = ("## 修正方針", "## 方針", "## Analysis", "## Plan", "## 分析結果")
         bot_marker = "<!-- ai-agent-bot -->"
@@ -330,7 +335,7 @@ class GitHubPoller:
                 is_plan_comment = any(marker in body for marker in plan_markers)
                 if is_bot or is_plan_comment:
                     # BUG #3: Skip already-processed reactions
-                    reaction_key = (issue.number, comment.id)
+                    reaction_key = (repo_key, issue.number, comment.id)
                     if reaction_key in self._seen_reactions:
                         continue
                     reactions = await client.get_reactions(repo, comment.id)
@@ -359,6 +364,7 @@ class GitHubPoller:
             return []
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:plan-review")
         feedback: list[tuple[Issue, IssueComment]] = []
+        repo_key = f"{repo.owner}/{repo.repo}"
         for issue in issues:
             since_str = since.isoformat()
             comments = await client.list_comments(repo, issue.number, since=since_str)
@@ -367,7 +373,7 @@ class GitHubPoller:
                 if _is_bot_comment(body):
                     continue
                 # BUG #4: Deduplicate plan comment events
-                event_key = f"plan_comment:{issue.number}:{comment.id}"
+                event_key = f"plan_comment:{repo_key}:{issue.number}:{comment.id}"
                 if event_key not in self._seen_events:
                     self._seen_events.add(event_key)
                     feedback.append((issue, comment))
@@ -386,6 +392,7 @@ class GitHubPoller:
           (実装PRは手動マージで完了とする。LGTM/approve では DONE に遷移しない)
         """
         events: list[PollEvent] = []
+        repo_key = f"{repo.owner}/{repo.repo}"
 
         # --- 設計PR: レビュー (LGTM/approve) で承認検知 ---
         design_issues = await client.get_issues_with_label(repo, f"{repo.label},phase:design-review")
@@ -398,7 +405,7 @@ class GitHubPoller:
                 event_type = (
                     EventType.DESIGN_PR_APPROVED if review_state == "approved" else EventType.DESIGN_PR_COMMENTED
                 )
-                event_key = f"pr_review:{event_type}:{issue.number}:{review_id}"
+                event_key = f"pr_review:{repo_key}:{event_type}:{issue.number}:{review_id}"
                 if event_key in self._seen_events:
                     continue
                 self._seen_events.add(event_key)
@@ -420,7 +427,7 @@ class GitHubPoller:
             # マージ検知 (最優先)
             merged = await self._check_pr_merged(client, repo, issue)
             if merged:
-                event_key = f"pr_merged:{issue.number}"
+                event_key = f"pr_merged:{repo_key}:{issue.number}"
                 if event_key not in self._seen_events:
                     self._seen_events.add(event_key)
                     events.append(PollEvent(type=EventType.IMPL_PR_MERGED, repo=repo, issue=issue))
@@ -433,7 +440,7 @@ class GitHubPoller:
                 review_body = review_info["body"]
                 review_id = review_info.get("id", "")
                 if review_state != "approved":
-                    event_key = f"pr_review:{EventType.IMPL_PR_COMMENTED}:{issue.number}:{review_id}"
+                    event_key = f"pr_review:{repo_key}:{EventType.IMPL_PR_COMMENTED}:{issue.number}:{review_id}"
                     if event_key not in self._seen_events:
                         self._seen_events.add(event_key)
                         events.append(
@@ -479,6 +486,7 @@ class GitHubPoller:
         CI ステータスを確認する。
         """
         events: list[PollEvent] = []
+        repo_key = f"{repo.owner}/{repo.repo}"
         for label_suffix in ("ci-fix", "impl-review"):
             issues = await client.get_issues_with_label(repo, f"{repo.label},phase:{label_suffix}")
             for issue in issues:
@@ -487,7 +495,7 @@ class GitHubPoller:
                     continue
                 # BUG #4: Deduplicate CI result events
                 # ci-fix フェーズはリトライのため同じ CI failure を複数回検知する必要がある
-                event_key = f"ci_result:{issue.number}:{ci_status}"
+                event_key = f"ci_result:{repo_key}:{issue.number}:{ci_status}"
                 if label_suffix != "ci-fix" and event_key in self._seen_events:
                     continue
                 self._seen_events.add(event_key)
@@ -526,6 +534,7 @@ class GitHubPoller:
         phase:split-proposal ラベル付き Issue の thumbsup リアクションまたはコメントを検知。
         """
         events: list[PollEvent] = []
+        repo_key = f"{repo.owner}/{repo.repo}"
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:split-proposal")
         for issue in issues:
             comments = await client.list_comments(repo, issue.number)
@@ -533,7 +542,7 @@ class GitHubPoller:
                 body = comment.body or ""
                 if _is_bot_comment(body):
                     # BUG #3: Skip already-processed reactions
-                    reaction_key = (issue.number, comment.id)
+                    reaction_key = (repo_key, issue.number, comment.id)
                     if reaction_key in self._seen_reactions:
                         continue
                     reactions = await client.get_reactions(repo, comment.id)
@@ -562,7 +571,7 @@ class GitHubPoller:
             ]
             for hc in human_comments:
                 # BUG #4: Deduplicate split modified events
-                event_key = f"split_modified:{issue.number}:{hc.id}"
+                event_key = f"split_modified:{repo_key}:{issue.number}:{hc.id}"
                 if event_key in self._seen_events:
                     continue
                 self._seen_events.add(event_key)

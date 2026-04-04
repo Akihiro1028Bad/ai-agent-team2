@@ -242,7 +242,7 @@ class ImplementExecutor(PhaseExecutor):
         Returns:
             (total_cost, total_duration, last_result) のタプル。
         """
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         start_index = state.impl_iteration if state else 0
 
         total_cost = 0.0
@@ -263,7 +263,7 @@ class ImplementExecutor(PhaseExecutor):
                 continue
 
             # 外部遷移検知
-            current_phase = self._sm.get_phase(request.issue_number)
+            current_phase = self._sm.get_phase(self._issue_key(request))
             if isinstance(current_phase, Phase) and current_phase != Phase.IMPLEMENT:
                 logger.warning(
                     "Issue #%d: phase changed externally to %s, aborting subtask loop",
@@ -393,7 +393,7 @@ class ImplementExecutor(PhaseExecutor):
         Returns:
             (total_cost, total_duration, last_result) のタプル。
         """
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         start_iteration = state.impl_iteration if state else 0
         planned_files = extract_planned_files(impl_plan) if impl_plan else set()
 
@@ -410,7 +410,7 @@ class ImplementExecutor(PhaseExecutor):
                 _MAX_IMPL_ITERATIONS,
             )
 
-            current_phase = self._sm.get_phase(request.issue_number)
+            current_phase = self._sm.get_phase(self._issue_key(request))
             if isinstance(current_phase, Phase) and current_phase != Phase.IMPLEMENT:
                 logger.warning(
                     "Issue #%d: phase changed externally to %s during implement loop, aborting",
@@ -701,7 +701,7 @@ class ImplementExecutor(PhaseExecutor):
             title_prefix="機能: ",
         )
 
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         if state:
             state.pr_number = pr_number
             state.session_id = result.session_id
@@ -709,7 +709,7 @@ class ImplementExecutor(PhaseExecutor):
 
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:impl-review")
-        await self._sm.transition(request.issue_number, "impl-review")
+        await self._sm.transition(self._issue_key(request), "impl-review")
         repo_full_name = self._get_repo_full_name(request)
         pr_url = self._build_pr_url(request, pr_number)
         await self._notifier.notify(

@@ -112,7 +112,7 @@ class DesignExecutor(PhaseExecutor):
             title_prefix="feat: ",
         )
 
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         if state:
             state.design_pr_number = pr_number
             state.pr_number = pr_number  # 設計PR = 実装PR (同一ブランチ)
@@ -120,7 +120,7 @@ class DesignExecutor(PhaseExecutor):
 
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:design-review")
-        await self._sm.transition(request.issue_number, "design-review")
+        await self._sm.transition(self._issue_key(request), "design-review")
         await self._post_design_review_comment(request, pr_number, client)
         repo_full_name = self._get_repo_full_name(request)
         pr_url = self._build_pr_url(request, pr_number)

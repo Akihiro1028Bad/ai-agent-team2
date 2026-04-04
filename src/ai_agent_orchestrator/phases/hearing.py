@@ -79,11 +79,11 @@ class HearingExecutor(PhaseExecutor):
             result: エージェント実行結果。
         """
         # セッションID を記録
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         if state:
             state.session_id = result.session_id
 
-        issue_type = self._sm.get_issue_type(request.issue_number)
+        issue_type = self._sm.get_issue_type(self._issue_key(request))
         client = await self._get_client(request.repo)
 
         if "READY" in result.output:
@@ -95,10 +95,10 @@ class HearingExecutor(PhaseExecutor):
             }
             next_phase = next_phase_map.get(issue_type, "design")
             await client.replace_phase_label(request.repo, request.issue_number, f"phase:{next_phase}")
-            await self._sm.transition(request.issue_number, next_phase)
+            await self._sm.transition(self._issue_key(request), next_phase)
         elif "NEEDS_SPLIT" in result.output:
             await client.replace_phase_label(request.repo, request.issue_number, "phase:split-proposal")
-            await self._sm.transition(request.issue_number, "split-proposal")
+            await self._sm.transition(self._issue_key(request), "split-proposal")
         else:
             # 質問を Issue コメントとして投稿
             from ai_agent_orchestrator.phases.base import next_action_footer
@@ -112,7 +112,7 @@ class HearingExecutor(PhaseExecutor):
             await client.create_comment(request.repo, request.issue_number, comment_body)
             # hearing-wait へ遷移 (user reply待ち)
             await client.replace_phase_label(request.repo, request.issue_number, "phase:hearing-wait")
-            await self._sm.transition(request.issue_number, "hearing-wait")
+            await self._sm.transition(self._issue_key(request), "hearing-wait")
             issue = await client.get_issue(request.repo, request.issue_number)
             repo_full_name = self._get_repo_full_name(request)
             await self._notifier.notify(

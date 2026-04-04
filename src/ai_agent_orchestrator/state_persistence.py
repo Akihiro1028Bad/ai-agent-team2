@@ -8,7 +8,7 @@ import shutil
 from dataclasses import asdict
 from pathlib import Path
 
-from ai_agent_orchestrator.models import IssueState, Phase
+from ai_agent_orchestrator.models import IssueKey, IssueState, Phase
 
 
 class StatePersistence:
@@ -36,10 +36,10 @@ class StatePersistence:
         self._debounce_sec = debounce_sec
         self._pending_task: asyncio.Task[None] | None = None
 
-    def save(self, states: dict[int, IssueState]) -> None:
+    def save(self, states: dict[IssueKey, IssueState]) -> None:
         """全Issue状態をJSONファイルに保存."""
         self._file.parent.mkdir(parents=True, exist_ok=True)
-        data = {str(k): asdict(v) for k, v in states.items()}
+        data = {f"{k[0]}:{k[1]}": asdict(v) for k, v in states.items()}
         tmp_file = self._file.with_suffix(".tmp")
         tmp_file.write_text(
             json.dumps(data, ensure_ascii=False, indent=2),
@@ -47,7 +47,7 @@ class StatePersistence:
         )
         tmp_file.replace(self._file)  # atomic rename
 
-    def load(self) -> dict[int, IssueState]:
+    def load(self) -> dict[IssueKey, IssueState]:
         """JSONファイルからIssue状態を復元."""
         if not self._file.exists():
             return {}
@@ -61,19 +61,30 @@ class StatePersistence:
             shutil.copy2(self._file, backup)
             return {}
 
-        states: dict[int, IssueState] = {}
+        states: dict[IssueKey, IssueState] = {}
         for k, v in data.items():
             try:
-                issue_number = int(k)
                 # Phase enum の復元
                 v["phase"] = Phase(v["phase"])
-                states[issue_number] = IssueState(**v)
+                # 新フォーマット "owner/repo:42" と旧フォーマット "42" の両方をサポート
+                if ":" in k and "/" in k.rsplit(":", 1)[0]:
+                    # 新フォーマット: "owner/repo:42"
+                    repo_part, num_part = k.rsplit(":", 1)
+                    issue_key: IssueKey = (repo_part, int(num_part))
+                else:
+                    # 旧フォーマット: "42" — IssueState.repo から復元
+                    issue_number = int(k)
+                    repo = v.get("repo", "")
+                    if not repo or "/" not in repo:
+                        continue  # repo 情報がなければスキップ
+                    issue_key = (repo, issue_number)
+                states[issue_key] = IssueState(**v)
             except (ValueError, TypeError, KeyError):
                 continue  # 不正なエントリはスキップ
 
         return states
 
-    async def auto_save(self, states: dict[int, IssueState]) -> None:
+    async def auto_save(self, states: dict[IssueKey, IssueState]) -> None:
         """デバウンス付き自動保存. 最後の呼び出しから debounce_sec 後に save() を実行."""
         if self._pending_task is not None:
             self._pending_task.cancel()
@@ -84,7 +95,7 @@ class StatePersistence:
 
         self._pending_task = asyncio.create_task(_deferred_save())
 
-    async def flush(self, states: dict[int, IssueState]) -> None:
+    async def flush(self, states: dict[IssueKey, IssueState]) -> None:
         """保留中の自動保存があれば即座に実行."""
         if self._pending_task is not None:
             self._pending_task.cancel()

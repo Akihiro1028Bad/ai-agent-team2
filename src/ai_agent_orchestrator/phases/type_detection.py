@@ -69,7 +69,7 @@ class TypeDetectionExecutor(PhaseExecutor):
             reason = "AI出力のパースに失敗、フォールバック判定"
 
         # ステートマシンにタイプを設定
-        self._sm.set_issue_type(request.issue_number, issue_type)
+        self._sm.set_issue_type(self._issue_key(request), issue_type)
 
         # GitHub ラベル付与
         client = await self._get_client(request.repo)
@@ -92,7 +92,7 @@ class TypeDetectionExecutor(PhaseExecutor):
         }
         next_phase = next_phase_map.get(issue_type, "hearing")
         await client.replace_phase_label(request.repo, request.issue_number, f"phase:{next_phase}")
-        await self._sm.transition(request.issue_number, next_phase)
+        await self._sm.transition(self._issue_key(request), next_phase)
 
     @staticmethod
     def _fallback_detection(output: str) -> str:

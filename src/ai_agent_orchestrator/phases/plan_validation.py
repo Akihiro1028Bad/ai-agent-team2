@@ -61,11 +61,11 @@ class PlanValidationExecutor(PhaseExecutor):
         if result.output == "OK":
             logger.info("Issue #%d: 計画検証OK → IMPLEMENT へ遷移", request.issue_number)
             await client.replace_phase_label(request.repo, request.issue_number, "phase:implement")
-            await self._sm.transition(request.issue_number, "implement")
+            await self._sm.transition(self._issue_key(request), "implement")
             return
 
         # 検証失敗: 差し戻し回数チェック
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         replan_count = 0
         if state:
             replan_count = getattr(state, "replan_count", 0)
@@ -83,7 +83,7 @@ class PlanValidationExecutor(PhaseExecutor):
                 f"**検証結果:**\n{result.output}",
             )
             await client.replace_phase_label(request.repo, request.issue_number, "phase:implement")
-            await self._sm.transition(request.issue_number, "implement")
+            await self._sm.transition(self._issue_key(request), "implement")
             return
 
         # 差し戻し: PLANNING へ (カウンターをインクリメント)
@@ -101,7 +101,7 @@ class PlanValidationExecutor(PhaseExecutor):
             f"📋 計画の検証で問題が見つかりました。再計画します。\n\n**検証結果:**\n{result.output}",
         )
         await client.replace_phase_label(request.repo, request.issue_number, "phase:planning")
-        await self._sm.transition(request.issue_number, "planning")
+        await self._sm.transition(self._issue_key(request), "planning")
 
 
 # ---------------------------------------------------------------------------

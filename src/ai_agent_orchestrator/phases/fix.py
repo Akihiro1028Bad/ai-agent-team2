@@ -85,7 +85,7 @@ class FixExecutor(PhaseExecutor):
             title_prefix="修正: ",
         )
 
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         if state:
             state.pr_number = pr_number
             state.session_id = result.session_id
@@ -93,7 +93,7 @@ class FixExecutor(PhaseExecutor):
         # IMPL_REVIEW に遷移してラベルを更新
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:impl-review")
-        await self._sm.transition(request.issue_number, "impl-review")
+        await self._sm.transition(self._issue_key(request), "impl-review")
         await self._tracker.track(
             "fix_complete",
             issue_number=request.issue_number,

@@ -14,7 +14,7 @@ from ai_agent_orchestrator.models import Phase
 if TYPE_CHECKING:
     from ai_agent_orchestrator.agents.claude_runner import ClaudeAgentRunner
     from ai_agent_orchestrator.context.engine import ContextEngine
-    from ai_agent_orchestrator.models import AgentResult, TaskRequest
+    from ai_agent_orchestrator.models import AgentResult, IssueKey, TaskRequest
 
 logger = logging.getLogger(__name__)
 
@@ -184,27 +184,27 @@ class TrackerProtocol:
 class StateMachineProtocol:
     """Minimal state machine protocol."""
 
-    def get_state(self, issue_number: int) -> IssueStateData | None:
+    def get_state(self, issue_key: IssueKey) -> IssueStateData | None:
         """Get state for an issue."""
         ...  # pragma: no cover
 
-    def get_phase(self, issue_number: int) -> Phase | None:
+    def get_phase(self, issue_key: IssueKey) -> Phase | None:
         """Get the current phase for an issue."""
         ...  # pragma: no cover
 
-    def get_issue_type(self, issue_number: int) -> str:
+    def get_issue_type(self, issue_key: IssueKey) -> str:
         """Get the issue type."""
         return ""  # pragma: no cover
 
-    def set_issue_type(self, issue_number: int, issue_type: str) -> None:
+    def set_issue_type(self, issue_key: IssueKey, issue_type: str) -> None:
         """Set the issue type."""
         ...  # pragma: no cover
 
-    async def transition(self, issue_number: int, phase: str) -> None:
+    async def transition(self, issue_key: IssueKey, phase: str) -> None:
         """Transition to a new phase."""
         ...  # pragma: no cover
 
-    async def increment_ci_retry(self, issue_number: int) -> None:
+    async def increment_ci_retry(self, issue_key: IssueKey) -> None:
         """Increment CI retry counter."""
         ...  # pragma: no cover
 
@@ -298,6 +298,18 @@ class PhaseExecutor(ABC):
             result: GitHubClientProtocol = await self._account_manager.get_client_for_repo(owner, repo_name)
             return result
         return self._account_manager  # type: ignore[return-value]
+
+    def _issue_key(self, request: TaskRequest) -> IssueKey:
+        """TaskRequest から IssueKey を生成する.
+
+        Args:
+            request: タスクリクエスト。
+
+        Returns:
+            IssueKey タプル。
+        """
+        repo_key = self._get_repo_full_name(request)
+        return (repo_key, request.issue_number)
 
     def _get_repo_full_name(self, request: TaskRequest) -> str:
         """リポジトリのフルネーム (owner/repo) を取得する.
@@ -429,7 +441,7 @@ class PhaseExecutor(ABC):
 
         既に DONE に到達している場合は suspended にしない (重複実行の残留タスク対策)。
         """
-        current = self._sm.get_phase(request.issue_number)
+        current = self._sm.get_phase(self._issue_key(request))
         if current == Phase.DONE:
             logger.warning(
                 "Issue #%d: timeout in stale task (phase=%s) but already DONE, skipping suspend",
@@ -437,11 +449,11 @@ class PhaseExecutor(ABC):
                 request.phase,
             )
             return
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         if state and state.session_id:
             await self._runner.interrupt(state.session_id)
 
-        await self._sm.transition(request.issue_number, "suspended")
+        await self._sm.transition(self._issue_key(request), "suspended")
 
         # events.jsonl にタイムアウト情報を記録
         try:
@@ -489,7 +501,7 @@ class PhaseExecutor(ABC):
 
         既に DONE に到達している場合は suspended にしない (重複実行の残留タスク対策)。
         """
-        current = self._sm.get_phase(request.issue_number)
+        current = self._sm.get_phase(self._issue_key(request))
         if current == Phase.DONE:
             logger.warning(
                 "Issue #%d: error in stale task (phase=%s) but already DONE, skipping suspend",
@@ -497,7 +509,7 @@ class PhaseExecutor(ABC):
                 request.phase,
             )
             return
-        await self._sm.transition(request.issue_number, "suspended")
+        await self._sm.transition(self._issue_key(request), "suspended")
 
         # events.jsonl にエラー情報を記録 (最優先: 以降の処理が失敗しても残す)
         try:
@@ -568,7 +580,7 @@ class PhaseExecutor(ABC):
         Args:
             request: タスクリクエスト。
         """
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         if state is None:
             return
         try:
@@ -629,7 +641,7 @@ class PhaseExecutor(ABC):
 
         if not has_uncommitted and not has_unpushed:
             # 3. baseline SHA があれば、新コミットが remote に存在するか確認
-            state = self._sm.get_state(request.issue_number)
+            state = self._sm.get_state(self._issue_key(request))
             baseline = state.branch_head_sha if state else None
             if baseline:
                 rc, stdout, _ = await self._workspace._run_git(
@@ -641,7 +653,7 @@ class PhaseExecutor(ABC):
                 new_commits = rc == 0 and stdout.strip() != ""
                 if not new_commits:
                     # フェーズが外部変更されていた場合は RuntimeError を抑制
-                    current_phase = self._sm.get_phase(request.issue_number)
+                    current_phase = self._sm.get_phase(self._issue_key(request))
                     req_phase_str = str(request.phase).replace("Phase.", "").replace("_", "-").lower()
                     if isinstance(current_phase, Phase) and current_phase.value != req_phase_str:
                         logger.warning(

@@ -86,7 +86,7 @@ class PlanningExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
-        state = self._sm.get_state(request.issue_number)
+        state = self._sm.get_state(self._issue_key(request))
         if state:
             state.session_id = result.session_id
 
@@ -94,4 +94,4 @@ class PlanningExecutor(PhaseExecutor):
 
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:plan-validation")
-        await self._sm.transition(request.issue_number, "plan-validation")
+        await self._sm.transition(self._issue_key(request), "plan-validation")

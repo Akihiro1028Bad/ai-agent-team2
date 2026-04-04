@@ -18,7 +18,7 @@ from ai_agent_orchestrator.context.engine import ContextEngine
 from ai_agent_orchestrator.credential import CredentialResolver
 from ai_agent_orchestrator.event_logger import EventLogger
 from ai_agent_orchestrator.github.client import AccountManager
-from ai_agent_orchestrator.models import ErrorCategory, Phase
+from ai_agent_orchestrator.models import ErrorCategory, IssueKey, Phase, make_issue_key
 from ai_agent_orchestrator.notifications.slack import SlackNotifier
 from ai_agent_orchestrator.orchestrator.execution_guard import ExecutionGuard
 from ai_agent_orchestrator.orchestrator.state_machine import (
@@ -713,7 +713,7 @@ class Orchestrator:
             Phase("split-execute"),
         }
 
-        for issue_number, state in self._state_machine._states.items():
+        for issue_key, state in self._state_machine._states.items():
             if state.phase in active_phases:
                 # Find the repo config for this issue
                 repo_config = None
@@ -722,6 +722,7 @@ class Orchestrator:
                         repo_config = repo
                         break
 
+                issue_number = issue_key[1] if isinstance(issue_key, tuple) else issue_key
                 if repo_config is not None:
                     await self._task_queue.enqueue(
                         TaskRequest(
@@ -731,7 +732,7 @@ class Orchestrator:
                         )
                     )
                     logger.info(
-                        "Re-enqueued pending task: issue=#%d phase=%s",
+                        "Re-enqueued pending task: issue=#%s phase=%s",
                         issue_number,
                         state.phase.value,
                     )
@@ -781,6 +782,7 @@ class Orchestrator:
         issue_number = task.issue_number
         repo_key = task.repo_key
         phase = task.phase
+        issue_key: IssueKey = make_issue_key(repo_key, issue_number)
 
         logger.info(
             "Executing task: issue=#%d repo=%s phase=%s",
@@ -812,7 +814,7 @@ class Orchestrator:
 
             # Dispatch phase execution (guard prevents EventRouter from
             # transitioning state while the executor is running)
-            async with self._execution_guard.guard(issue_number):
+            async with self._execution_guard.guard(issue_key):
                 result = await self._phase_dispatcher.dispatch(
                     phase,
                     issue_number=issue_number,
@@ -837,11 +839,11 @@ class Orchestrator:
             # Transition to next phase if specified (for NullPhaseDispatcher)
             if result.next_phase is not None:
                 next_phase = Phase(result.next_phase)
-                await self._state_machine.transition(issue_number, next_phase)
+                await self._state_machine.transition(issue_key, next_phase)
 
             # Auto-enqueue next task if the phase changed to an active phase
             # (Real executors handle transitions internally, so we check current phase)
-            current_phase = self._state_machine.get_phase(issue_number)
+            current_phase = self._state_machine.get_phase(issue_key)
             active_phases = {
                 Phase("type-detection"),
                 Phase("hearing"),
@@ -864,7 +866,7 @@ class Orchestrator:
             if (
                 current_phase in active_phases
                 and current_phase != task_phase
-                and not self._task_queue.is_task_queued(issue_number, current_phase.value)
+                and not self._task_queue.is_task_queued(issue_key, current_phase.value)
             ):
                 await self._task_queue.enqueue(
                     TaskRequest(
@@ -880,7 +882,7 @@ class Orchestrator:
                 )
 
             # Replay any events that were deferred while the guard was held
-            deferred = await self._execution_guard.drain_deferred(issue_number)
+            deferred = await self._execution_guard.drain_deferred(issue_key)
             for deferred_event in deferred:
                 await self._event_router.route(deferred_event)
 
@@ -903,6 +905,8 @@ class Orchestrator:
             error: 発生した例外。
         """
         issue_number = task.issue_number
+        repo_key = task.repo_key
+        issue_key: IssueKey = make_issue_key(repo_key, issue_number)
         category = self._classify_error(error)
 
         logger.error(
@@ -924,7 +928,7 @@ class Orchestrator:
             },
         )
 
-        state = self._state_machine.get_state(issue_number)
+        state = self._state_machine.get_state(issue_key)
         retry_count = state.retry_count if state else 0
 
         if category == ErrorCategory.TRANSIENT and retry_count < self._settings.retry.max_attempts:
@@ -950,7 +954,7 @@ class Orchestrator:
         else:
             # Suspend the issue
             try:
-                await self._state_machine.transition(issue_number, Phase.SUSPENDED)
+                await self._state_machine.transition(issue_key, Phase.SUSPENDED)
             except Exception as transition_err:
                 logger.error(
                     "Failed to suspend issue #%d: %s",
