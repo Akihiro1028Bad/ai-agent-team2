@@ -70,7 +70,9 @@ class DesignExecutor(PhaseExecutor):
             else ""
         )
 
-        return (
+        from ai_agent_orchestrator.phases.prompt_enhancer import enhance_prompt
+
+        raw = (
             f"以下のIssueの設計書を作成してください。\n\n"
             f"## Issue #{request.issue_number}: {issue.title}\n"
             f"{getattr(issue, 'body', '') or ''}\n\n"
@@ -87,6 +89,7 @@ class DesignExecutor(PhaseExecutor):
             f"- テストコードの作成も禁止です\n"
             f"- ソースコードの実装は後続の `implement` フェーズで行います\n"
         )
+        return enhance_prompt(raw, "design")
 
     async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """設計 PR 作成結果を処理 -> DESIGN_REVIEW 遷移。

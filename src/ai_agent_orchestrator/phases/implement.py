@@ -353,7 +353,9 @@ class ImplementExecutor(PhaseExecutor):
 
         files_list = "\n".join(f"  - `{f}`" for f in subtask.files)
 
-        return (
+        from ai_agent_orchestrator.phases.prompt_enhancer import enhance_prompt
+
+        raw = (
             f"## Issue #{request.issue_number}: {issue.title}\n"
             f"## サブタスク {subtask_index + 1}/{total_subtasks}: {subtask.title}\n\n"
             f"{context}\n\n"
@@ -369,6 +371,7 @@ class ImplementExecutor(PhaseExecutor):
             f"3. git commit して Push (コミットメッセージは日本語で)\n"
             f"4. **PR はまだ作成しないでください** (全サブタスク完了後に作成します)\n"
         )
+        return enhance_prompt(raw, "implement")
 
     # ------------------------------------------------------------------
     # Legacy multipass (backward compatibility)
@@ -522,7 +525,9 @@ class ImplementExecutor(PhaseExecutor):
             )
             raise RuntimeError(msg)
 
-        return (
+        from ai_agent_orchestrator.phases.prompt_enhancer import enhance_prompt
+
+        raw = (
             f"以下の設計書と実装計画に基づいてコードを実装してください。\n\n"
             f"## Issue #{request.issue_number}: {issue.title}\n\n"
             f"{context}\n\n"
@@ -534,6 +539,7 @@ class ImplementExecutor(PhaseExecutor):
             f"5. PRを作成 (タイトル・本文は日本語で)\n"
             f"6. PR descriptionに変更概要を含める"
         )
+        return enhance_prompt(raw, "implement")
 
     async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """互換性のため残す。execute() から直接は呼ばれない。

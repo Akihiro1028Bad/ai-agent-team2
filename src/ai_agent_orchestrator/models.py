@@ -49,6 +49,7 @@ class Phase(str, Enum):  # noqa: UP042
     DESIGN_REVIEW = "design-review"
     DESIGN_REVISE = "design-revise"
     PLANNING = "planning"
+    PLAN_VALIDATION = "plan-validation"
 
     # Feature-L専用
     SPLIT_PROPOSAL = "split-proposal"
@@ -173,6 +174,7 @@ class IssueState:
     pr_number: int | None = None
     design_pr_number: int | None = None
     retry_count: int = 0
+    replan_count: int = 0
     branch_head_sha: str | None = None
     impl_iteration: int = 0
     created_at: str = ""
@@ -214,6 +216,8 @@ class PhaseConfig:
     permission_mode: str
     resume: bool = False
     model: str = "sonnet"
+    mcp_servers: dict[str, Any] | None = None
+    mcp_allowed_tools: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +242,8 @@ VALID_TRANSITIONS: dict[Phase, list[Phase]] = {
     Phase.DESIGN: [Phase.DESIGN_REVIEW, Phase.SUSPENDED],
     Phase.DESIGN_REVIEW: [Phase.PLANNING, Phase.DESIGN_REVISE, Phase.SUSPENDED],
     Phase.DESIGN_REVISE: [Phase.DESIGN_REVIEW, Phase.SUSPENDED],
-    Phase.PLANNING: [Phase.IMPLEMENT, Phase.SUSPENDED],
+    Phase.PLANNING: [Phase.PLAN_VALIDATION, Phase.SUSPENDED],
+    Phase.PLAN_VALIDATION: [Phase.IMPLEMENT, Phase.PLANNING, Phase.SUSPENDED],
     # Feature-L ワークフロー
     Phase.SPLIT_PROPOSAL: [Phase.SPLIT_EXECUTE, Phase.HEARING, Phase.SUSPENDED],
     Phase.SPLIT_EXECUTE: [Phase.DONE, Phase.SUSPENDED],
@@ -250,33 +255,4 @@ VALID_TRANSITIONS: dict[Phase, list[Phase]] = {
     # 特殊
     Phase.BLOCKED: [Phase.HEARING, Phase.ANALYSIS, Phase.IMPLEMENT],
     Phase.SUSPENDED: list(Phase),  # どのフェーズにも復帰可能
-}
-
-
-# ---------------------------------------------------------------------------
-# 4. PHASE_CONFIG 辞書
-# ---------------------------------------------------------------------------
-
-PHASE_CONFIG: dict[str, PhaseConfig] = {
-    "type_detection": PhaseConfig(max_budget_usd=0.3, timeout_sec=120, permission_mode="plan"),
-    "hearing": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
-    "analysis": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"),
-    "design": PhaseConfig(max_budget_usd=3.0, timeout_sec=1800, permission_mode="plan"),
-    "design_revise": PhaseConfig(
-        max_budget_usd=2.0,
-        timeout_sec=1200,
-        permission_mode="bypassPermissions",
-        resume=True,
-    ),
-    "planning": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="plan"),
-    "split_proposal": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="plan"),
-    "implement": PhaseConfig(max_budget_usd=10.0, timeout_sec=3600, permission_mode="bypassPermissions"),
-    "fix": PhaseConfig(max_budget_usd=5.0, timeout_sec=1800, permission_mode="bypassPermissions"),
-    "ci_fix": PhaseConfig(max_budget_usd=3.0, timeout_sec=1200, permission_mode="bypassPermissions"),
-    "impl_revise": PhaseConfig(
-        max_budget_usd=5.0,
-        timeout_sec=1800,
-        permission_mode="bypassPermissions",
-        resume=True,
-    ),
 }

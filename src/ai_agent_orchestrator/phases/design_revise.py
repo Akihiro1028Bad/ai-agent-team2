@@ -36,7 +36,9 @@ class DesignReviseExecutor(PhaseExecutor):
         client = await self._get_client(request.repo)
         issue = await client.get_issue(request.repo, request.issue_number)
 
-        return (
+        from ai_agent_orchestrator.phases.prompt_enhancer import enhance_prompt
+
+        raw = (
             f"## Issue #{request.issue_number}: {issue.title}\n\n"
             f"設計書 (docs/designs/issue-{request.issue_number}.md) に対する"
             f"レビュー指摘に対応してください。\n\n"
@@ -46,6 +48,7 @@ class DesignReviseExecutor(PhaseExecutor):
             f"2. git add && git commit (コミットメッセージは日本語で)\n"
             f"3. git push origin feature/issue-{request.issue_number}\n"
         )
+        return enhance_prompt(raw, "design-revise")
 
     async def run_agent(self, request: TaskRequest, prompt: str) -> AgentResult:
         """セッション継続で実行する。
@@ -66,7 +69,7 @@ class DesignReviseExecutor(PhaseExecutor):
         return await self._runner.run(
             prompt=prompt,
             cwd=str(worktree),
-            phase="design_revise",
+            phase="design-revise",
             resume_session_id=(state.session_id if state else None),
         )
 

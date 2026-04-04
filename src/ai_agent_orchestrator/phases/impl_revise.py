@@ -30,7 +30,7 @@ class ImplReviseExecutor(PhaseExecutor):
             プロンプト文字列。
         """
         extra = getattr(request, "extra", {}) or {}
-        comments = extra.get("comments", "")
+        raw_comments = extra.get("comments", "")
 
         client = await self._get_client(request.repo)
         issue = await client.get_issue(request.repo, request.issue_number)
@@ -49,15 +49,32 @@ class ImplReviseExecutor(PhaseExecutor):
             if prs:
                 pr_info = f"PR #{cast('Any', prs[0]).number}"
 
-        return (
+        # レビューコメントを優先度分類
+        from ai_agent_orchestrator.phases.prompt_enhancer import enhance_prompt
+        from ai_agent_orchestrator.phases.review_classifier import (
+            classify_review_comments,
+            format_classified_comments,
+        )
+
+        # raw_comments が文字列の場合はそのまま使い、リストの場合は分類
+        classified_section: str
+        if isinstance(raw_comments, list):
+            classified = classify_review_comments(raw_comments)
+            classified_section = format_classified_comments(classified)
+        else:
+            # 文字列の場合は分類できないのでそのまま表示
+            classified_section = f"## レビュー指摘内容\n{raw_comments}"
+
+        raw = (
             f"## Issue #{request.issue_number}: {issue.title}\n\n"
             f"{pr_info} に対するレビュー指摘に対応してください。\n\n"
-            f"## レビュー指摘内容\n{comments}\n\n"
+            f"{classified_section}\n\n"
             f"## 指示\n"
             f"1. レビュー指摘に基づいてコードを修正する\n"
             f"2. テスト・lint・ビルドを実行して確認する\n"
             f"3. git commit して push する (コミットメッセージは日本語で)\n"
         )
+        return enhance_prompt(raw, "impl-revise")
 
     async def run_agent(self, request: TaskRequest, prompt: str) -> AgentResult:
         """セッション継続で実行する。
@@ -78,7 +95,7 @@ class ImplReviseExecutor(PhaseExecutor):
         return await self._runner.run(
             prompt=prompt,
             cwd=str(worktree),
-            phase="impl_revise",
+            phase="impl-revise",
             resume_session_id=(state.session_id if state else None),
         )
 
