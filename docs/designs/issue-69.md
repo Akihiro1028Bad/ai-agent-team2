@@ -77,9 +77,9 @@ GitHub API `POST /repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}
 
   event_router._handle_impl_pr_commented (コメントAイベント):
     1. PR の全未対応レビューコメントを取得 [コメントA, コメントB]
-    2. 各コメントに着手通知返信: "レビュー指摘を確認しました。修正を開始します。"
-    3. IMPL_REVIEW → IMPL_REVISE 遷移
-    4. TaskQueue に IMPL_REVISE エンキュー (extra: {comment_ids: [A.id, B.id], comments: "..."})
+    2. IMPL_REVIEW → IMPL_REVISE 遷移
+    3. TaskQueue に IMPL_REVISE エンキュー (extra: {comment_ids: [A.id, B.id], comments: "..."})
+    4. 遷移・エンキュー成功後、各コメントに着手通知返信: "レビュー指摘を確認しました。修正を開始します。"
 
   event_router._handle_impl_pr_commented (コメントBイベント):
     5. 現在のフェーズ == IMPL_REVISE → スキップ (コメントBはAのタスクに含まれているため問題なし)
@@ -114,10 +114,11 @@ sequenceDiagram
     SM-->>ER: IssueState(pr_number=N)
     ER->>GH: get_pr_review_comments(pr_number)
     GH-->>ER: [コメントA, コメントB] (全未対応)
-    ER->>GH: reply_to_review_comment(コメントA.id, "着手通知")
-    ER->>GH: reply_to_review_comment(コメントB.id, "着手通知")
     ER->>SM: transition(IMPL_REVISE)
     ER->>Q: enqueue(IMPL_REVISE, extra={comment_ids:[A,B], comments:...})
+    Note over ER: 遷移・エンキュー成功後に着手通知
+    ER->>GH: reply_to_review_comment(コメントA.id, "着手通知")
+    ER->>GH: reply_to_review_comment(コメントB.id, "着手通知")
 
     P->>ER: route(IMPL_PR_COMMENTED, コメントB)
     ER->>SM: get_phase(issue_number)
