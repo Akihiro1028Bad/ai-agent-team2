@@ -211,7 +211,7 @@ class ClaudeAgentRunner:
         )
         # MCP サーバーを設定
         if mcp_servers:
-            options.mcp_servers = mcp_servers  # type: ignore[assignment]
+            options.mcp_servers = mcp_servers
         # 実装系フェーズでは allowed_tools を明示的に設定
         if cfg.permission_mode == "bypassPermissions":
             all_tools = list(_BYPASS_ALLOWED_TOOLS)
