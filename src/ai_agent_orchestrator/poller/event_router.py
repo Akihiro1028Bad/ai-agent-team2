@@ -236,7 +236,8 @@ class EventRouter:
 
         オーケストレーター再起動後に state.json が消失した場合のリカバリ。
         """
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         try:
             self._sm.get_phase(issue_key)
@@ -282,7 +283,8 @@ class EventRouter:
 
     async def _handle_new_issue(self, event: PollEvent) -> None:
         """新規 Issue: ステートマシンに登録し、TYPE_DETECTION をエンキュー."""
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         repo_key = f"{event.repo.owner}/{event.repo.repo}"
         # 既に登録済みの場合はスキップ (再ポーリングで重複検知される)
@@ -355,7 +357,8 @@ class EventRouter:
 
     async def _handle_hearing_timeout(self, event: PollEvent) -> None:
         """ヒアリングタイムアウト: SUSPENDED に遷移."""
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         await self._sm.transition(issue_key, Phase.SUSPENDED)
         try:
@@ -370,7 +373,8 @@ class EventRouter:
 
         Bug 以外のタイプは警告ログを出力して早期リターンする。
         """
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         # 未登録の場合は自動登録(再起動後のリカバリ)
         await self._ensure_registered(event)
@@ -412,7 +416,8 @@ class EventRouter:
 
     async def _notify_plan_approved(self, event: PollEvent, next_phase: Phase) -> None:
         """方針承認を検出したことを Issue 上で通知する."""
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         try:
             client = await self._get_client(event.repo)
             if client is None:
@@ -462,7 +467,8 @@ class EventRouter:
         Bug 以外のタイプは警告ログを出力して早期リターンする。
         既に ANALYSIS にいる場合は遷移をスキップする (重複防止)。
         """
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         # 現在のフェーズを確認し、既に修正フェーズにいる場合はスキップ
         try:
@@ -511,7 +517,8 @@ class EventRouter:
         設計・実装は同一ブランチ (feature/issue-XX) の同一PRで管理するため、
         設計PRのマージは不要。承認後すぐに実装計画フェーズへ遷移する。
         """
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         current_phase = self._sm.get_phase(issue_key)
         if current_phase != Phase.DESIGN_REVIEW:
@@ -538,7 +545,8 @@ class EventRouter:
 
     async def _handle_design_pr_commented(self, event: PollEvent) -> None:
         """設計 PR コメント (指摘): DESIGN_REVISE へ遷移してエンキュー."""
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         current_phase = self._sm.get_phase(issue_key)
         if current_phase != Phase.DESIGN_REVIEW:
@@ -566,7 +574,8 @@ class EventRouter:
         fix フェーズがまだ impl-review に遷移完了していないタイミングで
         マージが検知される場合があるため、先に impl-review へ遷移させる。
         """
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         current_phase = self._sm.get_phase(issue_key)
         if current_phase not in (Phase.IMPL_REVIEW, Phase.DONE):
@@ -592,7 +601,8 @@ class EventRouter:
         実装PRの完了はマージ (IMPL_PR_MERGED) で判定する。
         approve/LGTM は参考情報としてログに記録する。
         """
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         logger.info(
             "Issue #%d: impl PR approved (waiting for merge to complete)",
             event.issue.number,
@@ -600,7 +610,8 @@ class EventRouter:
 
     async def _handle_impl_pr_commented(self, event: PollEvent) -> None:
         """実装 PR コメント (指摘): 全未対応コメントを収集して IMPL_REVISE へ遷移."""
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
 
         current_phase = self._sm.get_phase(issue_key)
@@ -708,7 +719,8 @@ class EventRouter:
 
     async def _notify_review_received(self, event: PollEvent, comments: str) -> None:
         """PR レビュー指摘を検出したことを Issue 上で通知する."""
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         try:
             client = await self._get_client(event.repo)
             if client is None:
@@ -827,7 +839,8 @@ class EventRouter:
 
     async def _handle_split_approved(self, event: PollEvent) -> None:
         """分割承認 (Feature-L): SPLIT_EXECUTE へ遷移してエンキュー."""
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         current_phase = self._sm.get_phase(issue_key)
         if current_phase != Phase.SPLIT_PROPOSAL:
@@ -849,7 +862,8 @@ class EventRouter:
 
     async def _handle_split_modified(self, event: PollEvent) -> None:
         """分割修正指示 (Feature-L): HEARING へ遷移して再ヒアリング."""
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         await self._sm.transition(issue_key, Phase.HEARING)
         await self._tq.enqueue(
