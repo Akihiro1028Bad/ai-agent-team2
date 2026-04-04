@@ -148,6 +148,16 @@ class GitHubClientProtocol:
         """List pull requests."""
         return []  # pragma: no cover
 
+    async def reply_to_review_comment(
+        self,
+        repo: object,
+        pr_number: int,
+        comment_id: int,
+        body: str,
+    ) -> None:
+        """Reply to a PR review comment thread."""
+        ...  # pragma: no cover
+
 
 class NotifierProtocol:
     """Minimal notifier protocol."""

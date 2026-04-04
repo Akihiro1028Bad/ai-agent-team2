@@ -52,6 +52,8 @@ class FakeGitHubClient:
         self.pull_requests: dict[int, FakePullRequest] = {}
         self.labels: dict[int, list[str]] = {}
         self.reactions: dict[int, list[str]] = {}
+        self.replied_comments: list[tuple[int, str]] = []
+        self.review_comments_data: list[dict[str, Any]] = []
 
     async def get_issue(self, owner: str, repo: str, number: int) -> FakeIssue:
         return self.issues[number]
@@ -72,6 +74,24 @@ class FakeGitHubClient:
         if issue_number in self.labels:
             self.labels[issue_number] = [la for la in self.labels[issue_number] if not la.startswith("phase:")]
         self.labels.setdefault(issue_number, []).append(new_label)
+
+    async def reply_to_review_comment(
+        self,
+        repo: Any,
+        pr_number: int,
+        comment_id: int,
+        body: str,
+    ) -> None:
+        """PRレビューコメントのスレッドに返信する (Fake 実装)."""
+        self.replied_comments.append((comment_id, body))
+
+    async def get_pr_review_comments(
+        self,
+        repo: Any,
+        pr_number: int,
+    ) -> list[dict[str, Any]]:
+        """PRのレビューコメント一覧を返す (Fake 実装)."""
+        return list(self.review_comments_data)
 
 
 # ──────────────────────────────────────

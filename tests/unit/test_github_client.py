@@ -816,3 +816,127 @@ async def test_verify_all_reports_failure() -> None:
     result = await manager.verify_all()
 
     assert result["bad"] is False
+
+
+# ──────────────────────────────────────
+# reply_to_review_comment / get_pr_review_comments テスト
+# ──────────────────────────────────────
+
+
+def _review_comment_json(
+    comment_id: int = 1,
+    body: str = "fix this",
+    login: str = "reviewer",
+    path: str = "src/main.py",
+    line: int = 10,
+) -> dict[str, Any]:
+    """テスト用レビューコメント JSON を生成する."""
+    return {
+        "id": comment_id,
+        "user": _user(login),
+        "body": body,
+        "path": path,
+        "line": line,
+        "side": "RIGHT",
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:00:00Z",
+        "node_id": f"PRC_{comment_id}",
+        "url": "",
+        "html_url": "",
+        "pull_request_url": "",
+        "diff_hunk": "@@ -8,5 +8,5 @@",
+        "commit_id": "abc123",
+        "original_commit_id": "abc123",
+        "pull_request_review_id": 1,
+        "author_association": "COLLABORATOR",
+        "_links": {
+            "self": {"href": ""},
+            "html": {"href": ""},
+            "pull_request": {"href": ""},
+        },
+        "reactions": _reactions(),
+    }
+
+
+@respx.mock
+async def test_reply_to_review_comment_calls_api(
+    client: GitHubClient,
+    repo_config: RepositoryConfig,
+) -> None:
+    """TC-GH-11: reply_to_review_comment が正しい API エンドポイントを呼び出すことを検証する."""
+    route = respx.post("https://api.github.com/repos/test-org/test-repo/pulls/10/comments/200/replies").mock(
+        return_value=httpx.Response(
+            201,
+            json=_review_comment_json(comment_id=300, body="修正します\n\n<!-- ai-agent-bot -->"),
+        )
+    )
+
+    await client.reply_to_review_comment(repo_config, pr_number=10, comment_id=200, body="修正します")
+
+    assert route.called
+    request_body = route.calls[0].request.content
+    assert b"ai-agent-bot" in request_body
+
+
+@respx.mock
+async def test_get_pr_review_comments_excludes_bot_comments(
+    client: GitHubClient,
+    repo_config: RepositoryConfig,
+) -> None:
+    """TC-GH-12: get_pr_review_comments がボットコメントを除外することを検証する."""
+    respx.get("https://api.github.com/repos/test-org/test-repo/pulls/10/comments").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                _review_comment_json(comment_id=1, body="レビュー指摘です", login="reviewer1"),
+                _review_comment_json(
+                    comment_id=2,
+                    body="修正が完了しました。コードをご確認ください。\n\n<!-- ai-agent-bot -->",
+                    login="ai-bot",
+                ),
+                _review_comment_json(comment_id=3, body="別の指摘です", login="reviewer2"),
+            ],
+        )
+    )
+
+    comments = await client.get_pr_review_comments(repo_config, pr_number=10)
+
+    # ボットコメント (id=2) は除外される
+    assert len(comments) == 2
+    comment_ids = [c["id"] for c in comments]
+    assert 1 in comment_ids
+    assert 3 in comment_ids
+    assert 2 not in comment_ids
+
+
+@respx.mock
+async def test_get_pr_review_comments_returns_expected_fields(
+    client: GitHubClient,
+    repo_config: RepositoryConfig,
+) -> None:
+    """TC-GH-13: get_pr_review_comments が期待フィールドを含む辞書を返すことを検証する."""
+    respx.get("https://api.github.com/repos/test-org/test-repo/pulls/10/comments").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                _review_comment_json(
+                    comment_id=42,
+                    body="変数名を修正してください",
+                    login="reviewer1",
+                    path="src/foo.py",
+                    line=99,
+                ),
+            ],
+        )
+    )
+
+    comments = await client.get_pr_review_comments(repo_config, pr_number=10)
+
+    assert len(comments) == 1
+    c = comments[0]
+    assert c["id"] == 42
+    assert c["body"] == "変数名を修正してください"
+    assert c["user"] == {"login": "reviewer1"}
+    assert c["path"] == "src/foo.py"
+    assert c["line"] == 99
+    assert "created_at" in c
