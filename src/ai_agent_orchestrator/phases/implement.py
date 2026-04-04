@@ -353,7 +353,9 @@ class ImplementExecutor(PhaseExecutor):
 
         files_list = "\n".join(f"  - `{f}`" for f in subtask.files)
 
-        return (
+        from ai_agent_orchestrator.phases.prompt_enhancer import enhance_prompt
+
+        raw = (
             f"## Issue #{request.issue_number}: {issue.title}\n"
             f"## サブタスク {subtask_index + 1}/{total_subtasks}: {subtask.title}\n\n"
             f"{context}\n\n"
@@ -369,6 +371,7 @@ class ImplementExecutor(PhaseExecutor):
             f"3. git commit して Push (コミットメッセージは日本語で)\n"
             f"4. **PR はまだ作成しないでください** (全サブタスク完了後に作成します)\n"
         )
+        return enhance_prompt(raw, "implement")
 
     # ------------------------------------------------------------------
     # Legacy multipass (backward compatibility)

@@ -50,7 +50,9 @@ class FixExecutor(PhaseExecutor):
                 plan_comment = body
                 break
 
-        return (
+        from ai_agent_orchestrator.phases.prompt_enhancer import enhance_prompt
+
+        raw = (
             f"承認された修正方針に基づいてバグを修正してください。\n\n"
             f"## Issue #{request.issue_number}: {issue.title}\n"
             f"{getattr(issue, 'body', '') or ''}\n\n"
@@ -64,6 +66,7 @@ class FixExecutor(PhaseExecutor):
             f"5. PRを作成 (タイトル・本文は日本語で)\n"
             f"6. PR descriptionに修正方針を再掲"
         )
+        return enhance_prompt(raw, "fix")
 
     async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
         """修正結果を処理し IMPL_REVIEW に遷移する。
