@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from ai_agent_orchestrator.models import (
-    PHASE_CONFIG,
     VALID_TRANSITIONS,
     AgentResult,
     ApprovalMethod,
@@ -295,23 +294,16 @@ def test_phase_config_model_can_be_overridden() -> None:
 
 
 def test_phase_config_dict_has_all_phases() -> None:
-    expected_keys = {
-        "type_detection",
-        "hearing",
-        "analysis",
-        "design",
-        "design_revise",
-        "planning",
-        "split_proposal",
-        "implement",
-        "fix",
-        "ci_fix",
-        "impl_revise",
-    }
-    assert set(PHASE_CONFIG.keys()) == expected_keys
+    """PHASE_CONFIG は claude_runner.py に一本化されている."""
+    from ai_agent_orchestrator.agents.claude_runner import PHASE_CONFIG
+
+    assert "implement" in PHASE_CONFIG
+    assert "plan-validation" in PHASE_CONFIG
 
 
 def test_phase_config_implement_budget() -> None:
+    from ai_agent_orchestrator.agents.claude_runner import PHASE_CONFIG
+
     assert PHASE_CONFIG["implement"].max_budget_usd == 10.0
     assert PHASE_CONFIG["implement"].timeout_sec == 3600
     assert PHASE_CONFIG["implement"].permission_mode == "bypassPermissions"

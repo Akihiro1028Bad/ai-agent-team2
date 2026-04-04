@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import os
+from unittest.mock import patch
+
+import pytest
+
 from ai_agent_orchestrator.agents.mcp_config import (
     CONTEXT7_TOOLS,
     FETCH_TOOLS,
@@ -10,6 +15,9 @@ from ai_agent_orchestrator.agents.mcp_config import (
     SEQUENTIAL_THINKING_TOOLS,
     get_phase_mcp_config,
 )
+
+# GitHub サーバーを使うフェーズのテストでは GITHUB_TOKEN が必要
+_GITHUB_TOKEN_ENV = patch.dict(os.environ, {"GITHUB_TOKEN": "test-token"})
 
 
 class TestGetPhaseMcpConfig:
@@ -36,6 +44,7 @@ class TestGetPhaseMcpConfig:
         assert "sequential-thinking" in servers
         assert "github" not in servers
 
+    @_GITHUB_TOKEN_ENV
     def test_implement_has_context7_github_memory(self) -> None:
         servers, tools = get_phase_mcp_config("implement")
         assert "context7" in servers
@@ -44,12 +53,14 @@ class TestGetPhaseMcpConfig:
         assert set(GITHUB_TOOLS).issubset(set(tools))
         assert set(MEMORY_TOOLS).issubset(set(tools))
 
+    @_GITHUB_TOKEN_ENV
     def test_ci_fix_has_context7_github(self) -> None:
         servers, _tools = get_phase_mcp_config("ci-fix")
         assert "context7" in servers
         assert "github" in servers
         assert "memory" not in servers
 
+    @_GITHUB_TOKEN_ENV
     def test_impl_revise_has_context7_github(self) -> None:
         servers, _tools = get_phase_mcp_config("impl-revise")
         assert "context7" in servers
@@ -65,6 +76,7 @@ class TestGetPhaseMcpConfig:
         assert servers == {}
         assert tools == []
 
+    @_GITHUB_TOKEN_ENV
     def test_tool_names_follow_mcp_convention(self) -> None:
         """全ツール名が mcp__<server>__<tool> 形式であることを検証."""
         for phase in [
@@ -91,7 +103,14 @@ class TestGetPhaseMcpConfig:
         assert "context7" in servers
         assert "fetch" in servers
 
+    @_GITHUB_TOKEN_ENV
     def test_fix_has_context7_github(self) -> None:
         servers, _tools = get_phase_mcp_config("fix")
         assert "context7" in servers
         assert "github" in servers
+
+    def test_github_phase_raises_without_token(self) -> None:
+        """GITHUB_TOKEN 未設定で GitHub フェーズは ValueError."""
+        with patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(ValueError, match="GITHUB_TOKEN"):
+                get_phase_mcp_config("implement")

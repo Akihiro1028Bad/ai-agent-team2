@@ -95,7 +95,7 @@ class ImplReviseExecutor(PhaseExecutor):
         return await self._runner.run(
             prompt=prompt,
             cwd=str(worktree),
-            phase="impl_revise",
+            phase="impl-revise",
             resume_session_id=(state.session_id if state else None),
         )
 

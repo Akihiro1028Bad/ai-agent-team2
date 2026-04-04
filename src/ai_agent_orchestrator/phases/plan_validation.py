@@ -91,7 +91,9 @@ class PlanValidationExecutor(PhaseExecutor):
             await self._sm.transition(request.issue_number, "implement")
             return
 
-        # 差し戻し: PLANNING へ
+        # 差し戻し: PLANNING へ (カウンターをインクリメント)
+        if state:
+            state.replan_count = replan_count + 1
         logger.info(
             "Issue #%d: 計画検証失敗 → PLANNING へ差し戻し (%d/%d)",
             request.issue_number,

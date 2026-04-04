@@ -18,12 +18,19 @@ CONTEXT7_SERVER: dict[str, Any] = {
     "args": ["-y", "@upstash/context7-mcp@latest"],
 }
 
-GITHUB_SERVER: dict[str, Any] = {
-    "type": "stdio",
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-github"],
-    "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": os.environ.get("GITHUB_TOKEN", "")},
-}
+
+def _build_github_server() -> dict[str, Any]:
+    """GitHub MCP サーバー設定を返す。GITHUB_TOKEN を実行時に解決する。"""
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        raise ValueError("GITHUB_TOKEN environment variable is not set. GitHub MCP server requires a valid token.")
+    return {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": token},
+    }
+
 
 SEQUENTIAL_THINKING_SERVER: dict[str, Any] = {
     "type": "stdio",
@@ -114,7 +121,7 @@ _PHASE_MCP_MAP: dict[str, dict[str, Any]] = {
     "implement": {
         "servers": {
             "context7": CONTEXT7_SERVER,
-            "github": GITHUB_SERVER,
+            "github": None,  # _build_github_server() で実行時に解決
             "memory": MEMORY_SERVER,
         },
         "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS, *MEMORY_TOOLS],
@@ -122,21 +129,21 @@ _PHASE_MCP_MAP: dict[str, dict[str, Any]] = {
     "fix": {
         "servers": {
             "context7": CONTEXT7_SERVER,
-            "github": GITHUB_SERVER,
+            "github": None,
         },
         "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS],
     },
     "ci-fix": {
         "servers": {
             "context7": CONTEXT7_SERVER,
-            "github": GITHUB_SERVER,
+            "github": None,
         },
         "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS],
     },
     "impl-revise": {
         "servers": {
             "context7": CONTEXT7_SERVER,
-            "github": GITHUB_SERVER,
+            "github": None,
         },
         "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS],
     },
@@ -159,10 +166,17 @@ def get_phase_mcp_config(phase: str) -> tuple[dict[str, Any], list[str]]:
     Returns:
         (mcp_servers, mcp_tools) のタプル。
         MCP 未設定のフェーズでは ({}, []) を返す。
+
+    Raises:
+        ValueError: GitHub サーバーが必要なフェーズで GITHUB_TOKEN が未設定の場合。
     """
     config = _PHASE_MCP_MAP.get(phase, {})
     if not config:
         return {}, []
-    servers: dict[str, Any] = config.get("servers", {})
+    raw_servers: dict[str, Any] = config.get("servers", {})
+    # None プレースホルダーを実行時に解決する (GITHUB_TOKEN の遅延評価)
+    servers: dict[str, Any] = {
+        name: (_build_github_server() if server is None else server) for name, server in raw_servers.items()
+    }
     tools: list[str] = config.get("tools", [])
     return servers, tools
