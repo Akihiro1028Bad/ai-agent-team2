@@ -65,6 +65,7 @@ PLAYWRIGHT_SERVER: dict[str, Any] = {
     "args": ["-y", "@playwright/mcp@latest"],
 }
 
+# TODO: npm パッケージ名を実環境で検証すること (npx 失敗時はサーバー単体がスキップされる)
 SHADCN_UI_SERVER: dict[str, Any] = {
     "type": "stdio",
     "command": "npx",
@@ -220,10 +221,8 @@ _PHASE_MCP_MAP: dict[str, dict[str, Any]] = {
         "servers": {
             "context7": CONTEXT7_SERVER,
             "github": None,
-            "playwright": PLAYWRIGHT_SERVER,
-            "chromedevtools": CHROME_DEVTOOLS_SERVER,
         },
-        "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS, *PLAYWRIGHT_TOOLS, *CHROME_DEVTOOLS_TOOLS],
+        "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS],
     },
     "impl-revise": {
         "servers": {
@@ -238,8 +237,10 @@ _PHASE_MCP_MAP: dict[str, dict[str, Any]] = {
         "servers": {
             "context7": CONTEXT7_SERVER,
             "fetch": FETCH_SERVER,
+            "shadcnui": SHADCN_UI_SERVER,
+            "mermaid": MERMAID_SERVER,
         },
-        "tools": [*CONTEXT7_TOOLS, *FETCH_TOOLS],
+        "tools": [*CONTEXT7_TOOLS, *FETCH_TOOLS, *SHADCN_UI_TOOLS, *MERMAID_TOOLS],
     },
 }
 

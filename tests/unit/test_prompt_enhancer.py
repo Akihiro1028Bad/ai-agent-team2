@@ -88,9 +88,9 @@ class TestEnhancePrompt:
         result = enhance_prompt(self.BASE, "fix")
         assert "ブラウザ検証" in result
 
-    def test_ci_fix_includes_browser_verification(self) -> None:
+    def test_ci_fix_no_browser_verification(self) -> None:
         result = enhance_prompt(self.BASE, "ci-fix")
-        assert "ブラウザ検証" in result
+        assert "ブラウザ検証" not in result
 
     def test_impl_revise_includes_browser_verification(self) -> None:
         result = enhance_prompt(self.BASE, "impl-revise")

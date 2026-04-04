@@ -100,10 +100,14 @@ class TestGetPhaseMcpConfig:
         assert "context7" in servers
         assert "sequential-thinking" in servers
 
-    def test_design_revise_has_context7_fetch(self) -> None:
-        servers, _tools = get_phase_mcp_config("design-revise")
+    def test_design_revise_has_context7_fetch_shadcnui_mermaid(self) -> None:
+        servers, tools = get_phase_mcp_config("design-revise")
         assert "context7" in servers
         assert "fetch" in servers
+        assert "shadcnui" in servers
+        assert "mermaid" in servers
+        assert set(SHADCN_UI_TOOLS).issubset(set(tools))
+        assert set(MERMAID_TOOLS).issubset(set(tools))
 
     @_GITHUB_TOKEN_ENV
     def test_fix_has_context7_github(self) -> None:
@@ -148,10 +152,12 @@ class TestGetPhaseMcpConfig:
         assert "chromedevtools" in servers
 
     @_GITHUB_TOKEN_ENV
-    def test_ci_fix_has_playwright_chromedevtools(self) -> None:
+    def test_ci_fix_has_no_browser_tools(self) -> None:
         servers, _tools = get_phase_mcp_config("ci-fix")
-        assert "playwright" in servers
-        assert "chromedevtools" in servers
+        assert "playwright" not in servers
+        assert "chromedevtools" not in servers
+        assert "context7" in servers
+        assert "github" in servers
 
     @_GITHUB_TOKEN_ENV
     def test_impl_revise_has_playwright_chromedevtools(self) -> None:
