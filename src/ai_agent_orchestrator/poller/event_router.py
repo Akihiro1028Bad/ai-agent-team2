@@ -647,6 +647,9 @@ class EventRouter:
                 all_review_comments,
                 "レビュー指摘を確認しました。修正を開始します。",
             )
+        else:
+            # フォールバック: PRスレッドへの返信ができない場合は Issue コメントで通知
+            await self._notify_review_received(event, comments_text)
 
     async def _reply_to_review_comments(
         self,
