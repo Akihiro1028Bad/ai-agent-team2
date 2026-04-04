@@ -15,6 +15,7 @@ from ai_agent_orchestrator.models import EventType, Phase, PollEvent
 from ai_agent_orchestrator.orchestrator.task_queue import Priority, TaskRequest
 
 if TYPE_CHECKING:
+    from ai_agent_orchestrator.config.settings import RepositoryConfig
     from ai_agent_orchestrator.github.client import GitHubClient
     from ai_agent_orchestrator.orchestrator.execution_guard import ExecutionGuard
     from ai_agent_orchestrator.orchestrator.orchestrator import Notifier
@@ -650,7 +651,7 @@ class EventRouter:
     async def _reply_to_review_comments(
         self,
         client: GitHubClientProtocol,
-        repo: object,
+        repo: RepositoryConfig,
         pr_number: int,
         review_comments: list[dict[str, Any]],
         body: str,
@@ -673,7 +674,7 @@ class EventRouter:
                     repo,
                     pr_number,
                     comment_id,
-                    body,  # type: ignore[arg-type]
+                    body,
                 )
             except Exception:
                 logger.debug(
