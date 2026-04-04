@@ -927,6 +927,175 @@ class TestImplReviseExecutor:
         assert call_kwargs["resume_session_id"] == "prev-impl-session"
         mock_sm.transition.assert_called_with(1, "impl-review")
 
+    async def test_process_result_sends_completion_reply_to_each_comment(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """process_result が各 review_comment_ids に完了通知を送る。"""
+        mock_sm.get_state.return_value = MagicMock(
+            session_id="prev-impl-session",
+            pr_number=10,
+            design_pr_number=10,
+            branch_head_sha=None,
+        )
+        from ai_agent_orchestrator.phases.impl_revise import ImplReviseExecutor
+
+        executor = ImplReviseExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(
+            phase="impl-revise",
+            extra={"comments": "変数名修正", "review_comment_ids": [101, 102]},
+        )
+        await executor.execute(request)
+
+        # reply_to_review_comment が 2 回呼ばれる
+        assert mock_github.reply_to_review_comment.call_count == 2
+        call_ids = [
+            mock_github.reply_to_review_comment.call_args_list[i].args[2]
+            for i in range(2)
+        ]
+        assert 101 in call_ids
+        assert 102 in call_ids
+        # 完了通知の文言確認
+        call_bodies = [
+            mock_github.reply_to_review_comment.call_args_list[i].args[3]
+            for i in range(2)
+        ]
+        assert all("修正が完了しました" in body for body in call_bodies)
+
+    async def test_process_result_no_reply_when_review_comment_ids_empty(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """review_comment_ids が空の場合は reply_to_review_comment を呼ばない。"""
+        mock_sm.get_state.return_value = MagicMock(
+            session_id="prev-impl-session",
+            pr_number=10,
+            design_pr_number=10,
+            branch_head_sha=None,
+        )
+        from ai_agent_orchestrator.phases.impl_revise import ImplReviseExecutor
+
+        executor = ImplReviseExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(
+            phase="impl-revise",
+            extra={"comments": "変数名修正", "review_comment_ids": []},
+        )
+        await executor.execute(request)
+
+        mock_github.reply_to_review_comment.assert_not_called()
+        # IMPL_REVIEW 遷移は継続する
+        mock_sm.transition.assert_called_with(1, "impl-review")
+
+    async def test_process_result_completion_reply_failure_does_not_block_transition(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """完了通知の失敗時も IMPL_REVIEW 遷移・Slack 通知は継続する。"""
+        mock_sm.get_state.return_value = MagicMock(
+            session_id="prev-impl-session",
+            pr_number=10,
+            design_pr_number=10,
+            branch_head_sha=None,
+        )
+        mock_github.reply_to_review_comment.side_effect = Exception("network error")
+        from ai_agent_orchestrator.phases.impl_revise import ImplReviseExecutor
+
+        executor = ImplReviseExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(
+            phase="impl-revise",
+            extra={"comments": "変数名修正", "review_comment_ids": [101]},
+        )
+        # 例外が発生してもクラッシュしない
+        await executor.execute(request)
+
+        # IMPL_REVIEW 遷移は完了している
+        mock_sm.transition.assert_called_with(1, "impl-review")
+        # Slack 通知も送られている
+        mock_notifier.notify.assert_called_once()
+
+    async def test_build_prompt_includes_comment_count_note(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """build_prompt が複数コメントの件数注記を含むプロンプトを生成する。"""
+        mock_sm.get_state.return_value = MagicMock(
+            session_id=None,
+            pr_number=10,
+            design_pr_number=10,
+            branch_head_sha=None,
+        )
+        from ai_agent_orchestrator.phases.impl_revise import ImplReviseExecutor
+
+        executor = ImplReviseExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(
+            phase="impl-revise",
+            extra={
+                "comments": "指摘A\n指摘B",
+                "review_comment_ids": [101, 102, 103],
+            },
+        )
+        prompt = await executor.build_prompt(request)
+
+        # 件数注記が含まれる
+        assert "3 件" in prompt
+        assert "全ての指摘に対応" in prompt
+
 
 # ---------------------------------------------------------------------------
 # SplitProposalExecutor

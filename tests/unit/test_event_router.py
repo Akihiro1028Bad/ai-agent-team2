@@ -627,3 +627,186 @@ class TestEventRouterHearingWait:
 
         mock_sm.transition.assert_not_called()
         mock_tq.enqueue.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tests: IMPL_PR_COMMENTED with multiple review comments (Issue #69)
+# ---------------------------------------------------------------------------
+
+
+class TestEventRouterImplPRCommentedMultiple:
+    """複数レビューコメント同時対応のテスト (Issue #69)."""
+
+    @pytest.fixture
+    def mock_client(self) -> AsyncMock:
+        """GitHubClient のモック."""
+        client = AsyncMock()
+        # デフォルト: 2件のレビューコメントを返す
+        client.get_pr_review_comments.return_value = [
+            {"id": 101, "user": {"login": "reviewer1"}, "body": "指摘A", "path": "a.py", "line": 1},
+            {"id": 102, "user": {"login": "reviewer2"}, "body": "指摘B", "path": "b.py", "line": 2},
+        ]
+        return client
+
+    @pytest.fixture
+    def mock_account_manager(self, mock_client: AsyncMock) -> AsyncMock:
+        """AccountManager のモック。"""
+        am = AsyncMock()
+        am.get_client_for_repo = AsyncMock(return_value=mock_client)
+        return am
+
+    @pytest.fixture
+    def mock_sm_impl_review(self) -> AsyncMock:
+        """IMPL_REVIEW フェーズの StateMachineManager モック (pr_number=10)."""
+        sm = AsyncMock()
+        sm.register_issue = MagicMock()
+        sm.get_phase = MagicMock(return_value=Phase.IMPL_REVIEW)
+        sm.get_issue_type = MagicMock(return_value="feature-m")
+        sm.set_issue_type = MagicMock()
+        sm.get_ci_retry_count = AsyncMock(return_value=0)
+        state = MagicMock()
+        state.pr_number = 10
+        sm.get_state = MagicMock(return_value=state)
+        return sm
+
+    @pytest.fixture
+    def router_with_am(
+        self,
+        mock_sm_impl_review: AsyncMock,
+        mock_tq: AsyncMock,
+        mock_account_manager: AsyncMock,
+    ) -> EventRouter:
+        """account_manager を持つ EventRouter インスタンス."""
+        return EventRouter(
+            state_machine=mock_sm_impl_review,
+            task_queue=mock_tq,
+            account_manager=mock_account_manager,
+        )
+
+    async def test_collects_all_review_comments_and_enqueues(
+        self,
+        router_with_am: EventRouter,
+        mock_sm_impl_review: AsyncMock,
+        mock_tq: AsyncMock,
+        mock_client: AsyncMock,
+    ) -> None:
+        """IMPL_PR_COMMENTED: 全レビューコメントを収集してエンキューする."""
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "フォールバック"})
+        await router_with_am.route(event)
+
+        mock_tq.enqueue.assert_called_once()
+        enqueued = mock_tq.enqueue.call_args[0][0]
+        # review_comment_ids に両コメントの ID が含まれる
+        assert 101 in enqueued.extra["review_comment_ids"]
+        assert 102 in enqueued.extra["review_comment_ids"]
+        # comments テキストが生成されている
+        assert "指摘A" in enqueued.extra["comments"]
+        assert "指摘B" in enqueued.extra["comments"]
+
+    async def test_sends_acknowledgment_after_transition_and_enqueue(
+        self,
+        router_with_am: EventRouter,
+        mock_sm_impl_review: AsyncMock,
+        mock_tq: AsyncMock,
+        mock_client: AsyncMock,
+    ) -> None:
+        """着手通知が遷移・エンキュー後に各コメントスレッドへ送られる."""
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "要修正"})
+        await router_with_am.route(event)
+
+        # 遷移・エンキューが完了していること
+        mock_sm_impl_review.transition.assert_called_once()
+        mock_tq.enqueue.assert_called_once()
+
+        # 各レビューコメントに着手通知が送られる
+        assert mock_client.reply_to_review_comment.call_count == 2
+        # 着手通知の文言確認
+        call_bodies = [
+            mock_client.reply_to_review_comment.call_args_list[i].args[3]
+            for i in range(2)
+        ]
+        assert all("修正を開始します" in body for body in call_bodies)
+
+    async def test_second_impl_pr_commented_is_skipped(
+        self,
+        mock_tq: AsyncMock,
+        mock_account_manager: AsyncMock,
+    ) -> None:
+        """IMPL_REVISE 中の後発 IMPL_PR_COMMENTED はスキップされる."""
+        sm = AsyncMock()
+        sm.register_issue = MagicMock()
+        sm.get_phase = MagicMock(return_value=Phase.IMPL_REVISE)
+        sm.get_issue_type = MagicMock(return_value="feature-m")
+        sm.set_issue_type = MagicMock()
+        sm.get_ci_retry_count = AsyncMock(return_value=0)
+        sm.get_state = MagicMock(return_value=None)
+        router = EventRouter(
+            state_machine=sm,
+            task_queue=mock_tq,
+            account_manager=mock_account_manager,
+        )
+
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "後発コメント"})
+        await router.route(event)
+
+        # 遷移もエンキューもされない
+        sm.transition.assert_not_called()
+        mock_tq.enqueue.assert_not_called()
+
+    async def test_get_pr_review_comments_failure_falls_back_to_event_extra(
+        self,
+        mock_tq: AsyncMock,
+        mock_account_manager: AsyncMock,
+    ) -> None:
+        """get_pr_review_comments 失敗時は event.extra['comments'] へフォールバックする."""
+        # get_pr_review_comments が例外を送出するクライアント
+        failing_client = AsyncMock()
+        failing_client.get_pr_review_comments.side_effect = Exception("API error")
+        mock_account_manager.get_client_for_repo = AsyncMock(return_value=failing_client)
+
+        sm = AsyncMock()
+        sm.register_issue = MagicMock()
+        sm.get_phase = MagicMock(return_value=Phase.IMPL_REVIEW)
+        sm.get_issue_type = MagicMock(return_value="feature-m")
+        sm.set_issue_type = MagicMock()
+        sm.get_ci_retry_count = AsyncMock(return_value=0)
+        state = MagicMock()
+        state.pr_number = 10
+        sm.get_state = MagicMock(return_value=state)
+
+        router = EventRouter(
+            state_machine=sm,
+            task_queue=mock_tq,
+            account_manager=mock_account_manager,
+        )
+
+        fallback_text = "フォールバックコメント"
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": fallback_text})
+        await router.route(event)
+
+        # 遷移・エンキューは継続する
+        sm.transition.assert_called_once()
+        mock_tq.enqueue.assert_called_once()
+        enqueued = mock_tq.enqueue.call_args[0][0]
+        # フォールバックのコメントテキストが使われる
+        assert fallback_text in enqueued.extra["comments"]
+
+    async def test_acknowledgment_failure_does_not_block_transition(
+        self,
+        router_with_am: EventRouter,
+        mock_sm_impl_review: AsyncMock,
+        mock_tq: AsyncMock,
+        mock_client: AsyncMock,
+    ) -> None:
+        """着手通知失敗時もフェーズ遷移・エンキューは継続する."""
+        mock_client.reply_to_review_comment.side_effect = Exception("network error")
+
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "要修正"})
+        # 例外が発生してもクラッシュしない
+        await router_with_am.route(event)
+
+        # 遷移・エンキューは完了している
+        mock_sm_impl_review.transition.assert_called_once()
+        args = mock_sm_impl_review.transition.call_args[0]
+        assert args[1].value == "impl-revise"
+        mock_tq.enqueue.assert_called_once()
