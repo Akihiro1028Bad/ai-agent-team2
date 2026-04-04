@@ -722,7 +722,7 @@ class Orchestrator:
                         repo_config = repo
                         break
 
-                issue_number = issue_key[1] if isinstance(issue_key, tuple) else issue_key
+                issue_number = issue_key[1]
                 if repo_config is not None:
                     await self._task_queue.enqueue(
                         TaskRequest(

@@ -243,12 +243,13 @@ class TaskQueue:
         repo_sem = self._repo_sems[repo_key]
 
         await self._global_sem.acquire()
+        global_sem_held = True
         try:
-            # repo_sem を非ブロッキングで試行
-            acquired = repo_sem._value > 0
-            if not acquired:
+            # repo_sem を非ブロッキングで試行 (locked() は公開 API)
+            if repo_sem.locked():
                 # global_sem を解放して再キューイング
                 self._global_sem.release()
+                global_sem_held = False
                 logger.info(
                     "Repo semaphore busy for %s, re-enqueuing Issue #%d",
                     repo_key,
@@ -269,12 +270,7 @@ class TaskQueue:
             finally:
                 repo_sem.release()
         finally:
-            # Only release global_sem if we didn't already release it above
-            # We track this by checking if we're still holding it
-            if request.issue_key in self._active_tasks:
-                self._global_sem.release()
-            elif repo_sem._value <= self._max_per_repo:
-                # We acquired global_sem and repo_sem, need to release global
+            if global_sem_held:
                 self._global_sem.release()
 
     async def _execute_task(

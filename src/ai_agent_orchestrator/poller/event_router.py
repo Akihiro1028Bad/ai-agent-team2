@@ -102,7 +102,8 @@ class EventRouter:
     def _issue_key_from_event(event: PollEvent) -> IssueKey:
         """PollEvent から IssueKey を生成する."""
         repo_key = f"{event.repo.owner}/{event.repo.repo}"
-        assert event.issue is not None
+        if event.issue is None:
+            raise ValueError(f"event.issue must not be None for event type {event.type}")
         return make_issue_key(repo_key, event.issue.number)
 
     async def _get_client(self, repo: object) -> GitHubClient | None:
@@ -306,7 +307,8 @@ class EventRouter:
 
     async def _handle_hearing_reply(self, event: PollEvent) -> None:
         """ヒアリング回答: HEARING_WAIT → HEARING 遷移して再実行."""
-        assert event.comment is not None
+        if event.comment is None:
+            raise ValueError(f"event.comment must not be None for event type {event.type}")
         issue_number = int(str(event.comment.issue_url).split("/")[-1])
         repo_key = f"{event.repo.owner}/{event.repo.repo}"
         issue_key = make_issue_key(repo_key, issue_number)

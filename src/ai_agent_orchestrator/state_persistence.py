@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 from dataclasses import asdict
 from pathlib import Path
 
 from ai_agent_orchestrator.models import IssueKey, IssueState, Phase
+
+logger = logging.getLogger(__name__)
 
 
 class StatePersistence:
@@ -76,7 +79,8 @@ class StatePersistence:
                     issue_number = int(k)
                     repo = v.get("repo", "")
                     if not repo or "/" not in repo:
-                        continue  # repo 情報がなければスキップ
+                        logger.warning("旧形式エントリをスキップ (repo 情報なし): key=%s", k)
+                        continue
                     issue_key = (repo, issue_number)
                 states[issue_key] = IssueState(**v)
             except (ValueError, TypeError, KeyError):
