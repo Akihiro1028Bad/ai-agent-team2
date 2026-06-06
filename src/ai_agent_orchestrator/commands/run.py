@@ -16,6 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from ai_agent_orchestrator.config.settings import load_config
+from ai_agent_orchestrator.logging_config import configure_logging, resolve_level
 
 console = Console()
 
@@ -26,12 +27,15 @@ _PID_FILE = Path("~/.ai-agent-workspaces/.pid").expanduser()
 def start_command(
     foreground: bool = typer.Option(False, "--foreground", "-f", help="フォアグラウンド実行"),
     config: str = typer.Option("config.yaml", "--config", "-c", help="設定ファイルパス"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="DEBUG ログを有効化"),
+    log_level: str | None = typer.Option(
+        None,
+        "--log-level",
+        help="ログレベルを明示指定 (DEBUG/INFO/WARNING/ERROR)。--verbose より優先",
+    ),
 ) -> None:
     """オーケストレーターを起動する."""
-    if foreground:
-        asyncio.run(_start_foreground(config))
-    else:
-        asyncio.run(_start_foreground(config))
+    asyncio.run(_start_foreground(config, verbose=verbose, log_level=log_level))
 
 
 def stop_command() -> None:
@@ -70,17 +74,16 @@ def logs_command(
 # ---------------------------------------------------------------------------
 
 
-def _configure_logging() -> None:
-    """ルートロガーに基本的なlogging設定を適用する."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-
-
-async def _start_foreground(config_path: str) -> None:
+async def _start_foreground(
+    config_path: str,
+    *,
+    verbose: bool = False,
+    log_level: str | None = None,
+) -> None:
     """フォアグラウンドでオーケストレーターを起動."""
-    _configure_logging()
+    level = resolve_level(verbose=verbose, log_level=log_level)
+    # まずコンソールのみ設定 (config 読み込み中のログを拾う)
+    configure_logging(level=level)
 
     from ai_agent_orchestrator.orchestrator.orchestrator import Orchestrator
 
@@ -93,6 +96,15 @@ async def _start_foreground(config_path: str) -> None:
     except Exception as e:
         console.print(f"[red]設定ファイルの読み込みに失敗しました: {e}[/red]")
         raise typer.Exit(code=1) from None
+
+    # workspace が判明したのでファイル出力 (logs/orchestrator.log) を追加
+    log_dir = Path(settings.workspace_dir).expanduser() / "logs"
+    configure_logging(level=level, log_dir=log_dir)
+    logging.getLogger(__name__).info(
+        "ロギング設定完了: level=%s, file=%s",
+        logging.getLevelName(level),
+        log_dir / "orchestrator.log",
+    )
 
     # Orchestrator を生成 (Poller / EventRouter は内部で後から接続)
     orchestrator = Orchestrator(settings)

@@ -34,3 +34,6 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --model claude-opus-4-8
+            --append-system-prompt "すべての回答・レビューコメント・進捗報告・要約は必ず日本語で記述してください。コード識別子・コマンド・固有名詞などは原語のままで構いませんが、説明文は日本語にしてください。"
