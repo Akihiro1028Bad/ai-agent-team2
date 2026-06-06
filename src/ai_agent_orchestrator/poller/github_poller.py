@@ -179,6 +179,7 @@ class GitHubPoller:
         repo_key = f"{repo.owner}/{repo.repo}"
         since = self._last_poll.get(repo_key)
         self._last_poll[repo_key] = datetime.now(UTC)
+        logger.debug("poll [%s]: start (since=%s)", repo_key, since.isoformat() if since else "first-run")
 
         client = await self._account_manager.get_client_for_repo(repo.owner, repo.repo)
 
@@ -224,6 +225,11 @@ class GitHubPoller:
         split_events = await self._detect_split_events(client, repo, since)
         events.extend(split_events)
 
+        if events:
+            event_summary = ", ".join(f"{e.type}#{e.issue.number if e.issue else '?'}" for e in events)
+            logger.debug("poll [%s]: %d event(s) detected → %s", repo_key, len(events), event_summary)
+        else:
+            logger.debug("poll [%s]: no events detected", repo_key)
         return events
 
     # ------------------------------------------------------------------
@@ -243,18 +249,30 @@ class GitHubPoller:
         issues = await client.get_issues_with_label(repo, repo.label)
         new: list[Issue] = []
         repo_key = f"{repo.owner}/{repo.repo}"
+        logger.debug("new-issue detection [%s]: fetched %d labeled issue(s)", repo_key, len(issues))
         for issue in issues:
             # BUG #2: Filter out PRs (GitHub API returns both issues and PRs)
             # githubkit uses UNSET sentinel for missing fields; check if it's a real PR object
             pr_field = getattr(issue, "pull_request", None)
             if pr_field is not None and type(pr_field).__name__ != "Unset":
+                logger.debug("new-issue detection [%s] #%d: skip (pull request)", repo_key, issue.number)
+                continue
+            ik: IssueKey = (repo_key, issue.number)
+            if self._has_phase_label(issue):
+                logger.debug("new-issue detection [%s] #%d: skip (phase label present)", repo_key, issue.number)
                 continue
             # BUG #1: Skip already-seen issues to prevent re-detection
-            ik: IssueKey = (repo_key, issue.number)
-            if self._has_phase_label(issue) or ik in self._seen_issue_numbers:
+            if ik in self._seen_issue_numbers:
+                logger.debug("new-issue detection [%s] #%d: skip (already seen)", repo_key, issue.number)
                 continue
             self._seen_issue_numbers.add(ik)
             new.append(issue)
+        logger.debug(
+            "new-issue detection [%s]: %d new issue(s) detected → %s",
+            repo_key,
+            len(new),
+            [i.number for i in new],
+        )
         return new
 
     async def _detect_hearing_replies(
@@ -271,18 +289,26 @@ class GitHubPoller:
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing-wait")
         replies: list[IssueComment] = []
         repo_key = f"{repo.owner}/{repo.repo}"
+        logger.debug("hearing-reply detection [%s]: %d hearing-wait issue(s)", repo_key, len(issues))
         for issue in issues:
             since_str = since.isoformat() if since else None
             comments = await client.list_comments(repo, issue.number, since=since_str)
             for comment in comments:
                 body = comment.body or ""
                 if _is_bot_comment(body):
+                    logger.debug(
+                        "hearing-reply detection [%s] #%d: skip comment %s (bot)",
+                        repo_key,
+                        issue.number,
+                        comment.id,
+                    )
                     continue
                 # BUG #4: Deduplicate hearing reply events
                 event_key = f"hearing_reply:{repo_key}:{issue.number}:{comment.id}"
                 if event_key not in self._seen_events:
                     self._seen_events.add(event_key)
                     replies.append(comment)
+        logger.debug("hearing-reply detection [%s]: %d repl(ies) detected", repo_key, len(replies))
         return replies
 
     async def _detect_hearing_timeouts(
@@ -324,6 +350,7 @@ class GitHubPoller:
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:plan-review")
         approved_issues: list[Issue] = []
         repo_key = f"{repo.owner}/{repo.repo}"
+        logger.debug("plan-reaction detection [%s]: %d plan-review issue(s)", repo_key, len(issues))
         # 方針コメントを識別するパターン (Markdown 見出し)
         plan_markers = ("## 修正方針", "## 方針", "## Analysis", "## Plan", "## 分析結果")
         bot_marker = "<!-- ai-agent-bot -->"
@@ -344,6 +371,7 @@ class GitHubPoller:
                         self._seen_reactions.add(reaction_key)
                         approved_issues.append(issue)
                         break
+        logger.debug("plan-reaction detection [%s]: %d approval(s) detected", repo_key, len(approved_issues))
         return approved_issues
 
     async def _detect_plan_comments(
@@ -360,11 +388,12 @@ class GitHubPoller:
         Returns:
             (Issue, IssueComment) タプルのリスト.
         """
+        repo_key = f"{repo.owner}/{repo.repo}"
         if since is None:
+            logger.debug("plan-comment detection [%s]: skip (first-run, since=None)", repo_key)
             return []
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:plan-review")
         feedback: list[tuple[Issue, IssueComment]] = []
-        repo_key = f"{repo.owner}/{repo.repo}"
         for issue in issues:
             since_str = since.isoformat()
             comments = await client.list_comments(repo, issue.number, since=since_str)
@@ -377,6 +406,7 @@ class GitHubPoller:
                 if event_key not in self._seen_events:
                     self._seen_events.add(event_key)
                     feedback.append((issue, comment))
+        logger.debug("plan-comment detection [%s]: %d feedback comment(s) detected", repo_key, len(feedback))
         return feedback
 
     async def _detect_pr_events(
@@ -489,8 +519,10 @@ class GitHubPoller:
         repo_key = f"{repo.owner}/{repo.repo}"
         for label_suffix in ("ci-fix", "impl-review"):
             issues = await client.get_issues_with_label(repo, f"{repo.label},phase:{label_suffix}")
+            logger.debug("ci-result detection [%s] (phase:%s): %d issue(s)", repo_key, label_suffix, len(issues))
             for issue in issues:
                 ci_status = await self._check_ci_status(client, repo, issue)
+                logger.debug("ci-result detection [%s] #%d: status=%s", repo_key, issue.number, ci_status or "none")
                 if ci_status is None:
                     continue
                 # BUG #4: Deduplicate CI result events
@@ -536,6 +568,7 @@ class GitHubPoller:
         events: list[PollEvent] = []
         repo_key = f"{repo.owner}/{repo.repo}"
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:split-proposal")
+        logger.debug("split-event detection [%s]: %d split-proposal issue(s)", repo_key, len(issues))
         for issue in issues:
             comments = await client.list_comments(repo, issue.number)
             for comment in comments:

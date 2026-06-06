@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
@@ -174,6 +175,94 @@ class TestDetectNewIssues:
         result = await poller._detect_new_issues(client, repo)
         assert len(result) == 2
         assert {r.number for r in result} == {1, 2}
+
+
+# ---------------------------------------------------------------------------
+# Tests: 検出経路の DEBUG ログ
+# ---------------------------------------------------------------------------
+
+
+class TestDetectionLogging:
+    """検出経路 (poller) の DEBUG ログのテスト.
+
+    「なぜ反応した/しなかったか」を追えることを担保する。
+    """
+
+    async def test_logs_fetched_count(self, caplog: pytest.LogCaptureFixture) -> None:
+        """取得した Issue 件数を DEBUG ログに出す."""
+        client = _make_client()
+        client.get_issues_with_label = AsyncMock(
+            return_value=[_make_issue(number=1, labels=["ai-agent"]), _make_issue(number=2, labels=["ai-agent"])]
+        )
+        repo = _make_repo()
+        poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
+
+        with caplog.at_level(logging.DEBUG, logger="ai_agent_orchestrator.poller.github_poller"):
+            await poller._detect_new_issues(client, repo)
+
+        debug_text = "\n".join(r.message for r in caplog.records if r.levelno == logging.DEBUG)
+        assert "fetched 2" in debug_text
+
+    async def test_logs_detected_count(self, caplog: pytest.LogCaptureFixture) -> None:
+        """検知した新規 Issue 件数を DEBUG ログに出す."""
+        client = _make_client()
+        client.get_issues_with_label = AsyncMock(return_value=[_make_issue(number=42, labels=["ai-agent"])])
+        repo = _make_repo()
+        poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
+
+        with caplog.at_level(logging.DEBUG, logger="ai_agent_orchestrator.poller.github_poller"):
+            await poller._detect_new_issues(client, repo)
+
+        debug_text = "\n".join(r.message for r in caplog.records if r.levelno == logging.DEBUG)
+        assert "1 new" in debug_text
+        assert "42" in debug_text
+
+    async def test_logs_skip_phase_label(self, caplog: pytest.LogCaptureFixture) -> None:
+        """phase ラベルでスキップした理由を DEBUG ログに出す."""
+        client = _make_client()
+        client.get_issues_with_label = AsyncMock(
+            return_value=[_make_issue(number=42, labels=["ai-agent", "phase:hearing"])]
+        )
+        repo = _make_repo()
+        poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
+
+        with caplog.at_level(logging.DEBUG, logger="ai_agent_orchestrator.poller.github_poller"):
+            await poller._detect_new_issues(client, repo)
+
+        debug_text = "\n".join(r.message for r in caplog.records if r.levelno == logging.DEBUG)
+        assert "42" in debug_text
+        assert "phase" in debug_text.lower()
+
+    async def test_logs_skip_already_seen(self, caplog: pytest.LogCaptureFixture) -> None:
+        """既検知でスキップした理由を DEBUG ログに出す."""
+        client = _make_client()
+        client.get_issues_with_label = AsyncMock(return_value=[_make_issue(number=42, labels=["ai-agent"])])
+        repo = _make_repo()
+        poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
+
+        await poller._detect_new_issues(client, repo)  # 1回目で seen 登録
+        with caplog.at_level(logging.DEBUG, logger="ai_agent_orchestrator.poller.github_poller"):
+            await poller._detect_new_issues(client, repo)  # 2回目はスキップ
+
+        debug_text = "\n".join(r.message for r in caplog.records if r.levelno == logging.DEBUG)
+        assert "42" in debug_text
+        assert "seen" in debug_text.lower()
+
+    async def test_logs_skip_pull_request(self, caplog: pytest.LogCaptureFixture) -> None:
+        """PR でスキップした理由を DEBUG ログに出す."""
+        client = _make_client()
+        client.get_issues_with_label = AsyncMock(
+            return_value=[_make_issue(number=99, labels=["ai-agent"], is_pull_request=True)]
+        )
+        repo = _make_repo()
+        poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
+
+        with caplog.at_level(logging.DEBUG, logger="ai_agent_orchestrator.poller.github_poller"):
+            await poller._detect_new_issues(client, repo)
+
+        debug_text = "\n".join(r.message for r in caplog.records if r.levelno == logging.DEBUG)
+        assert "99" in debug_text
+        assert "pull request" in debug_text.lower() or "pr" in debug_text.lower()
 
 
 # ---------------------------------------------------------------------------

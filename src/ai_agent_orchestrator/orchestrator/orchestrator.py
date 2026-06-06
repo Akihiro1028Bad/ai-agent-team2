@@ -798,6 +798,12 @@ class Orchestrator:
             issue_body = task.extra.get("issue_body", "")
 
             if worktree_path:
+                logger.debug(
+                    "issue #%d: building context (worktree=%s, phase=%s)",
+                    issue_number,
+                    worktree_path,
+                    phase,
+                )
                 try:
                     context = await self._context_engine.build_context(
                         worktree_path=worktree_path,
@@ -805,6 +811,7 @@ class Orchestrator:
                         phase=phase,
                         issue_number=issue_number,
                     )
+                    logger.debug("issue #%d: context built (%d chars)", issue_number, len(context))
                 except Exception as ctx_err:
                     logger.warning(
                         "Failed to build context for issue #%d: %s",
@@ -814,6 +821,7 @@ class Orchestrator:
 
             # Dispatch phase execution (guard prevents EventRouter from
             # transitioning state while the executor is running)
+            logger.debug("issue #%d: dispatching phase=%s (guard acquired)", issue_number, phase)
             async with self._execution_guard.guard(issue_key):
                 result = await self._phase_dispatcher.dispatch(
                     phase,
@@ -823,6 +831,13 @@ class Orchestrator:
                     context=context,
                     resume_session_id=task.extra.get("resume_session_id"),
                 )
+            logger.debug(
+                "issue #%d: phase=%s dispatch returned (next_phase=%s, cost=$%s)",
+                issue_number,
+                phase,
+                result.next_phase,
+                result.cost_usd,
+            )
 
             await self._event_logger.track(
                 "phase_completed",

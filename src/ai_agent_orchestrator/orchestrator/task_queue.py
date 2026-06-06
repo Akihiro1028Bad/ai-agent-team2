@@ -179,6 +179,14 @@ class TaskQueue:
             request.phase,
             request.priority,
         )
+        logger.debug(
+            "queue state after enqueue: issue=#%d repo=%s phase=%s depth=%d active=%d",
+            request.issue_number,
+            request.repo_key,
+            request.phase,
+            self._queue.qsize(),
+            len(self._active_tasks),
+        )
 
     async def dequeue(self) -> TaskRequest:
         """キューからタスクを取り出す。
@@ -190,6 +198,13 @@ class TaskQueue:
         """
         _, _, request = await self._queue.get()
         self._queued_issues.discard(request.issue_key)
+        logger.debug(
+            "dequeued: issue=#%d repo=%s phase=%s remaining=%d",
+            request.issue_number,
+            request.repo_key,
+            request.phase,
+            self._queue.qsize(),
+        )
         # _queued_tasks はタスク完了時に除去する (実行中の重複防止)
         return request
 
@@ -263,6 +278,12 @@ class TaskQueue:
 
             await repo_sem.acquire()
             try:
+                logger.debug(
+                    "acquired semaphores (global+repo[%s]): executing issue=#%d phase=%s",
+                    repo_key,
+                    request.issue_number,
+                    request.phase,
+                )
                 task = asyncio.current_task()
                 if task is not None:
                     self._active_tasks[request.issue_key] = task
