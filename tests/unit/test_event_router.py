@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -807,3 +808,21 @@ class TestEventRouterImplPRCommentedMultiple:
         args = mock_sm_impl_review.transition.call_args[0]
         assert args[1].value == "impl-revise"
         mock_tq.enqueue.assert_called_once()
+
+
+class TestEventRouterLogging:
+    """route のディスパッチ DEBUG ログのテスト."""
+
+    async def test_route_logs_dispatch_with_issue_key(
+        self,
+        router: EventRouter,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """route がイベント種別と issue_key を含む DEBUG ログを出す."""
+        event = _make_event(EventType.NEW_ISSUE, issue_number=42)
+        with caplog.at_level(logging.DEBUG, logger="ai_agent_orchestrator.poller.event_router"):
+            await router.route(event)
+
+        debug_text = "\n".join(r.message for r in caplog.records if r.levelno == logging.DEBUG)
+        assert "42" in debug_text
+        assert "org/app" in debug_text

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 from ai_agent_orchestrator.orchestrator.task_queue import (
@@ -10,6 +12,9 @@ from ai_agent_orchestrator.orchestrator.task_queue import (
     TaskQueue,
     TaskRequest,
 )
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _make_repo(owner: str = "org", repo: str = "app") -> MagicMock:
@@ -348,3 +353,30 @@ class TestTaskRequest:
         repo = _make_repo("my-org", "my-repo")
         req = TaskRequest(issue_number=1, repo=repo, phase="hearing")
         assert req.repo_key == "my-org/my-repo"
+
+
+class TestQueueLifecycleLogging:
+    """エンキュー/デキューのライフサイクル DEBUG ログのテスト。"""
+
+    async def test_enqueue_logs_debug_with_depth(self, caplog: pytest.LogCaptureFixture) -> None:
+        """エンキュー時にキュー深さを含む DEBUG ログを出す。"""
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        with caplog.at_level(logging.DEBUG, logger="ai_agent_orchestrator.orchestrator.task_queue"):
+            await tq.enqueue(TaskRequest(issue_number=42, repo=repo, phase="hearing"))
+
+        debug_text = "\n".join(r.message for r in caplog.records if r.levelno == logging.DEBUG)
+        assert "42" in debug_text
+        assert "depth" in debug_text.lower()
+
+    async def test_dequeue_logs_debug(self, caplog: pytest.LogCaptureFixture) -> None:
+        """デキュー時に DEBUG ログを出す。"""
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        await tq.enqueue(TaskRequest(issue_number=7, repo=repo, phase="design"))
+        with caplog.at_level(logging.DEBUG, logger="ai_agent_orchestrator.orchestrator.task_queue"):
+            await tq.dequeue()
+
+        debug_text = "\n".join(r.message for r in caplog.records if r.levelno == logging.DEBUG)
+        assert "7" in debug_text
+        assert "dequeue" in debug_text.lower()

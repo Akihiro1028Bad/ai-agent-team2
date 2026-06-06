@@ -355,6 +355,7 @@ class PhaseExecutor(ABC):
             request: タスクリクエスト。
         """
         try:
+            logger.debug("phase execute start: issue=#%d phase=%s", request.issue_number, request.phase)
             await self._tracker.track(
                 "phase_start",
                 issue_number=request.issue_number,
@@ -362,8 +363,21 @@ class PhaseExecutor(ABC):
             )
 
             prompt = await self.build_prompt(request)
+            logger.debug(
+                "phase %s: prompt built (%d chars) for issue #%d",
+                request.phase,
+                len(prompt),
+                request.issue_number,
+            )
             await self._record_branch_baseline(request)
             result = await self.run_agent(request, prompt)
+            logger.debug(
+                "phase %s: agent finished for issue #%d (cost=$%.4f, %.1fs)",
+                request.phase,
+                request.issue_number,
+                result.cost_usd,
+                result.duration_sec,
+            )
             await self.process_result(request, result)
 
             await self._tracker.track(
@@ -375,6 +389,7 @@ class PhaseExecutor(ABC):
                     "duration_sec": result.duration_sec,
                 },
             )
+            logger.debug("phase execute end: issue=#%d phase=%s", request.issue_number, request.phase)
         except TimeoutError:
             await self._handle_timeout(request)
         except Exception as exc:

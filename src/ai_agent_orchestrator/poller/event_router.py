@@ -152,6 +152,14 @@ class EventRouter:
             event.type,
             event.issue.number if event.issue else "N/A",
         )
+        repo_key = f"{event.repo.owner}/{event.repo.repo}"
+        logger.debug(
+            "route: dispatching type=%s issue_key=(%s, #%s) comment=%s",
+            event.type,
+            repo_key,
+            event.issue.number if event.issue else "N/A",
+            event.comment.id if event.comment else "none",
+        )
 
         # ガードチェック: Issue が実行中の場合はイベントを保留
         if self._guard is not None and event.issue is not None:
