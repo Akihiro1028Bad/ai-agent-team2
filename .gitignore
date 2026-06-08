@@ -11,3 +11,7 @@ coverage.xml
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+
+# ローカル設定ファイル (シークレットを含むため追跡しない)
+config.yaml
+config.test.yaml

@@ -1,0 +1,36 @@
+# AI Multi-Agent Orchestrator 設定テンプレート
+#
+# このファイルをコピーして config.yaml を作成してください:
+#   cp config.example.yaml config.yaml
+#
+# config.yaml / config.test.yaml は .gitignore 済みです。
+# Slack Webhook 等のシークレットは絶対にコミットしないでください。
+
+# ポーリング間隔 (秒)。
+# 注意: 短くするほど GitHub API 消費が増えます。
+# 監視リポジトリ数 × 検知メソッド数ぶんのリクエストが毎サイクル発生するため、
+# レート制限 (認証済み 5,000 req/h) を超えないよう 300 秒以上を推奨します。
+polling_interval_sec: 300
+
+accounts:
+  default:
+    token_command: "gh auth token"
+    default: true
+
+repositories:
+  - owner: "your-org-or-user"
+    repo: "your-repo"
+    account: "default"
+    label: "ai-agent"
+    base_branch: "main"
+
+concurrency:
+  max_total: 4
+  max_per_repo: 4
+
+timeouts:
+  hearing_hours: 24
+
+slack:
+  # Slack Incoming Webhook URL。シークレットのためコミット禁止。
+  webhook_url: "https://hooks.slack.com/services/REPLACE_ME"
