@@ -6,6 +6,7 @@ import io
 import logging
 import urllib.parse
 import zipfile
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from githubkit import GitHub, TokenAuthStrategy
@@ -32,6 +33,21 @@ class ConfigError(Exception):
     """設定エラー."""
 
 
+@dataclass(frozen=True)
+class RateLimitStatus:
+    """GitHub API のレート制限状態.
+
+    Attributes:
+        remaining: 現在の周期で残っているリクエスト数.
+        limit: 周期あたりの上限リクエスト数.
+        reset: 制限がリセットされる UNIX タイムスタンプ (秒).
+    """
+
+    remaining: int
+    limit: int
+    reset: int
+
+
 class GitHubClient:
     """githubkit をラップした非同期 GitHub API クライアント."""
 
@@ -42,6 +58,27 @@ class GitHubClient:
             token: GitHub Personal Access Token または OAuth トークン.
         """
         self._github = GitHub(TokenAuthStrategy(token))
+
+    # ── レート制限 ──────────────────────────────────────
+
+    async def get_rate_limit(self) -> RateLimitStatus:
+        """GitHub API の core レート制限の残量を取得する.
+
+        この `/rate_limit` エンドポイントの呼び出し自体はレート制限を消費しない。
+
+        Returns:
+            core リソースの RateLimitStatus.
+
+        Raises:
+            githubkit.exception.RequestFailed: API リクエスト失敗時.
+        """
+        response = await self._github.rest.rate_limit.async_get()
+        core = response.parsed_data.resources.core
+        return RateLimitStatus(
+            remaining=core.remaining,
+            limit=core.limit,
+            reset=core.reset,
+        )
 
     # ── Issue 操作 ──────────────────────────────────────
 

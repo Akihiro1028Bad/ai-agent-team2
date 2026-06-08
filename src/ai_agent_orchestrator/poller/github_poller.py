@@ -9,14 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections import OrderedDict
+from collections.abc import Hashable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from ai_agent_orchestrator.models import EventType, IssueKey, PollEvent
 
 if TYPE_CHECKING:
-    from githubkit.versions.latest.models import Issue, IssueComment
+    from githubkit.versions.latest.models import Issue, IssueComment, PullRequestSimple
 
     from ai_agent_orchestrator.config.settings import RepositoryConfig
     from ai_agent_orchestrator.github.client import AccountManager, GitHubClient
@@ -24,6 +25,46 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _BOT_MARKER = "<!-- ai-agent-bot -->"
+
+# 重複排除キャッシュの上限。超過時は古い要素から削除される。
+_SEEN_CACHE_MAX_SIZE = 10_000
+# レート制限の残量がこの値を下回るとポーリングを一時停止する (デフォルト)。
+_DEFAULT_MIN_RATE_LIMIT_REMAINING = 200
+
+
+class _BoundedSet:
+    """挿入順を保持し、上限超過時に最古の要素から削除する集合.
+
+    無制限に成長する `set` を毎時クリアすると、過去の全イベントが
+    再検知されてコメント再投稿などの書き込みループを引き起こす。
+    上限付きの LRU 的な集合にすることで、メモリリークと再検知ストームの
+    両方を防ぐ。
+    """
+
+    def __init__(self, max_size: int = _SEEN_CACHE_MAX_SIZE) -> None:
+        """上限サイズを指定して初期化する.
+
+        Args:
+            max_size: 保持する最大要素数.
+        """
+        self._max_size = max_size
+        self._data: OrderedDict[Hashable, None] = OrderedDict()
+
+    def __contains__(self, key: Hashable) -> bool:
+        return key in self._data
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def add(self, key: Hashable) -> None:
+        """要素を追加する。既存なら最新位置へ移動し、上限超過時は最古を削除する."""
+        if key in self._data:
+            self._data.move_to_end(key)
+            return
+        self._data[key] = None
+        if len(self._data) > self._max_size:
+            self._data.popitem(last=False)
+
 
 _CI_LOG_MAX_CHARS = 30_000
 _CI_LOG_CONTEXT_LINES = 5
@@ -90,6 +131,7 @@ class GitHubPoller:
         interval_sec: int = 120,
         hearing_timeout_hours: int = 24,
         approve_comment: str = "LGTM",
+        min_rate_limit_remaining: int = _DEFAULT_MIN_RATE_LIMIT_REMAINING,
     ) -> None:
         """GitHubPoller を初期化する.
 
@@ -99,22 +141,25 @@ class GitHubPoller:
             interval_sec: ポーリング間隔 (秒). デフォルト: 120.
             hearing_timeout_hours: ヒアリングタイムアウト (時間). デフォルト: 24.
             approve_comment: コメントによる承認の完全一致文字列. デフォルト: "LGTM".
+            min_rate_limit_remaining: この残量を下回るとそのリポジトリの
+                ポーリングをスキップする閾値. デフォルト: 200.
         """
         self._account_manager = account_manager
         self._repos = repos
         self._interval_sec = interval_sec
         self._hearing_timeout_hours = hearing_timeout_hours
         self._approve_comment = approve_comment
+        self._min_rate_limit_remaining = min_rate_limit_remaining
         self._last_poll: dict[str, datetime] = {}
         self._running = False
         # BUG #1: Track seen issue keys to avoid re-detecting as "new"
-        self._seen_issue_numbers: set[IssueKey] = set()
+        self._seen_issue_numbers: _BoundedSet = _BoundedSet()
         # BUG #3: Track seen reactions (repo_key, issue_number, comment_id)
-        self._seen_reactions: set[tuple[str, int, int]] = set()
+        self._seen_reactions: _BoundedSet = _BoundedSet()
         # BUG #4: General event deduplication
-        self._seen_events: set[str] = set()
-        # Memory leak prevention: periodic cache cleanup
-        self._last_cleanup: datetime | None = None
+        self._seen_events: _BoundedSet = _BoundedSet()
+        # 1サイクル内で list_pull_requests の結果をキャッシュ (state ごと)
+        self._pr_cache: dict[tuple[str, str], list[PullRequestSimple]] = {}
 
     async def start(self, event_queue: asyncio.Queue[PollEvent]) -> None:
         """ポーリングループを開始する.
@@ -174,14 +219,20 @@ class GitHubPoller:
         Returns:
             検知された PollEvent のリスト.
         """
-        self._cleanup_seen_caches()
         events: list[PollEvent] = []
         repo_key = f"{repo.owner}/{repo.repo}"
+        # 1サイクルごとに PR 一覧キャッシュをリセット (重複 list_pull_requests を防止)
+        self._pr_cache.clear()
+
+        client = await self._account_manager.get_client_for_repo(repo.owner, repo.repo)
+
+        # レート制限の残量が閾値を下回る場合はこのリポジトリのポーリングをスキップ
+        if not await self._has_rate_budget(client, repo_key):
+            return []
+
         since = self._last_poll.get(repo_key)
         self._last_poll[repo_key] = datetime.now(UTC)
         logger.debug("poll [%s]: start (since=%s)", repo_key, since.isoformat() if since else "first-run")
-
-        client = await self._account_manager.get_client_for_repo(repo.owner, repo.repo)
 
         # 1. 新規 Issue 検知
         new_issues = await self._detect_new_issues(client, repo)
@@ -497,7 +548,7 @@ class GitHubPoller:
             マージ済みの場合 True。
         """
         # closed PR からマージ済みを探す
-        closed_prs = await client.list_pull_requests(repo, state="closed")
+        closed_prs = await self._list_prs_cached(client, repo, "closed")
         for pr in closed_prs:
             if self._pr_references_issue(pr, issue.number):
                 merged_at = getattr(pr, "merged_at", None)
@@ -622,14 +673,64 @@ class GitHubPoller:
     # Cache / utility helpers
     # ------------------------------------------------------------------
 
-    def _cleanup_seen_caches(self) -> None:
-        """定期的にキャッシュをクリアする (メモリリーク防止)."""
-        now = datetime.now(UTC)
-        if self._last_cleanup is None or (now - self._last_cleanup).total_seconds() > 3600:
-            self._seen_events.clear()
-            self._seen_reactions.clear()
-            # Don't clear _seen_issue_numbers as they prevent re-detection of existing issues
-            self._last_cleanup = now
+    async def _has_rate_budget(self, client: GitHubClient, repo_key: str) -> bool:
+        """レート制限の残量が閾値以上あるかを確認する.
+
+        `/rate_limit` エンドポイントはレート制限を消費しないため、毎サイクル
+        呼び出してもコストはない。残量が閾値を下回る場合はポーリングを控え、
+        レート制限超過による GitHub の不正利用検知を回避する。
+
+        Args:
+            client: GitHub クライアント.
+            repo_key: "owner/repo" 形式のリポジトリキー (ログ用).
+
+        Returns:
+            残量が閾値以上、または取得に失敗した場合 True (続行)。
+            残量が閾値未満の場合 False (スキップ)。
+        """
+        try:
+            status = await client.get_rate_limit()
+        except Exception:
+            logger.debug("rate limit check failed for %s, continuing", repo_key, exc_info=True)
+            return True
+        if status.remaining < self._min_rate_limit_remaining:
+            logger.warning(
+                "Rate limit low for %s: remaining=%d (< %d). Skipping this poll cycle.",
+                repo_key,
+                status.remaining,
+                self._min_rate_limit_remaining,
+            )
+            return False
+        logger.debug("rate limit OK for %s: remaining=%d", repo_key, status.remaining)
+        return True
+
+    async def _list_prs_cached(
+        self,
+        client: GitHubClient,
+        repo: RepositoryConfig,
+        state: str = "open",
+    ) -> list[PullRequestSimple]:
+        """1サイクル内で PR 一覧をキャッシュして返す.
+
+        同一サイクル内では複数の検知メソッドが PR 一覧を必要とするため、
+        state ごとに1回だけ API を呼び出し、結果を使い回す。
+        キャッシュは `_poll_repo` の先頭でクリアされる。
+
+        Args:
+            client: GitHub クライアント.
+            repo: リポジトリ設定.
+            state: PR の状態フィルタ ("open" | "closed" | "all").
+
+        Returns:
+            PullRequestSimple のリスト.
+        """
+        repo_key = f"{repo.owner}/{repo.repo}"
+        cache_key = (repo_key, state)
+        cached = self._pr_cache.get(cache_key)
+        if cached is None:
+            cached = await client.list_pull_requests(repo, state=state)
+            self._pr_cache[cache_key] = cached
+        return cached
 
     @staticmethod
     def _pr_references_issue(pr: object, issue_number: int) -> bool:
@@ -690,11 +791,11 @@ class GitHubPoller:
             {"state": "approved"|"commented", "body": "review body"} のリスト.
         """
         # open PR を優先的にチェックし、見つからなければマージ済みもチェック
-        prs = await client.list_pull_requests(repo)
+        prs = await self._list_prs_cached(client, repo, "open")
         matching_prs = [pr for pr in prs if self._pr_references_issue(pr, issue.number)]
         if not matching_prs:
             # マージ済み PR も検索 (設計PRがマージされた場合の検知用)
-            closed_prs = await client.list_pull_requests(repo, state="closed")
+            closed_prs = await self._list_prs_cached(client, repo, "closed")
             matching_prs = [pr for pr in closed_prs if self._pr_references_issue(pr, issue.number)]
         approved: list[dict[str, str]] = []
         commented: list[dict[str, str]] = []
@@ -748,7 +849,7 @@ class GitHubPoller:
         Returns:
             "success" | "failure" | None
         """
-        prs = await client.list_pull_requests(repo)
+        prs = await self._list_prs_cached(client, repo, "open")
         for pr in prs:
             if self._pr_references_issue(pr, issue.number):
                 head_ref = getattr(pr, "head", None)
@@ -782,7 +883,7 @@ class GitHubPoller:
         try:
             # Issue に紐づく PR のブランチ名を取得
             branch: str | None = None
-            prs = await client.list_pull_requests(repo)
+            prs = await self._list_prs_cached(client, repo, "open")
             for pr in prs:
                 if self._pr_references_issue(pr, issue.number):
                     head_ref = getattr(pr, "head", None)

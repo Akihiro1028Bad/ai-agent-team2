@@ -940,3 +940,38 @@ async def test_get_pr_review_comments_returns_expected_fields(
     assert c["path"] == "src/foo.py"
     assert c["line"] == 99
     assert "created_at" in c
+
+
+# ──────────────────────────────────────
+# get_rate_limit テスト
+# ──────────────────────────────────────
+
+
+@respx.mock
+async def test_get_rate_limit_returns_status(
+    client: GitHubClient,
+) -> None:
+    """TC-GH-14: get_rate_limit が core リソースの残量を返すことを検証する."""
+    full = {"limit": 5000, "remaining": 5000, "reset": 1700000000, "used": 0}
+    core = {"limit": 5000, "remaining": 1234, "reset": 1700000000, "used": 3766}
+    respx.get("https://api.github.com/rate_limit").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "resources": {
+                    "core": core,
+                    "search": full,
+                    "graphql": full,
+                    "integration_manifest": full,
+                    "code_scanning_upload": full,
+                },
+                "rate": core,
+            },
+        )
+    )
+
+    status = await client.get_rate_limit()
+
+    assert status.remaining == 1234
+    assert status.limit == 5000
+    assert status.reset == 1700000000
