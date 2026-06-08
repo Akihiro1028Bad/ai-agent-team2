@@ -114,11 +114,11 @@ def test_save_atomic_write(
     assert "myorg/myapp:55" in content
 
 
-def test_load_skips_invalid_phase(
+def test_load_unknown_phase_falls_back_to_suspended(
     persistence: StatePersistence,
     state_file: Path,
 ) -> None:
-    """不正なPhase値を持つエントリがスキップされること."""
+    """不正なPhase値を持つエントリが SUSPENDED にフォールバックされること."""
     state_file.parent.mkdir(parents=True, exist_ok=True)
     data = {
         "org/repo:42": {
@@ -129,7 +129,7 @@ def test_load_skips_invalid_phase(
         },
         "org/repo:99": {
             "issue_number": 99,
-            "phase": "nonexistent-phase",  # 不正な値
+            "phase": "nonexistent-phase",  # 不正な値 → SUSPENDED へフォールバック
             "issue_type": "bug",
             "repo": "org/repo",
         },
@@ -139,7 +139,49 @@ def test_load_skips_invalid_phase(
     loaded = persistence.load()
 
     assert ("org/repo", 42) in loaded
-    assert ("org/repo", 99) not in loaded  # 不正なエントリはスキップ
+    assert loaded[("org/repo", 42)].phase == Phase.HEARING
+    assert ("org/repo", 99) in loaded  # スキップではなく SUSPENDED でロード
+    assert loaded[("org/repo", 99)].phase == Phase.SUSPENDED
+
+
+def test_load_planning_phase_falls_back_to_suspended(
+    persistence: StatePersistence,
+    state_file: Path,
+) -> None:
+    """廃止された planning / plan-validation フェーズが SUSPENDED にフォールバックされること."""
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "org/repo:10": {
+            "issue_number": 10,
+            "phase": "planning",  # 廃止済みフェーズ
+            "issue_type": "feature-m",
+            "repo": "org/repo",
+        },
+        "org/repo:11": {
+            "issue_number": 11,
+            "phase": "plan-validation",  # 廃止済みフェーズ
+            "issue_type": "feature-m",
+            "repo": "org/repo",
+        },
+        "org/repo:12": {
+            "issue_number": 12,
+            "phase": "design",  # 有効なフェーズ
+            "issue_type": "feature-m",
+            "repo": "org/repo",
+        },
+    }
+    state_file.write_text(json.dumps(data), encoding="utf-8")
+
+    loaded = persistence.load()
+
+    # 廃止済みフェーズは SUSPENDED にフォールバック（例外を投げない）
+    assert ("org/repo", 10) in loaded
+    assert loaded[("org/repo", 10)].phase == Phase.SUSPENDED
+    assert ("org/repo", 11) in loaded
+    assert loaded[("org/repo", 11)].phase == Phase.SUSPENDED
+    # 有効なフェーズはそのまま
+    assert ("org/repo", 12) in loaded
+    assert loaded[("org/repo", 12)].phase == Phase.DESIGN
 
 
 @pytest.mark.asyncio

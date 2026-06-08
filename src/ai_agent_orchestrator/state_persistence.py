@@ -67,8 +67,18 @@ class StatePersistence:
         states: dict[IssueKey, IssueState] = {}
         for k, v in data.items():
             try:
-                # Phase enum の復元
-                v["phase"] = Phase(v["phase"])
+                # Phase enum の復元。未知の値は SUSPENDED にフォールバック
+                # (例: 廃止された "planning" / "plan-validation" フェーズ)
+                raw_phase = v.get("phase", "")
+                try:
+                    v["phase"] = Phase(raw_phase)
+                except ValueError:
+                    logger.warning(
+                        "未知のフェーズ値 '%s' を SUSPENDED にフォールバック (key=%s)",
+                        raw_phase,
+                        k,
+                    )
+                    v["phase"] = Phase.SUSPENDED
                 # 新フォーマット "owner/repo:42" と旧フォーマット "42" の両方をサポート
                 if ":" in k and "/" in k.rsplit(":", 1)[0]:
                     # 新フォーマット: "owner/repo:42"
