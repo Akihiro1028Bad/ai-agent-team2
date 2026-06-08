@@ -107,3 +107,10 @@ class TestEnhancePrompt:
     def test_hearing_no_browser_verification(self) -> None:
         result = enhance_prompt(self.BASE, "hearing")
         assert "ブラウザ検証" not in result
+
+    def test_design_includes_test_requirements(self) -> None:
+        """design フェーズに _TEST_REQUIREMENTS が含まれること."""
+        result = enhance_prompt(self.BASE, "design")
+        assert "テスト要件" in result
+        assert "80%" in result
+        assert "pytest-asyncio" in result
