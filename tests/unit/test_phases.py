@@ -626,7 +626,9 @@ class TestDesignExecutor:
         await executor.process_result(request, result)
 
         # 再生成のため run_agent (FakeRunner.run) が呼ばれる (上限回数分)
-        assert mock_runner.run.call_count >= 1
+        from ai_agent_orchestrator.phases.design import _MAX_DESIGN_REVALIDATE
+
+        assert mock_runner.run.call_count == _MAX_DESIGN_REVALIDATE
         # 上限到達後は警告コメントが投稿される
         warn_calls = [
             call

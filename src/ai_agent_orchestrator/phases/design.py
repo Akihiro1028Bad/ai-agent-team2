@@ -196,8 +196,10 @@ class DesignExecutor(PhaseExecutor):
                 _MAX_DESIGN_REVALIDATE,
             )
             fix_prompt = (
-                f"docs/designs/issue-{request.issue_number}.md の ## サブタスク "
-                f"セクションに以下の問題があります。修正して commit/push してください:\n"
+                f"docs/designs/issue-{request.issue_number}.md を作成または修正し、"
+                f"## サブタスク セクション（### subtask-N: ＋ files/depends_on/description、"
+                f"連番・循環なし・テストファイル必須）を含めて commit/push してください。\n"
+                f"現在の問題点:\n"
                 + "\n".join(f"- {e}" for e in errors)
             )
             await self.run_agent(request, fix_prompt)
@@ -236,7 +238,7 @@ class DesignExecutor(PhaseExecutor):
             エラーメッセージのリスト。空リストなら検証OK。
         """
         if not design_path.exists():
-            return ["設計書 issue-N.md が見つかりません"]
+            return [f"設計書 {design_path.name} が見つかりません"]
         return validate_plan(design_path.read_text(encoding="utf-8"), worktree)
 
     async def _post_design_review_comment(
