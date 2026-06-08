@@ -166,6 +166,47 @@ async def test_read_impl_plan_missing(engine: ContextEngine, tmp_path: Path) -> 
     assert result is None
 
 
+async def test_read_impl_plan_unified_design_doc_priority(
+    engine: ContextEngine, tmp_path: Path
+) -> None:
+    """統合設計書 docs/designs/issue-N.md を最優先で読む."""
+    designs_dir = tmp_path / "docs" / "designs"
+    designs_dir.mkdir(parents=True)
+    (designs_dir / "issue-42.md").write_text(
+        "# Issue 42 設計書\n\n## サブタスク\n- [ ] タスク1\n- [ ] タスク2\n"
+    )
+    result = await engine.read_impl_plan(str(tmp_path), issue_number=42)
+    assert result is not None
+    assert "## サブタスク" in result
+    assert "タスク1" in result
+
+
+async def test_read_impl_plan_fallback_to_plan_md(
+    engine: ContextEngine, tmp_path: Path
+) -> None:
+    """統合設計書がない場合は issue-N-plan.md にフォールバックする."""
+    designs_dir = tmp_path / "docs" / "designs"
+    designs_dir.mkdir(parents=True)
+    (designs_dir / "issue-42-plan.md").write_text("# Issue 42 実装計画\nStep 1: ...\n")
+    result = await engine.read_impl_plan(str(tmp_path), issue_number=42)
+    assert result is not None
+    assert "Issue 42 実装計画" in result
+
+
+async def test_read_impl_plan_unified_design_takes_priority_over_plan(
+    engine: ContextEngine, tmp_path: Path
+) -> None:
+    """統合設計書と issue-N-plan.md が両方ある場合は統合設計書を優先する."""
+    designs_dir = tmp_path / "docs" / "designs"
+    designs_dir.mkdir(parents=True)
+    (designs_dir / "issue-42.md").write_text("# 統合設計書\n## サブタスク\n- [ ] 統合タスク\n")
+    (designs_dir / "issue-42-plan.md").write_text("# 計画書\nStep 1: ...\n")
+    result = await engine.read_impl_plan(str(tmp_path), issue_number=42)
+    assert result is not None
+    assert "統合設計書" in result
+    assert "計画書" not in result
+
+
 # ──────────────────────────────────────
 # _get_repo_structure テスト
 # ──────────────────────────────────────

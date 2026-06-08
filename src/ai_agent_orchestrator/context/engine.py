@@ -188,8 +188,8 @@ class ContextEngine:
     async def read_impl_plan(self, repo_path: str, issue_number: int | None = None) -> str | None:
         """実装計画を読み込む.
 
-        issue_number が指定されている場合は issue 固有の実装計画を優先的に探す。
-        計画フェーズが生成する docs/designs/issue-{N}-plan.md も検索対象に含む。
+        issue_number が指定されている場合は統合設計書 docs/designs/issue-{N}.md を
+        最優先で探す。後方互換として issue-{N}-plan.md も検索対象に含む。
 
         Args:
             repo_path: リポジトリのルートパス.
@@ -204,7 +204,8 @@ class ContextEngine:
         if issue_number is not None:
             candidates.extend(
                 [
-                    docs_dir / "designs" / f"issue-{issue_number}-plan.md",
+                    docs_dir / "designs" / f"issue-{issue_number}.md",
+                    docs_dir / "designs" / f"issue-{issue_number}-plan.md",  # 後方互換
                     docs_dir / f"impl-plan-issue-{issue_number}.md",
                 ]
             )
