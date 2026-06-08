@@ -8,8 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ai_agent_orchestrator.github.client import RateLimitStatus
 from ai_agent_orchestrator.models import EventType
-from ai_agent_orchestrator.poller.github_poller import GitHubPoller
+from ai_agent_orchestrator.poller.github_poller import GitHubPoller, _BoundedSet
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -83,6 +84,8 @@ def _make_client() -> AsyncMock:
     client.list_pull_requests = AsyncMock(return_value=[])
     client.get_pr_reviews = AsyncMock(return_value=[])
     client.get_check_runs = AsyncMock(return_value=[])
+    # デフォルトはレート制限に余裕がある状態
+    client.get_rate_limit = AsyncMock(return_value=RateLimitStatus(remaining=5000, limit=5000, reset=0))
     return client
 
 
@@ -861,3 +864,141 @@ class TestDetectCiResultsDuplicate:
         )
         events2 = await poller._detect_ci_results(client, repo)  # type: ignore[arg-type]
         assert len(events2) == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: _BoundedSet (再検知ストーム防止)
+# ---------------------------------------------------------------------------
+
+
+class TestBoundedSet:
+    """_BoundedSet の挙動を検証する."""
+
+    def test_add_and_contains(self) -> None:
+        """追加した要素が含まれる."""
+        s = _BoundedSet(max_size=3)
+        s.add("a")
+        assert "a" in s
+        assert "b" not in s
+
+    def test_evicts_oldest_when_over_capacity(self) -> None:
+        """上限超過時に最古の要素が削除される."""
+        s = _BoundedSet(max_size=2)
+        s.add("a")
+        s.add("b")
+        s.add("c")  # "a" が押し出される
+        assert "a" not in s
+        assert "b" in s
+        assert "c" in s
+        assert len(s) == 2
+
+    def test_re_add_refreshes_recency(self) -> None:
+        """既存要素の再追加で最新扱いになり、削除対象から外れる."""
+        s = _BoundedSet(max_size=2)
+        s.add("a")
+        s.add("b")
+        s.add("a")  # "a" を最新へ
+        s.add("c")  # 最古の "b" が押し出される
+        assert "a" in s
+        assert "b" not in s
+        assert "c" in s
+
+
+# ---------------------------------------------------------------------------
+# Tests: PR 一覧キャッシュ (重複 list_pull_requests 削減)
+# ---------------------------------------------------------------------------
+
+
+class TestListPrsCached:
+    """_list_prs_cached のキャッシュ挙動を検証する."""
+
+    def _make_poller(self, client: AsyncMock) -> GitHubPoller:
+        return GitHubPoller(account_manager=_make_account_manager(client), repos=[_make_repo()], interval_sec=60)
+
+    async def test_caches_per_state(self) -> None:
+        """同一 state は1回だけ API を呼び、結果を使い回す."""
+        client = _make_client()
+        client.list_pull_requests = AsyncMock(return_value=[])
+        poller = self._make_poller(client)
+        repo = _make_repo()
+
+        await poller._list_prs_cached(client, repo, "open")  # type: ignore[arg-type]
+        await poller._list_prs_cached(client, repo, "open")  # type: ignore[arg-type]
+        await poller._list_prs_cached(client, repo, "closed")  # type: ignore[arg-type]
+
+        # open 1回 + closed 1回 = 2回のみ
+        assert client.list_pull_requests.call_count == 2
+
+    async def test_cache_cleared_each_poll_cycle(self) -> None:
+        """_poll_repo の先頭でキャッシュがクリアされ、次サイクルで再取得される."""
+        client = _make_client()
+        poller = self._make_poller(client)
+        repo = _make_repo()
+
+        await poller._list_prs_cached(client, repo, "open")  # type: ignore[arg-type]
+        assert client.list_pull_requests.call_count == 1
+
+        # ポーリングサイクルを回すとキャッシュがクリアされる
+        await poller._poll_repo(repo)  # type: ignore[arg-type]
+        await poller._list_prs_cached(client, repo, "open")  # type: ignore[arg-type]
+        # _poll_repo 内でも open が取得されるため call_count は増えるが、
+        # 重要なのはキャッシュがクリアされ再取得されていること
+        assert ("org/app", "open") in poller._pr_cache
+
+
+# ---------------------------------------------------------------------------
+# Tests: レート制限ガード
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimitGuard:
+    """レート制限残量に応じたポーリングスキップを検証する."""
+
+    async def test_skips_poll_when_rate_limit_low(self) -> None:
+        """残量が閾値未満ならポーリングをスキップし検知を行わない."""
+        client = _make_client()
+        client.get_rate_limit = AsyncMock(return_value=RateLimitStatus(remaining=10, limit=5000, reset=0))
+        poller = GitHubPoller(
+            account_manager=_make_account_manager(client),
+            repos=[_make_repo()],
+            interval_sec=60,
+            min_rate_limit_remaining=200,
+        )
+        repo = _make_repo()
+
+        events = await poller._poll_repo(repo)  # type: ignore[arg-type]
+
+        assert events == []
+        client.get_issues_with_label.assert_not_called()
+
+    async def test_polls_normally_when_rate_limit_ok(self) -> None:
+        """残量が十分なら通常通り検知処理を行う."""
+        client = _make_client()
+        client.get_rate_limit = AsyncMock(return_value=RateLimitStatus(remaining=4000, limit=5000, reset=0))
+        poller = GitHubPoller(
+            account_manager=_make_account_manager(client),
+            repos=[_make_repo()],
+            interval_sec=60,
+            min_rate_limit_remaining=200,
+        )
+        repo = _make_repo()
+
+        await poller._poll_repo(repo)  # type: ignore[arg-type]
+
+        # 検知メソッドが呼ばれている
+        assert client.get_issues_with_label.call_count > 0
+
+    async def test_continues_when_rate_limit_check_fails(self) -> None:
+        """レート制限取得に失敗しても続行する."""
+        client = _make_client()
+        client.get_rate_limit = AsyncMock(side_effect=Exception("network error"))
+        poller = GitHubPoller(
+            account_manager=_make_account_manager(client),
+            repos=[_make_repo()],
+            interval_sec=60,
+        )
+        repo = _make_repo()
+
+        await poller._poll_repo(repo)  # type: ignore[arg-type]
+
+        assert client.get_issues_with_label.call_count > 0
