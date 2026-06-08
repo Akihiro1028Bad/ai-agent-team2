@@ -336,3 +336,29 @@ async def test_build_context_implement_no_design_doc_duplication(engine: Context
     assert "## 実装計画" in result
     # 実装計画セクションにはサブタスク構造が含まれる
     assert "### subtask-1: Route Handler" in result
+
+
+async def test_build_context_implement_separate_plan_file_included_in_full(
+    engine: ContextEngine, tmp_path: Path
+) -> None:
+    """後方互換: 設計書と実装計画が別ファイルの場合は実装計画を全文掲載する.
+
+    統合設計書 issue-N.md が無く、設計書(design.md)と計画(issue-N-plan.md)が
+    別ファイルで存在する旧構成では、impl_plan != design_doc となり else 分岐で
+    実装計画が全文掲載される。
+    """
+    docs = tmp_path / "docs"
+    designs = docs / "designs"
+    designs.mkdir(parents=True)
+    # 統合設計書(issue-42.md)は作らない。設計書は別ファイル design.md。
+    (docs / "design.md").write_text("# 設計書\n## 概要\n設計のみ。\n", encoding="utf-8")
+    plan_body = "# 実装計画\n## サブタスク\n### subtask-1: x\n- files: [`a.py`]\n- depends_on: []\n"
+    (designs / "issue-42-plan.md").write_text(plan_body, encoding="utf-8")
+
+    result = await engine.build_context(str(tmp_path), "Implement", "implement", issue_number=42)
+
+    # 設計書と実装計画は別ファイル → 実装計画は全文掲載される
+    assert "## 設計書" in result
+    assert "## 実装計画" in result
+    assert "### subtask-1: x" in result
+    assert "# 実装計画" in result  # plan.md の全文が載っている

@@ -145,7 +145,14 @@ class ContextEngine:
                     subtasks = _extract_subtask_section(impl_plan)
                     if subtasks:
                         parts.append(f"{IMPL_PLAN_HEADING}\n{subtasks}")
-                    # 抽出できない場合は設計書に全文があるため省略
+                    else:
+                        # 設計書に ## サブタスク が無い: 設計書全文は ## 設計書 に
+                        # 載っているため省略するが、追跡できるよう警告を残す。
+                        logger.warning(
+                            "設計書に ## サブタスク セクションがありません (issue_number=%s, phase=%s)",
+                            issue_number,
+                            phase,
+                        )
                 else:
                     parts.append(f"{IMPL_PLAN_HEADING}\n{impl_plan}")
             else:
