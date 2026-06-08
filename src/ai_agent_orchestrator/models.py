@@ -267,10 +267,8 @@ VALID_TRANSITIONS: dict[Phase, list[Phase]] = {
         Phase.SUSPENDED,
     ],
     Phase.DESIGN: [Phase.DESIGN_REVIEW, Phase.SUSPENDED],
-    Phase.DESIGN_REVIEW: [Phase.PLANNING, Phase.DESIGN_REVISE, Phase.SUSPENDED],
+    Phase.DESIGN_REVIEW: [Phase.IMPLEMENT, Phase.DESIGN_REVISE, Phase.SUSPENDED],
     Phase.DESIGN_REVISE: [Phase.DESIGN_REVIEW, Phase.SUSPENDED],
-    Phase.PLANNING: [Phase.PLAN_VALIDATION, Phase.SUSPENDED],
-    Phase.PLAN_VALIDATION: [Phase.IMPLEMENT, Phase.PLANNING, Phase.SUSPENDED],
     # Feature-L ワークフロー
     Phase.SPLIT_PROPOSAL: [Phase.SPLIT_EXECUTE, Phase.HEARING, Phase.SUSPENDED],
     Phase.SPLIT_EXECUTE: [Phase.DONE, Phase.SUSPENDED],

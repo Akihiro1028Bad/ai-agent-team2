@@ -90,13 +90,11 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
     # Feature-M workflow
     (Phase.DESIGN, Phase.DESIGN_REVIEW): "design_to_design_review",
     (Phase.DESIGN, Phase.SUSPENDED): "design_to_suspended",
-    (Phase.DESIGN_REVIEW, Phase.PLANNING): "design_review_to_planning",
+    (Phase.DESIGN_REVIEW, Phase.IMPLEMENT): "design_review_to_implement",
     (Phase.DESIGN_REVIEW, Phase.DESIGN_REVISE): "design_review_to_design_revise",
     (Phase.DESIGN_REVIEW, Phase.SUSPENDED): "design_review_to_suspended",
     (Phase.DESIGN_REVISE, Phase.DESIGN_REVIEW): "design_revise_to_design_review",
     (Phase.DESIGN_REVISE, Phase.SUSPENDED): "design_revise_to_suspended",
-    (Phase.PLANNING, Phase.IMPLEMENT): "planning_to_implement",
-    (Phase.PLANNING, Phase.SUSPENDED): "planning_to_suspended",
     # Feature-L workflow
     (Phase.SPLIT_PROPOSAL, Phase.SPLIT_EXECUTE): "split_proposal_to_split_execute",
     (Phase.SPLIT_PROPOSAL, Phase.HEARING): "split_proposal_to_hearing",
@@ -146,7 +144,7 @@ class IssueWorkflow(StateMachine):
     18 の State を定義し、タイプ別のガード関数で遷移を制御する。
     """
 
-    # --- States (18) ---
+    # --- States (17) ---
     type_detection = State("Type detection", initial=True)
     analysis = State("Analysis")
     fix = State("Fix")
@@ -155,7 +153,6 @@ class IssueWorkflow(StateMachine):
     design = State("Design")
     design_review = State("Design review")
     design_revise = State("Design revise")
-    planning = State("Planning")
     split_proposal = State("Split proposal")
     split_execute = State("Split execute")
     blocked = State("Blocked")
@@ -199,15 +196,12 @@ class IssueWorkflow(StateMachine):
     design_to_design_review = design.to(design_review)
     design_to_suspended = design.to(suspended)
 
-    design_review_to_planning = design_review.to(planning)
+    design_review_to_implement = design_review.to(implement)
     design_review_to_design_revise = design_review.to(design_revise)
     design_review_to_suspended = design_review.to(suspended)
 
     design_revise_to_design_review = design_revise.to(design_review)
     design_revise_to_suspended = design_revise.to(suspended)
-
-    planning_to_implement = planning.to(implement)
-    planning_to_suspended = planning.to(suspended)
 
     # --- Feature-L workflow ---
     split_proposal_to_split_execute = split_proposal.to(split_execute)
