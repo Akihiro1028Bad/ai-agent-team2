@@ -639,6 +639,62 @@ class TestDesignExecutor:
         # design-review へ進む
         mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
 
+    async def test_design_process_result_file_not_found_triggers_regeneration(
+        self,
+        tmp_path: Any,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """worktree に issue-N.md が存在しない場合、_validate_design_doc がファイル未検出エラーを返し、
+        _revalidate_design が run_agent による再生成を試み、上限到達後に警告コメントを投稿する。"""
+        worktree = tmp_path / "worktree_no_file"
+        # docs/designs ディレクトリは存在するが issue-1.md は作成しない
+        (worktree / "docs" / "designs").mkdir(parents=True)
+        mock_workspace.create_worktree.return_value = str(worktree)
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="設計PR #7 を作成しました",
+            tool_uses=[],
+            cost_usd=1.0,
+            duration_sec=60.0,
+        )
+        from ai_agent_orchestrator.phases.design import (
+            _MAX_DESIGN_REVALIDATE,
+            DesignExecutor,
+        )
+
+        executor = DesignExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="design", issue_number=1)
+        result = mock_runner.run.return_value
+        await executor.process_result(request, result)
+
+        # ファイル未検出 → 再生成が上限回数分試行される
+        assert mock_runner.run.call_count == _MAX_DESIGN_REVALIDATE
+
+        # 上限到達後は警告コメントが投稿される
+        warn_calls = [
+            call
+            for call in mock_github.create_comment.call_args_list
+            if "検証警告" in str(call.args[2])
+        ]
+        assert len(warn_calls) == 1, f"Expected 1 warning comment, got {len(warn_calls)}"
+
+        # それでも design-review への遷移は完了する
+        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+
 
 # ---------------------------------------------------------------------------
 # DesignReviseExecutor

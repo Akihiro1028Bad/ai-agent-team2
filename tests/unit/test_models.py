@@ -28,7 +28,7 @@ from ai_agent_orchestrator.models import (
 # ---------------------------------------------------------------------------
 
 
-def test_phase_has_19_values() -> None:
+def test_phase_has_18_values() -> None:
     assert len(Phase) == 18
 
 
