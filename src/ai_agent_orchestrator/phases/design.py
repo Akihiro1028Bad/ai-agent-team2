@@ -199,8 +199,7 @@ class DesignExecutor(PhaseExecutor):
                 f"docs/designs/issue-{request.issue_number}.md を作成または修正し、"
                 f"## サブタスク セクション（### subtask-N: ＋ files/depends_on/description、"
                 f"連番・循環なし・テストファイル必須）を含めて commit/push してください。\n"
-                f"現在の問題点:\n"
-                + "\n".join(f"- {e}" for e in errors)
+                f"現在の問題点:\n" + "\n".join(f"- {e}" for e in errors)
             )
             await self.run_agent(request, fix_prompt)
             await self._recover_uncommitted_work(request, branch_prefix="feature")

@@ -44,8 +44,7 @@ def validate_plan(plan_text: str, worktree_path: str) -> list[str]:
     section_match = _SUBTASK_SECTION.search(plan_text)
     if not section_match:
         errors.append(
-            "## サブタスク セクションが見つかりません。"
-            "設計書末尾に `## サブタスク` セクションを追加してください。"
+            "## サブタスク セクションが見つかりません。設計書末尾に `## サブタスク` セクションを追加してください。"
         )
         return errors
 

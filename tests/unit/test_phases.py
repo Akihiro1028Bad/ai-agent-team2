@@ -578,11 +578,7 @@ class TestDesignExecutor:
         state = mock_sm.get_state(1)
         assert state.design_pr_number == 5
         # 警告コメントは投稿されない (@claude /review のみ)
-        warn_calls = [
-            call
-            for call in mock_github.create_comment.call_args_list
-            if "検証警告" in str(call.args[2])
-        ]
+        warn_calls = [call for call in mock_github.create_comment.call_args_list if "検証警告" in str(call.args[2])]
         assert warn_calls == []
 
     async def test_design_process_result_regenerates_when_plan_invalid(
@@ -630,11 +626,7 @@ class TestDesignExecutor:
 
         assert mock_runner.run.call_count == _MAX_DESIGN_REVALIDATE
         # 上限到達後は警告コメントが投稿される
-        warn_calls = [
-            call
-            for call in mock_github.create_comment.call_args_list
-            if "検証警告" in str(call.args[2])
-        ]
+        warn_calls = [call for call in mock_github.create_comment.call_args_list if "検証警告" in str(call.args[2])]
         assert len(warn_calls) == 1
         # design-review へ進む
         mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
@@ -685,11 +677,7 @@ class TestDesignExecutor:
         assert mock_runner.run.call_count == _MAX_DESIGN_REVALIDATE
 
         # 上限到達後は警告コメントが投稿される
-        warn_calls = [
-            call
-            for call in mock_github.create_comment.call_args_list
-            if "検証警告" in str(call.args[2])
-        ]
+        warn_calls = [call for call in mock_github.create_comment.call_args_list if "検証警告" in str(call.args[2])]
         assert len(warn_calls) == 1, f"Expected 1 warning comment, got {len(warn_calls)}"
 
         # それでも design-review への遷移は完了する
