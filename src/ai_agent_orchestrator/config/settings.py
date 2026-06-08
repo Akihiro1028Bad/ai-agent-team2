@@ -50,7 +50,6 @@ class TimeoutsConfig(BaseModel):
     hearing_hours: int = 24
     hearing_phase_sec: int = 600
     design_phase_sec: int = 1800
-    planning_phase_sec: int = 600
     implement_phase_sec: int = 3600
     ci_fix_phase_sec: int = 1200
     revise_phase_sec: int = 1800
@@ -74,7 +73,6 @@ class CostLimitsConfig(BaseModel):
 
     hearing_usd: float = 1.0
     design_usd: float = 3.0
-    planning_usd: float = 1.0
     implement_usd: float = 10.0
     ci_fix_usd: float = 3.0
     revise_usd: float = 5.0

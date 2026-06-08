@@ -75,8 +75,6 @@ class Phase(str, Enum):  # noqa: UP042
     DESIGN = "design"
     DESIGN_REVIEW = "design-review"
     DESIGN_REVISE = "design-revise"
-    PLANNING = "planning"
-    PLAN_VALIDATION = "plan-validation"
 
     # Feature-L専用
     SPLIT_PROPOSAL = "split-proposal"
@@ -151,7 +149,7 @@ class AgentResult:
 class Subtask:
     """実装計画のサブタスク。
 
-    planning フェーズが出力した ## サブタスク セクションを
+    design フェーズが出力した ## サブタスク セクションを
     parse_subtasks() でパースした結果を保持する。
     """
 

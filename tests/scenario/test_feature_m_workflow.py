@@ -1,7 +1,7 @@
 """Scenario test: Feature-M workflow (real GitHub API + real Claude SDK).
 
 Flow: Issue → TYPE_DETECTION → HEARING → DESIGN → DESIGN_REVIEW → approve
-     → PLANNING → IMPLEMENT → CI → IMPL_REVIEW → PR merge → DONE
+     → IMPLEMENT → CI → IMPL_REVIEW → PR merge → DONE
 """
 
 from __future__ import annotations
@@ -228,7 +228,7 @@ class TestFeatureMWorkflow:
                 logger.info("DESIGN quality: %s", qr)
 
             # ---------------------------------------------------------------
-            # 5. DESIGN_REVIEW → approve → PLANNING
+            # 5. DESIGN_REVIEW → approve → IMPLEMENT (PLANNING フェーズ廃止)
             # ---------------------------------------------------------------
             if design_pr_number:
                 await approve_pr(github_client, repo_config, design_pr_number)
@@ -239,22 +239,10 @@ class TestFeatureMWorkflow:
                 issue=issue,
             )
             await event_router.route(approve_event)
-            assert state_machine.get_phase(issue_number) == Phase.PLANNING
-
-            # ---------------------------------------------------------------
-            # 6. PLANNING → IMPLEMENT
-            # ---------------------------------------------------------------
-            planning_request = TaskRequest(
-                issue_number=issue_number,
-                repo=repo_config,
-                phase=Phase.PLANNING.value,
-                priority=Priority.NORMAL,
-            )
-            await phase_executors["planning"].execute(planning_request)
             assert state_machine.get_phase(issue_number) == Phase.IMPLEMENT
 
             # ---------------------------------------------------------------
-            # 7. IMPLEMENT → IMPL_REVIEW
+            # 6. IMPLEMENT → IMPL_REVIEW
             # ---------------------------------------------------------------
             impl_request = TaskRequest(
                 issue_number=issue_number,

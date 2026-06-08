@@ -158,7 +158,7 @@ class TestEventRouterDesignPR:
         mock_sm: AsyncMock,
         mock_tq: AsyncMock,
     ) -> None:
-        """設計 PR approve -> IMPLEMENT へ遷移 (PLANNING をスキップ)."""
+        """設計 PR approve -> IMPLEMENT へ遷移する."""
         mock_sm.get_phase.return_value = Phase.DESIGN_REVIEW
         event = _make_event(EventType.DESIGN_PR_APPROVED)
         await router.route(event)

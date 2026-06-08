@@ -29,7 +29,7 @@ from ai_agent_orchestrator.models import (
 
 
 def test_phase_has_19_values() -> None:
-    assert len(Phase) == 20
+    assert len(Phase) == 18
 
 
 def test_phase_values() -> None:
@@ -42,8 +42,6 @@ def test_phase_values() -> None:
         "design",
         "design-review",
         "design-revise",
-        "planning",
-        "plan-validation",
         "split-proposal",
         "split-execute",
         "blocked",
@@ -298,7 +296,6 @@ def test_phase_config_dict_has_all_phases() -> None:
     from ai_agent_orchestrator.agents.claude_runner import PHASE_CONFIG
 
     assert "implement" in PHASE_CONFIG
-    assert "plan-validation" in PHASE_CONFIG
 
 
 def test_phase_config_implement_budget() -> None:

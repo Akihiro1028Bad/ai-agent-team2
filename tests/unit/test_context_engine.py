@@ -69,17 +69,6 @@ async def test_build_context_hearing_phase(engine: ContextEngine, repo: Path) ->
     assert "## 実装計画" not in result
 
 
-async def test_build_context_planning_phase(engine: ContextEngine, repo: Path) -> None:
-    """planning フェーズでは設計書も含む."""
-    result = await engine.build_context(str(repo), "Add new feature", "planning")
-
-    assert "## リポジトリ構造" in result
-    assert "## 設計書" in result
-    assert "Design Document" in result
-    # 実装計画は含まれない
-    assert "## 実装計画" not in result
-
-
 async def test_build_context_implement_phase(engine: ContextEngine, repo: Path) -> None:
     """implement フェーズでは設計書と実装計画を両方含む."""
     result = await engine.build_context(str(repo), "Implement the feature", "implement")

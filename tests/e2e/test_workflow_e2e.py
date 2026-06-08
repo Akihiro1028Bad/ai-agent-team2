@@ -144,7 +144,7 @@ class TestBugWorkflowE2E:
 # ---------------------------------------------------------------------------
 # Test: Feature-M (small feature) workflow E2E
 #   NEW_ISSUE -> TYPE_DETECTION -> (set type=feature-m) -> HEARING
-#   -> DESIGN -> DESIGN_REVIEW -> (PR approve) -> PLANNING -> IMPLEMENT
+#   -> DESIGN -> DESIGN_REVIEW -> (PR approve) -> IMPLEMENT
 #   -> CI pass -> IMPL_REVIEW -> (PR merge) -> DONE
 # ---------------------------------------------------------------------------
 
@@ -180,17 +180,13 @@ class TestSmallFeatureWorkflowE2E:
         await state_machine.transition(100, Phase.DESIGN_REVIEW)
         assert state_machine.get_phase(100) == Phase.DESIGN_REVIEW
 
-        # 5. DESIGN_PR_APPROVED -> PLANNING
+        # 5. DESIGN_PR_APPROVED -> IMPLEMENT (PLANNING フェーズ廃止)
         await event_router.route(_make_event(EventType.DESIGN_PR_APPROVED, repo_config, issue=issue))
-        assert state_machine.get_phase(100) == Phase.PLANNING
-        tasks = await _drain_queue(task_queue)
-        assert any(t.phase == Phase.PLANNING.value for t in tasks)
-
-        # 6. PLANNING -> IMPLEMENT
-        await state_machine.transition(100, Phase.IMPLEMENT)
         assert state_machine.get_phase(100) == Phase.IMPLEMENT
+        tasks = await _drain_queue(task_queue)
+        assert any(t.phase == Phase.IMPLEMENT.value for t in tasks)
 
-        # 7. CI success -> IMPL_REVIEW
+        # 6. CI success -> IMPL_REVIEW
         await event_router.route(
             _make_event(
                 EventType.CI_RESULT,
@@ -201,7 +197,7 @@ class TestSmallFeatureWorkflowE2E:
         )
         assert state_machine.get_phase(100) == Phase.IMPL_REVIEW
 
-        # 8. IMPL_PR_MERGED -> DONE (merge で完了判定)
+        # 7. IMPL_PR_MERGED -> DONE (merge で完了判定)
         await event_router.route(_make_event(EventType.IMPL_PR_MERGED, repo_config, issue=issue))
         assert state_machine.get_phase(100) == Phase.DONE
 
@@ -210,7 +206,6 @@ class TestSmallFeatureWorkflowE2E:
         phases_visited = [e["data"]["to"] for e in transitions]
         assert Phase.HEARING.value in phases_visited
         assert Phase.DESIGN.value in phases_visited
-        assert Phase.PLANNING.value in phases_visited
         assert Phase.IMPLEMENT.value in phases_visited
         assert Phase.DONE.value in phases_visited
 
@@ -218,7 +213,7 @@ class TestSmallFeatureWorkflowE2E:
 # ---------------------------------------------------------------------------
 # Test: Feature-M workflow E2E
 #   NEW_ISSUE -> TYPE_DETECTION -> (set type=feature-m) -> HEARING
-#   -> DESIGN -> DESIGN_REVIEW -> (PR approve) -> PLANNING -> IMPLEMENT
+#   -> DESIGN -> DESIGN_REVIEW -> (PR approve) -> IMPLEMENT
 #   -> CI pass -> IMPL_REVIEW -> (PR merge) -> DONE
 # ---------------------------------------------------------------------------
 
@@ -254,17 +249,13 @@ class TestFeatureMWorkflowE2E:
         await state_machine.transition(200, Phase.DESIGN_REVIEW)
         assert state_machine.get_phase(200) == Phase.DESIGN_REVIEW
 
-        # 5. DESIGN_PR_APPROVED -> PLANNING
+        # 5. DESIGN_PR_APPROVED -> IMPLEMENT (PLANNING フェーズ廃止)
         await event_router.route(_make_event(EventType.DESIGN_PR_APPROVED, repo_config, issue=issue))
-        assert state_machine.get_phase(200) == Phase.PLANNING
-        tasks = await _drain_queue(task_queue)
-        assert any(t.phase == Phase.PLANNING.value for t in tasks)
-
-        # 6. PLANNING -> IMPLEMENT
-        await state_machine.transition(200, Phase.IMPLEMENT)
         assert state_machine.get_phase(200) == Phase.IMPLEMENT
+        tasks = await _drain_queue(task_queue)
+        assert any(t.phase == Phase.IMPLEMENT.value for t in tasks)
 
-        # 7. CI success -> IMPL_REVIEW
+        # 6. CI success -> IMPL_REVIEW
         await event_router.route(
             _make_event(
                 EventType.CI_RESULT,
@@ -275,7 +266,7 @@ class TestFeatureMWorkflowE2E:
         )
         assert state_machine.get_phase(200) == Phase.IMPL_REVIEW
 
-        # 8. IMPL_PR_MERGED -> DONE (merge で完了判定)
+        # 7. IMPL_PR_MERGED -> DONE (merge で完了判定)
         await event_router.route(_make_event(EventType.IMPL_PR_MERGED, repo_config, issue=issue))
         assert state_machine.get_phase(200) == Phase.DONE
 
@@ -284,7 +275,7 @@ class TestFeatureMWorkflowE2E:
         phases_visited = [e["data"]["to"] for e in transitions]
         assert Phase.DESIGN.value in phases_visited
         assert Phase.DESIGN_REVIEW.value in phases_visited
-        assert Phase.PLANNING.value in phases_visited
+        assert Phase.IMPLEMENT.value in phases_visited
 
     async def test_feature_m_design_revision(
         self,
@@ -323,7 +314,7 @@ class TestFeatureMWorkflowE2E:
 
         # Now approve
         await event_router.route(_make_event(EventType.DESIGN_PR_APPROVED, repo_config, issue=issue))
-        assert state_machine.get_phase(201) == Phase.PLANNING
+        assert state_machine.get_phase(201) == Phase.IMPLEMENT
 
 
 # ---------------------------------------------------------------------------

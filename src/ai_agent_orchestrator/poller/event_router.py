@@ -524,7 +524,6 @@ class EventRouter:
 
         設計・実装は同一ブランチ (feature/issue-XX) の同一PRで管理するため、
         設計PRのマージは不要。承認後すぐに実装フェーズへ遷移する。
-        PLANNING / PLAN_VALIDATION フェーズは廃止。
         """
         if event.issue is None:
             raise ValueError(f"event.issue must not be None for event type {event.type}")

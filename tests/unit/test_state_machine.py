@@ -212,20 +212,6 @@ class TestFeatureMWorkflow:
         assert sm.get_phase(key) == Phase.IMPLEMENT
 
     @pytest.mark.asyncio
-    async def test_feature_m_design_review_to_planning_raises(self, sm: StateMachineManager) -> None:
-        """Feature-M: DESIGN_REVIEW -> PLANNING は InvalidTransitionError になること."""
-        sm.register_issue(24, "owner/repo")
-        key = _key(24)
-        sm.set_issue_type(key, "feature-m")
-
-        await sm.transition(key, Phase.HEARING)
-        await sm.transition(key, Phase.DESIGN)
-        await sm.transition(key, Phase.DESIGN_REVIEW)
-
-        with pytest.raises(InvalidTransitionError):
-            await sm.transition(key, Phase.PLANNING)
-
-    @pytest.mark.asyncio
     async def test_feature_m_design_revise(self, sm: StateMachineManager) -> None:
         """Feature-M: DESIGN_REVIEW -> DESIGN_REVISE -> DESIGN_REVIEW -> IMPLEMENT."""
         sm.register_issue(21, "owner/repo")

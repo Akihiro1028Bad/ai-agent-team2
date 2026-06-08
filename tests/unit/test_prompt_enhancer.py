@@ -40,11 +40,6 @@ class TestEnhancePrompt:
         assert "セキュリティ考慮事項" in result
         assert "コーディング規約" in result
 
-    def test_planning_includes_test_requirements(self) -> None:
-        result = enhance_prompt(self.BASE, "planning")
-        assert "テスト要件" in result
-        assert "80%" in result
-
     def test_impl_revise_includes_test_and_coding(self) -> None:
         result = enhance_prompt(self.BASE, "impl-revise")
         assert "テスト要件" in result

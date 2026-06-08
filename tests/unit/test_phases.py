@@ -682,42 +682,6 @@ class TestDesignReviseExecutor:
 
 
 # ---------------------------------------------------------------------------
-# PlanningExecutor
-# ---------------------------------------------------------------------------
-
-
-class TestPlanningExecutor:
-    """PlanningExecutor tests."""
-
-    async def test_transitions_to_implement(
-        self,
-        mock_runner: AsyncMock,
-        mock_github: AsyncMock,
-        mock_notifier: AsyncMock,
-        mock_tracker: AsyncMock,
-        mock_workspace: AsyncMock,
-        mock_context: AsyncMock,
-        mock_sm: AsyncMock,
-    ) -> None:
-        """実装計画作成後に PLAN_VALIDATION に遷移する。"""
-        from ai_agent_orchestrator.phases.planning import PlanningExecutor
-
-        executor = PlanningExecutor(
-            mock_runner,
-            mock_github,
-            mock_notifier,
-            mock_tracker,
-            mock_workspace,
-            mock_context,
-            mock_sm,
-        )
-        request = _make_request(phase="planning")
-        await executor.execute(request)
-
-        mock_sm.transition.assert_called_with(("org/app", 1), "plan-validation")
-
-
-# ---------------------------------------------------------------------------
 # ImplementExecutor
 # ---------------------------------------------------------------------------
 

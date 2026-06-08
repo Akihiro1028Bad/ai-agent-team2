@@ -78,7 +78,6 @@ _PHASE_SECTIONS: dict[str, list[str]] = {
     "impl-revise": [_TEST_REQUIREMENTS, _CODING_STANDARDS, _BROWSER_VERIFICATION],
     "design": [_DESIGN_TEST_STRATEGY, _DESIGN_SECURITY, _CODING_STANDARDS, _TEST_REQUIREMENTS],
     "design-revise": [_DESIGN_TEST_STRATEGY, _CODING_STANDARDS],
-    "planning": [_TEST_REQUIREMENTS],
 }
 
 # 強化対象外のフェーズ (hearing, type-detection 等) はマッピングに含めない

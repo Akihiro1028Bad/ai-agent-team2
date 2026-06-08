@@ -13,7 +13,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # 設計書・実装計画を参照するフェーズ (Phase enum の value と一致させること)
-_DESIGN_DOC_PHASES = frozenset({"planning", "implement", "ci-fix"})
+_DESIGN_DOC_PHASES = frozenset({"implement", "ci-fix"})
 _IMPL_PLAN_PHASES = frozenset({"implement", "ci-fix"})
 
 # コンテキストセクションの見出し定数 (implement.py 等で参照)
@@ -109,7 +109,7 @@ class ContextEngine:
                 file_list = "\n".join(f"- `{f}`" for f in relevant_files)
                 parts.append(f"## 関連ファイル\n{file_list}")
 
-        # 4. 設計書 (planning / implement / ci_fix フェーズ)
+        # 4. 設計書 (implement / ci_fix フェーズ)
         if phase in _DESIGN_DOC_PHASES:
             design_doc = await self._read_design_doc(worktree_path, issue_number)
             if design_doc:

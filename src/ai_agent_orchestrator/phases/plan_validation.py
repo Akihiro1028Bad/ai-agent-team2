@@ -1,108 +1,11 @@
-"""実装計画の妥当性チェックフェーズ.
+"""実装計画の妥当性チェックロジック (純粋関数).
 
-PLANNING → PLAN_VALIDATION → IMPLEMENT のフローで、
-計画の構造的妥当性を検証してから実装に進む。
+design.py が実装計画を生成後、その構造的妥当性を検証するために使用する。
 """
 
 from __future__ import annotations
 
-import logging
 import re
-from pathlib import Path
-
-from ai_agent_orchestrator.models import AgentResult, TaskRequest
-from ai_agent_orchestrator.phases.base import PhaseExecutor
-
-logger = logging.getLogger(__name__)
-
-# 差し戻し上限 (無限ループ防止)
-_MAX_REPLAN_COUNT = 2
-
-
-class PlanValidationExecutor(PhaseExecutor):
-    """実装計画の妥当性をチェックするフェーズ.
-
-    Claude を使わず、構造的な検証のみを行う軽量フェーズ。
-    """
-
-    async def build_prompt(self, request: TaskRequest) -> str:
-        """このフェーズでは Claude を実行しないため空文字を返す."""
-        return ""
-
-    async def run_agent(self, request: TaskRequest, prompt: str) -> AgentResult:
-        """Claude を実行せず、計画ファイルを直接検証する."""
-        worktree = await self._workspace.create_worktree(
-            request.repo,
-            request.issue_number,
-            branch_prefix="feature",
-        )
-
-        plan_path = Path(str(worktree)) / "docs" / "designs" / f"issue-{request.issue_number}-plan.md"
-        if not plan_path.exists():
-            msg = f"計画ファイルが見つかりません: {plan_path}. PLANNING フェーズが正常完了していない可能性があります。"
-            raise RuntimeError(msg)
-
-        plan_text = plan_path.read_text(encoding="utf-8")
-        errors = validate_plan(plan_text, str(worktree))
-
-        output = "OK" if not errors else "\n".join(errors)
-        return AgentResult(
-            session_id="",
-            output=output,
-            tool_uses=[],
-            cost_usd=0.0,
-            duration_sec=0.0,
-        )
-
-    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
-        """検証結果に基づいて IMPLEMENT or PLANNING に遷移する."""
-        client = await self._get_client(request.repo)
-
-        if result.output == "OK":
-            logger.info("Issue #%d: 計画検証OK → IMPLEMENT へ遷移", request.issue_number)
-            await client.replace_phase_label(request.repo, request.issue_number, "phase:implement")
-            await self._sm.transition(self._issue_key(request), "implement")
-            return
-
-        # 検証失敗: 差し戻し回数チェック
-        state = self._sm.get_state(self._issue_key(request))
-        replan_count = 0
-        if state:
-            replan_count = getattr(state, "replan_count", 0)
-
-        if replan_count >= _MAX_REPLAN_COUNT:
-            logger.warning(
-                "Issue #%d: 計画検証失敗 (%d回目) → 上限到達、警告付きで IMPLEMENT へ",
-                request.issue_number,
-                replan_count + 1,
-            )
-            await client.create_comment(
-                request.repo,
-                request.issue_number,
-                f"⚠️ 計画の検証に問題がありますが、差し戻し上限 ({_MAX_REPLAN_COUNT}回) に達したため実装に進みます。\n\n"
-                f"**検証結果:**\n{result.output}",
-            )
-            await client.replace_phase_label(request.repo, request.issue_number, "phase:implement")
-            await self._sm.transition(self._issue_key(request), "implement")
-            return
-
-        # 差し戻し: PLANNING へ (カウンターをインクリメント)
-        if state:
-            state.replan_count = replan_count + 1
-        logger.info(
-            "Issue #%d: 計画検証失敗 → PLANNING へ差し戻し (%d/%d)",
-            request.issue_number,
-            replan_count + 1,
-            _MAX_REPLAN_COUNT,
-        )
-        await client.create_comment(
-            request.repo,
-            request.issue_number,
-            f"📋 計画の検証で問題が見つかりました。再計画します。\n\n**検証結果:**\n{result.output}",
-        )
-        await client.replace_phase_label(request.repo, request.issue_number, "phase:planning")
-        await self._sm.transition(self._issue_key(request), "planning")
-
 
 # ---------------------------------------------------------------------------
 # 計画検証ロジック (純粋関数)

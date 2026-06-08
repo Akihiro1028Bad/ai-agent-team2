@@ -89,8 +89,6 @@ PHASE_CONFIG: dict[str, PhaseConfig] = {
         permission_mode="bypassPermissions",
         resume=True,
     ),
-    "planning": PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="bypassPermissions"),
-    "plan-validation": PhaseConfig(max_budget_usd=0.0, timeout_sec=60, permission_mode="plan"),
     "split-proposal": PhaseConfig(max_budget_usd=2.0, timeout_sec=600, permission_mode="bypassPermissions"),
     "implement": PhaseConfig(max_budget_usd=10.0, timeout_sec=3600, permission_mode="bypassPermissions"),
     "fix": PhaseConfig(max_budget_usd=5.0, timeout_sec=1800, permission_mode="bypassPermissions"),
