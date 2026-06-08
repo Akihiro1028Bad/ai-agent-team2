@@ -138,7 +138,7 @@ class EventRouter:
             HEARING_TIMEOUT     -> SUSPENDED 遷移
             PLAN_REACTION_ADDED -> Bug->FIX (👍で方針承認)
             PLAN_COMMENT_ADDED  -> Bug->ANALYSIS (方針指摘で再分析)
-            DESIGN_PR_APPROVED  -> PLANNING 遷移 + エンキュー
+            DESIGN_PR_APPROVED  -> IMPLEMENT 遷移 + エンキュー
             DESIGN_PR_COMMENTED -> DESIGN_REVISE 遷移 + エンキュー
             IMPL_PR_APPROVED    -> DONE 遷移 + エンキュー
             IMPL_PR_COMMENTED   -> IMPL_REVISE 遷移 + エンキュー
@@ -520,10 +520,11 @@ class EventRouter:
         )
 
     async def _handle_design_pr_approved(self, event: PollEvent) -> None:
-        """設計 PR approve: PLANNING へ遷移してエンキュー.
+        """設計 PR approve: IMPLEMENT へ遷移してエンキュー.
 
         設計・実装は同一ブランチ (feature/issue-XX) の同一PRで管理するため、
-        設計PRのマージは不要。承認後すぐに実装計画フェーズへ遷移する。
+        設計PRのマージは不要。承認後すぐに実装フェーズへ遷移する。
+        PLANNING / PLAN_VALIDATION フェーズは廃止。
         """
         if event.issue is None:
             raise ValueError(f"event.issue must not be None for event type {event.type}")
@@ -541,12 +542,12 @@ class EventRouter:
             f"{event.repo.owner}/{event.repo.repo}",
             "設計PR",
         )
-        await self._sm.transition(issue_key, Phase.PLANNING)
+        await self._sm.transition(issue_key, Phase.IMPLEMENT)
         await self._tq.enqueue(
             TaskRequest(
                 issue_number=event.issue.number,
                 repo=event.repo,
-                phase=Phase.PLANNING.value,
+                phase=Phase.IMPLEMENT.value,
                 priority=Priority.NORMAL,
             )
         )

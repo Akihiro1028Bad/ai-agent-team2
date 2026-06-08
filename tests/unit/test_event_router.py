@@ -152,19 +152,21 @@ class TestEventRouterPlanComment:
 class TestEventRouterDesignPR:
     """設計 PR イベントのテスト."""
 
-    async def test_design_pr_approved_routes_to_planning(
+    async def test_design_pr_approved_routes_to_implement(
         self,
         router: EventRouter,
         mock_sm: AsyncMock,
         mock_tq: AsyncMock,
     ) -> None:
-        """設計 PR approve -> PLANNING へ遷移."""
+        """設計 PR approve -> IMPLEMENT へ遷移 (PLANNING をスキップ)."""
         mock_sm.get_phase.return_value = Phase.DESIGN_REVIEW
         event = _make_event(EventType.DESIGN_PR_APPROVED)
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]
-        assert args[1].value == "planning"
+        assert args[1].value == "implement"
+        enqueued = mock_tq.enqueue.call_args[0][0]
+        assert enqueued.phase == Phase.IMPLEMENT.value
 
     async def test_design_pr_commented_routes_to_design_revise(
         self,
