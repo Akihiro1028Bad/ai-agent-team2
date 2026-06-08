@@ -20,6 +20,23 @@ _IMPL_PLAN_PHASES = frozenset({"implement", "ci-fix"})
 DESIGN_DOC_HEADING = "## 設計書"
 IMPL_PLAN_HEADING = "## 実装計画"
 
+# 設計書内の "## サブタスク" セクション抽出用 (implement.py の parse_subtasks と同一スコープ)
+_SUBTASK_SECTION_RE = re.compile(r"##\s+サブタスク.+?(?=\n##\s|\Z)", re.DOTALL)
+
+
+def _extract_subtask_section(text: str) -> str:
+    """設計書から '## サブタスク' セクション (見出しと本文) を抽出する.
+
+    Args:
+        text: 設計書全文.
+
+    Returns:
+        サブタスクセクション文字列。見つからなければ空文字。
+    """
+    match = _SUBTASK_SECTION_RE.search(text)
+    return match.group(0).strip() if match else ""
+
+
 # ディレクトリツリーで除外するパターン
 _IGNORE_DIRS = frozenset(
     {
@@ -110,6 +127,7 @@ class ContextEngine:
                 parts.append(f"## 関連ファイル\n{file_list}")
 
         # 4. 設計書 (implement / ci_fix フェーズ)
+        design_doc: str | None = None
         if phase in _DESIGN_DOC_PHASES:
             design_doc = await self._read_design_doc(worktree_path, issue_number)
             if design_doc:
@@ -121,7 +139,15 @@ class ContextEngine:
         if phase in _IMPL_PLAN_PHASES:
             impl_plan = await self.read_impl_plan(worktree_path, issue_number)
             if impl_plan:
-                parts.append(f"{IMPL_PLAN_HEADING}\n{impl_plan}")
+                # 計画を設計書に統合した結果、同一ファイルを読むケースでは
+                # 設計書全文の二重掲載を避け、## サブタスク セクションのみ載せる。
+                if design_doc is not None and impl_plan == design_doc:
+                    subtasks = _extract_subtask_section(impl_plan)
+                    if subtasks:
+                        parts.append(f"{IMPL_PLAN_HEADING}\n{subtasks}")
+                    # 抽出できない場合は設計書に全文があるため省略
+                else:
+                    parts.append(f"{IMPL_PLAN_HEADING}\n{impl_plan}")
             else:
                 logger.warning("実装計画が見つかりません (issue_number=%s, phase=%s)", issue_number, phase)
 

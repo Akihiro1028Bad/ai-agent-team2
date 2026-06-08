@@ -307,3 +307,32 @@ async def test_build_context_nonexistent_path(engine: ContextEngine, tmp_path: P
     result = await engine.build_context(str(tmp_path / "nonexistent"), "", "hearing")
     assert "## リポジトリ構造" in result
     assert "(directory not found)" in result
+
+
+async def test_build_context_implement_no_design_doc_duplication(engine: ContextEngine, tmp_path: Path) -> None:
+    """統合設計書(issue-N.md)を implement で読む際、設計書全文が二重掲載されないこと.
+
+    設計書と実装計画が同一ファイルに統合されたため、## 設計書 と ## 実装計画 の
+    両セクションに同じ全文が載るとトークンが肥大する。## 実装計画 側は
+    ## サブタスク セクションのみを載せる。
+    """
+    designs = tmp_path / "docs" / "designs"
+    designs.mkdir(parents=True)
+    body = (
+        "# 設計書\n\n## 概要\nプロフィール画面を追加する。\n\n"
+        "## アーキテクチャ\nServer/Client 分割。\n\n"
+        "## サブタスク\n\n"
+        "### subtask-1: Route Handler\n"
+        "- files: [`route.ts`, `route.test.ts`]\n"
+        "- depends_on: []\n"
+    )
+    (designs / "issue-42.md").write_text(body, encoding="utf-8")
+
+    result = await engine.build_context(str(tmp_path), "Implement", "implement", issue_number=42)
+
+    # 設計書見出しは1回だけ（## 設計書 として全文、## 実装計画 はサブタスクのみ）
+    assert result.count("## アーキテクチャ") == 1, "設計書本文が二重掲載されている"
+    assert "## 設計書" in result
+    assert "## 実装計画" in result
+    # 実装計画セクションにはサブタスク構造が含まれる
+    assert "### subtask-1: Route Handler" in result

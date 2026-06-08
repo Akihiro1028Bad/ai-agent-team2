@@ -6,12 +6,17 @@ import asyncio
 import json
 import logging
 import shutil
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from pathlib import Path
 
 from ai_agent_orchestrator.models import IssueKey, IssueState, Phase
 
 logger = logging.getLogger(__name__)
+
+# IssueState の既知フィールド名。旧バージョンが書き出した state.json に
+# 削除済みフィールド (例: replan_count) が残っていても TypeError でエントリが
+# drop されないよう、復元時に未知キーを除去するために使用する。
+_KNOWN_ISSUE_STATE_FIELDS: frozenset[str] = frozenset(f.name for f in fields(IssueState))
 
 
 class StatePersistence:
@@ -92,7 +97,10 @@ class StatePersistence:
                         logger.warning("旧形式エントリをスキップ (repo 情報なし): key=%s", k)
                         continue
                     issue_key = (repo, issue_number)
-                states[issue_key] = IssueState(**v)
+                # 削除済みフィールド等の未知キーを除去してから復元
+                # (旧 state.json の replan_count などで TypeError → drop を防ぐ)
+                known = {key: val for key, val in v.items() if key in _KNOWN_ISSUE_STATE_FIELDS}
+                states[issue_key] = IssueState(**known)
             except (ValueError, TypeError, KeyError):
                 continue  # 不正なエントリはスキップ
 

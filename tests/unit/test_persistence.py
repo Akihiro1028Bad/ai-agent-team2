@@ -156,12 +156,14 @@ def test_load_planning_phase_falls_back_to_suspended(
             "phase": "planning",  # 廃止済みフェーズ
             "issue_type": "feature-m",
             "repo": "org/repo",
+            "replan_count": 0,  # 旧バージョンが書き出した削除済みフィールド
         },
         "org/repo:11": {
             "issue_number": 11,
             "phase": "plan-validation",  # 廃止済みフェーズ
             "issue_type": "feature-m",
             "repo": "org/repo",
+            "replan_count": 1,  # 旧バージョンが書き出した削除済みフィールド
         },
         "org/repo:12": {
             "issue_number": 12,
@@ -182,6 +184,37 @@ def test_load_planning_phase_falls_back_to_suspended(
     # 有効なフェーズはそのまま
     assert ("org/repo", 12) in loaded
     assert loaded[("org/repo", 12)].phase == Phase.DESIGN
+
+
+def test_load_drops_removed_fields_without_dropping_entry(
+    persistence: StatePersistence,
+    state_file: Path,
+) -> None:
+    """削除済みフィールド (replan_count) を含む旧 state.json が drop されず復元されること.
+
+    旧バージョンは asdict で全フィールドを書き出すため、state.json に削除済みの
+    replan_count が残る。新コードの IssueState(**v) が TypeError を投げて
+    エントリごと drop される回帰を防ぐ。
+    """
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "org/repo:42": {
+            "issue_number": 42,
+            "phase": "implement",  # 有効なフェーズ
+            "issue_type": "feature-m",
+            "repo": "org/repo",
+            "replan_count": 2,  # 削除済みフィールド
+        },
+    }
+    state_file.write_text(json.dumps(data), encoding="utf-8")
+
+    loaded = persistence.load()
+
+    # エントリは drop されず、有効なフェーズのまま復元される (SUSPENDED ではない)
+    assert ("org/repo", 42) in loaded
+    assert loaded[("org/repo", 42)].phase == Phase.IMPLEMENT
+    assert loaded[("org/repo", 42)].issue_type == "feature-m"
+    assert not hasattr(loaded[("org/repo", 42)], "replan_count")
 
 
 @pytest.mark.asyncio
