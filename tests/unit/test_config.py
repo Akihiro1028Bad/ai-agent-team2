@@ -33,7 +33,6 @@ class TestTCC01Defaults:
         assert config.hearing_hours == 24
         assert config.hearing_phase_sec == 600
         assert config.design_phase_sec == 1800
-        assert config.planning_phase_sec == 600
         assert config.implement_phase_sec == 3600
         assert config.ci_fix_phase_sec == 1200
         assert config.revise_phase_sec == 1800
@@ -42,7 +41,6 @@ class TestTCC01Defaults:
         config = CostLimitsConfig()
         assert config.hearing_usd == 1.0
         assert config.design_usd == 3.0
-        assert config.planning_usd == 1.0
         assert config.implement_usd == 10.0
         assert config.ci_fix_usd == 3.0
         assert config.revise_usd == 5.0

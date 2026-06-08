@@ -185,7 +185,7 @@ class TestFeatureMWorkflow:
 
     @pytest.mark.asyncio
     async def test_feature_m_happy_path(self, sm: StateMachineManager) -> None:
-        """Feature-M: HEARING -> DESIGN -> DESIGN_REVIEW -> PLANNING -> IMPLEMENT -> IMPL_REVIEW -> DONE."""
+        """Feature-M: HEARING -> DESIGN -> DESIGN_REVIEW -> IMPLEMENT -> IMPL_REVIEW -> DONE."""
         sm.register_issue(20, "owner/repo")
         key = _key(20)
         sm.set_issue_type(key, "feature-m")
@@ -193,15 +193,27 @@ class TestFeatureMWorkflow:
         await sm.transition(key, Phase.HEARING)
         await sm.transition(key, Phase.DESIGN)
         await sm.transition(key, Phase.DESIGN_REVIEW)
-        await sm.transition(key, Phase.PLANNING)
         await sm.transition(key, Phase.IMPLEMENT)
         await sm.transition(key, Phase.IMPL_REVIEW)
         await sm.transition(key, Phase.DONE)
         assert sm.get_phase(key) == Phase.DONE
 
     @pytest.mark.asyncio
+    async def test_feature_m_design_review_to_implement(self, sm: StateMachineManager) -> None:
+        """Feature-M: DESIGN_REVIEW -> IMPLEMENT が成功すること（設計PR承認後の直接遷移）."""
+        sm.register_issue(23, "owner/repo")
+        key = _key(23)
+        sm.set_issue_type(key, "feature-m")
+
+        await sm.transition(key, Phase.HEARING)
+        await sm.transition(key, Phase.DESIGN)
+        await sm.transition(key, Phase.DESIGN_REVIEW)
+        await sm.transition(key, Phase.IMPLEMENT)
+        assert sm.get_phase(key) == Phase.IMPLEMENT
+
+    @pytest.mark.asyncio
     async def test_feature_m_design_revise(self, sm: StateMachineManager) -> None:
-        """Feature-M: DESIGN_REVIEW -> DESIGN_REVISE -> DESIGN_REVIEW -> PLANNING."""
+        """Feature-M: DESIGN_REVIEW -> DESIGN_REVISE -> DESIGN_REVIEW -> IMPLEMENT."""
         sm.register_issue(21, "owner/repo")
         key = _key(21)
         sm.set_issue_type(key, "feature-m")
@@ -211,8 +223,8 @@ class TestFeatureMWorkflow:
         await sm.transition(key, Phase.DESIGN_REVIEW)
         await sm.transition(key, Phase.DESIGN_REVISE)
         await sm.transition(key, Phase.DESIGN_REVIEW)
-        await sm.transition(key, Phase.PLANNING)
-        assert sm.get_phase(key) == Phase.PLANNING
+        await sm.transition(key, Phase.IMPLEMENT)
+        assert sm.get_phase(key) == Phase.IMPLEMENT
 
     @pytest.mark.asyncio
     async def test_feature_m_with_ci_fix(self, sm: StateMachineManager) -> None:
@@ -224,7 +236,6 @@ class TestFeatureMWorkflow:
         await sm.transition(key, Phase.HEARING)
         await sm.transition(key, Phase.DESIGN)
         await sm.transition(key, Phase.DESIGN_REVIEW)
-        await sm.transition(key, Phase.PLANNING)
         await sm.transition(key, Phase.IMPLEMENT)
         await sm.transition(key, Phase.CI_FIX)
         await sm.transition(key, Phase.IMPL_REVIEW)

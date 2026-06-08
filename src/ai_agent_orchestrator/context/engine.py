@@ -13,12 +13,29 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # 設計書・実装計画を参照するフェーズ (Phase enum の value と一致させること)
-_DESIGN_DOC_PHASES = frozenset({"planning", "implement", "ci-fix"})
+_DESIGN_DOC_PHASES = frozenset({"implement", "ci-fix"})
 _IMPL_PLAN_PHASES = frozenset({"implement", "ci-fix"})
 
 # コンテキストセクションの見出し定数 (implement.py 等で参照)
 DESIGN_DOC_HEADING = "## 設計書"
 IMPL_PLAN_HEADING = "## 実装計画"
+
+# 設計書内の "## サブタスク" セクション抽出用 (implement.py の parse_subtasks と同一スコープ)
+_SUBTASK_SECTION_RE = re.compile(r"##\s+サブタスク.+?(?=\n##\s|\Z)", re.DOTALL)
+
+
+def _extract_subtask_section(text: str) -> str:
+    """設計書から '## サブタスク' セクション (見出しと本文) を抽出する.
+
+    Args:
+        text: 設計書全文.
+
+    Returns:
+        サブタスクセクション文字列。見つからなければ空文字。
+    """
+    match = _SUBTASK_SECTION_RE.search(text)
+    return match.group(0).strip() if match else ""
+
 
 # ディレクトリツリーで除外するパターン
 _IGNORE_DIRS = frozenset(
@@ -109,7 +126,8 @@ class ContextEngine:
                 file_list = "\n".join(f"- `{f}`" for f in relevant_files)
                 parts.append(f"## 関連ファイル\n{file_list}")
 
-        # 4. 設計書 (planning / implement / ci_fix フェーズ)
+        # 4. 設計書 (implement / ci_fix フェーズ)
+        design_doc: str | None = None
         if phase in _DESIGN_DOC_PHASES:
             design_doc = await self._read_design_doc(worktree_path, issue_number)
             if design_doc:
@@ -121,7 +139,22 @@ class ContextEngine:
         if phase in _IMPL_PLAN_PHASES:
             impl_plan = await self.read_impl_plan(worktree_path, issue_number)
             if impl_plan:
-                parts.append(f"{IMPL_PLAN_HEADING}\n{impl_plan}")
+                # 計画を設計書に統合した結果、同一ファイルを読むケースでは
+                # 設計書全文の二重掲載を避け、## サブタスク セクションのみ載せる。
+                if design_doc is not None and impl_plan == design_doc:
+                    subtasks = _extract_subtask_section(impl_plan)
+                    if subtasks:
+                        parts.append(f"{IMPL_PLAN_HEADING}\n{subtasks}")
+                    else:
+                        # 設計書に ## サブタスク が無い: 設計書全文は ## 設計書 に
+                        # 載っているため省略するが、追跡できるよう警告を残す。
+                        logger.warning(
+                            "設計書に ## サブタスク セクションがありません (issue_number=%s, phase=%s)",
+                            issue_number,
+                            phase,
+                        )
+                else:
+                    parts.append(f"{IMPL_PLAN_HEADING}\n{impl_plan}")
             else:
                 logger.warning("実装計画が見つかりません (issue_number=%s, phase=%s)", issue_number, phase)
 
@@ -188,8 +221,8 @@ class ContextEngine:
     async def read_impl_plan(self, repo_path: str, issue_number: int | None = None) -> str | None:
         """実装計画を読み込む.
 
-        issue_number が指定されている場合は issue 固有の実装計画を優先的に探す。
-        計画フェーズが生成する docs/designs/issue-{N}-plan.md も検索対象に含む。
+        issue_number が指定されている場合は統合設計書 docs/designs/issue-{N}.md を
+        最優先で探す。後方互換として issue-{N}-plan.md も検索対象に含む。
 
         Args:
             repo_path: リポジトリのルートパス.
@@ -204,7 +237,8 @@ class ContextEngine:
         if issue_number is not None:
             candidates.extend(
                 [
-                    docs_dir / "designs" / f"issue-{issue_number}-plan.md",
+                    docs_dir / "designs" / f"issue-{issue_number}.md",
+                    docs_dir / "designs" / f"issue-{issue_number}-plan.md",  # 後方互換
                     docs_dir / f"impl-plan-issue-{issue_number}.md",
                 ]
             )

@@ -40,12 +40,6 @@ class TestGetPhaseMcpConfig:
         assert set(CONTEXT7_TOOLS).issubset(set(tools))
         assert set(SEQUENTIAL_THINKING_TOOLS).issubset(set(tools))
 
-    def test_planning_has_context7_sequential_thinking(self) -> None:
-        servers, _tools = get_phase_mcp_config("planning")
-        assert "context7" in servers
-        assert "sequential-thinking" in servers
-        assert "github" not in servers
-
     @_GITHUB_TOKEN_ENV
     def test_implement_has_context7_github_memory(self) -> None:
         servers, tools = get_phase_mcp_config("implement")
@@ -84,7 +78,6 @@ class TestGetPhaseMcpConfig:
         for phase in [
             "hearing",
             "design",
-            "planning",
             "implement",
             "ci-fix",
             "impl-revise",

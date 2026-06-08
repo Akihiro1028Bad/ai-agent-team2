@@ -183,13 +183,6 @@ _PHASE_MCP_MAP: dict[str, dict[str, Any]] = {
         },
         "tools": [*CONTEXT7_TOOLS, *SEQUENTIAL_THINKING_TOOLS, *FETCH_TOOLS, *SHADCN_UI_TOOLS, *MERMAID_TOOLS],
     },
-    "planning": {
-        "servers": {
-            "context7": CONTEXT7_SERVER,
-            "sequential-thinking": SEQUENTIAL_THINKING_SERVER,
-        },
-        "tools": [*CONTEXT7_TOOLS, *SEQUENTIAL_THINKING_TOOLS],
-    },
     "implement": {
         "servers": {
             "context7": CONTEXT7_SERVER,

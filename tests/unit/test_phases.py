@@ -523,6 +523,166 @@ class TestDesignExecutor:
         # DESIGN_REVIEW への遷移は完了している
         mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
 
+    async def test_design_process_result_creates_pr_when_plan_valid(
+        self,
+        tmp_path: Any,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """有効な ## サブタスク計画がある場合、再生成なしで PR 作成・遷移する。"""
+        worktree = tmp_path / "worktree"
+        design_dir = worktree / "docs" / "designs"
+        design_dir.mkdir(parents=True)
+        (design_dir / "issue-1.md").write_text(
+            "# 設計書\n\n本文。\n\n"
+            "## サブタスク\n\n"
+            "### subtask-1: 型定義\n"
+            "- files: [`src/a.py`, `tests/test_a.py`]\n"
+            "- depends_on: []\n"
+            "- description: 型を定義する\n",
+            encoding="utf-8",
+        )
+        mock_workspace.create_worktree.return_value = str(worktree)
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="設計PR #5 を作成しました",
+            tool_uses=[],
+            cost_usd=1.0,
+            duration_sec=60.0,
+        )
+        from ai_agent_orchestrator.phases.design import DesignExecutor
+
+        executor = DesignExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="design")
+        result = mock_runner.run.return_value
+        await executor.process_result(request, result)
+
+        # 計画が有効なので再生成 (run_agent) は呼ばれない
+        mock_runner.run.assert_not_called()
+        # phase:design-review ラベル設定・design-review 遷移・PR 作成
+        mock_github.replace_phase_label.assert_called_with(request.repo, 1, "phase:design-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+        state = mock_sm.get_state(1)
+        assert state.design_pr_number == 5
+        # 警告コメントは投稿されない (@claude /review のみ)
+        warn_calls = [call for call in mock_github.create_comment.call_args_list if "検証警告" in str(call.args[2])]
+        assert warn_calls == []
+
+    async def test_design_process_result_regenerates_when_plan_invalid(
+        self,
+        tmp_path: Any,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """## サブタスクが無い (検証NG) 場合、再生成され上限到達で警告続行する。"""
+        worktree = tmp_path / "worktree"
+        design_dir = worktree / "docs" / "designs"
+        design_dir.mkdir(parents=True)
+        # ## サブタスク を含まない → 検証NG (再生成しても直らない設定)
+        (design_dir / "issue-1.md").write_text("# 設計書\n\n本文のみ。\n", encoding="utf-8")
+        mock_workspace.create_worktree.return_value = str(worktree)
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="設計PR #5 を作成しました",
+            tool_uses=[],
+            cost_usd=1.0,
+            duration_sec=60.0,
+        )
+        from ai_agent_orchestrator.phases.design import DesignExecutor
+
+        executor = DesignExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="design")
+        result = mock_runner.run.return_value
+        await executor.process_result(request, result)
+
+        # 再生成のため run_agent (FakeRunner.run) が呼ばれる (上限回数分)
+        from ai_agent_orchestrator.phases.design import _MAX_DESIGN_REVALIDATE
+
+        assert mock_runner.run.call_count == _MAX_DESIGN_REVALIDATE
+        # 上限到達後は警告コメントが投稿される
+        warn_calls = [call for call in mock_github.create_comment.call_args_list if "検証警告" in str(call.args[2])]
+        assert len(warn_calls) == 1
+        # design-review へ進む
+        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+
+    async def test_design_process_result_file_not_found_triggers_regeneration(
+        self,
+        tmp_path: Any,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """worktree に issue-N.md が存在しない場合、_validate_design_doc がファイル未検出エラーを返し、
+        _revalidate_design が run_agent による再生成を試み、上限到達後に警告コメントを投稿する。"""
+        worktree = tmp_path / "worktree_no_file"
+        # docs/designs ディレクトリは存在するが issue-1.md は作成しない
+        (worktree / "docs" / "designs").mkdir(parents=True)
+        mock_workspace.create_worktree.return_value = str(worktree)
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="設計PR #7 を作成しました",
+            tool_uses=[],
+            cost_usd=1.0,
+            duration_sec=60.0,
+        )
+        from ai_agent_orchestrator.phases.design import (
+            _MAX_DESIGN_REVALIDATE,
+            DesignExecutor,
+        )
+
+        executor = DesignExecutor(
+            mock_runner,
+            mock_github,
+            mock_notifier,
+            mock_tracker,
+            mock_workspace,
+            mock_context,
+            mock_sm,
+        )
+        request = _make_request(phase="design", issue_number=1)
+        result = mock_runner.run.return_value
+        await executor.process_result(request, result)
+
+        # ファイル未検出 → 再生成が上限回数分試行される
+        assert mock_runner.run.call_count == _MAX_DESIGN_REVALIDATE
+
+        # 上限到達後は警告コメントが投稿される
+        warn_calls = [call for call in mock_github.create_comment.call_args_list if "検証警告" in str(call.args[2])]
+        assert len(warn_calls) == 1, f"Expected 1 warning comment, got {len(warn_calls)}"
+
+        # それでも design-review への遷移は完了する
+        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+
 
 # ---------------------------------------------------------------------------
 # DesignReviseExecutor
@@ -563,42 +723,6 @@ class TestDesignReviseExecutor:
         mock_runner.run.assert_called_once()
         call_kwargs = mock_runner.run.call_args.kwargs
         assert call_kwargs["resume_session_id"] == "prev-session"
-
-
-# ---------------------------------------------------------------------------
-# PlanningExecutor
-# ---------------------------------------------------------------------------
-
-
-class TestPlanningExecutor:
-    """PlanningExecutor tests."""
-
-    async def test_transitions_to_implement(
-        self,
-        mock_runner: AsyncMock,
-        mock_github: AsyncMock,
-        mock_notifier: AsyncMock,
-        mock_tracker: AsyncMock,
-        mock_workspace: AsyncMock,
-        mock_context: AsyncMock,
-        mock_sm: AsyncMock,
-    ) -> None:
-        """実装計画作成後に PLAN_VALIDATION に遷移する。"""
-        from ai_agent_orchestrator.phases.planning import PlanningExecutor
-
-        executor = PlanningExecutor(
-            mock_runner,
-            mock_github,
-            mock_notifier,
-            mock_tracker,
-            mock_workspace,
-            mock_context,
-            mock_sm,
-        )
-        request = _make_request(phase="planning")
-        await executor.execute(request)
-
-        mock_sm.transition.assert_called_with(("org/app", 1), "plan-validation")
 
 
 # ---------------------------------------------------------------------------

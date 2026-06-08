@@ -37,7 +37,6 @@ _NEXT_ACTION: dict[str, str] = {
     "design": "",
     "design-review": "",
     "design-revise": "📋 **次のアクション**: 設計PRで**再レビュー**をお願いします",
-    "planning": "",
     "implement": "",
     "impl-review": "",
     "impl-revise": "📋 **次のアクション**: 実装PRで**再レビュー**をお願いします",
@@ -86,7 +85,6 @@ class IssueStateData(Protocol):
     branch_head_sha: str | None
     impl_iteration: int
     retry_count: int
-    replan_count: int
 
 
 @runtime_checkable

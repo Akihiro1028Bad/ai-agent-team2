@@ -75,8 +75,6 @@ class Phase(str, Enum):  # noqa: UP042
     DESIGN = "design"
     DESIGN_REVIEW = "design-review"
     DESIGN_REVISE = "design-revise"
-    PLANNING = "planning"
-    PLAN_VALIDATION = "plan-validation"
 
     # Feature-L専用
     SPLIT_PROPOSAL = "split-proposal"
@@ -151,7 +149,7 @@ class AgentResult:
 class Subtask:
     """実装計画のサブタスク。
 
-    planning フェーズが出力した ## サブタスク セクションを
+    design フェーズが出力した ## サブタスク セクションを
     parse_subtasks() でパースした結果を保持する。
     """
 
@@ -201,7 +199,6 @@ class IssueState:
     pr_number: int | None = None
     design_pr_number: int | None = None
     retry_count: int = 0
-    replan_count: int = 0
     branch_head_sha: str | None = None
     impl_iteration: int = 0
     created_at: str = ""
@@ -267,10 +264,8 @@ VALID_TRANSITIONS: dict[Phase, list[Phase]] = {
         Phase.SUSPENDED,
     ],
     Phase.DESIGN: [Phase.DESIGN_REVIEW, Phase.SUSPENDED],
-    Phase.DESIGN_REVIEW: [Phase.PLANNING, Phase.DESIGN_REVISE, Phase.SUSPENDED],
+    Phase.DESIGN_REVIEW: [Phase.IMPLEMENT, Phase.DESIGN_REVISE, Phase.SUSPENDED],
     Phase.DESIGN_REVISE: [Phase.DESIGN_REVIEW, Phase.SUSPENDED],
-    Phase.PLANNING: [Phase.PLAN_VALIDATION, Phase.SUSPENDED],
-    Phase.PLAN_VALIDATION: [Phase.IMPLEMENT, Phase.PLANNING, Phase.SUSPENDED],
     # Feature-L ワークフロー
     Phase.SPLIT_PROPOSAL: [Phase.SPLIT_EXECUTE, Phase.HEARING, Phase.SUSPENDED],
     Phase.SPLIT_EXECUTE: [Phase.DONE, Phase.SUSPENDED],
