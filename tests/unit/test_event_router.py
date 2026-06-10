@@ -828,3 +828,79 @@ class TestEventRouterLogging:
         debug_text = "\n".join(r.message for r in caplog.records if r.levelno == logging.DEBUG)
         assert "42" in debug_text
         assert "org/app" in debug_text
+
+
+class TestImplPrCommentedDeferredReplayDedup:
+    """延期イベント再生時、新規コメントが無ければ再エンキューしない (U2 実走で発見)."""
+
+    @pytest.fixture
+    def mock_client(self) -> AsyncMock:
+        client = AsyncMock()
+        client.get_pr_review_comments = AsyncMock(
+            return_value=[
+                {"id": 101, "user": {"login": "u"}, "body": "指摘A", "path": "a.py", "line": 1},
+                {"id": 102, "user": {"login": "u"}, "body": "指摘B", "path": "b.py", "line": 2},
+            ]
+        )
+        return client
+
+    @pytest.fixture
+    def router(self, mock_client: AsyncMock) -> tuple[EventRouter, AsyncMock, AsyncMock]:
+        sm = AsyncMock()
+        sm.register_issue = MagicMock()
+        sm.get_phase = MagicMock(return_value=Phase.IMPL_REVIEW)
+        sm.get_issue_type = MagicMock(return_value="feature-m")
+        state = MagicMock()
+        state.pr_number = 10
+        sm.get_state = MagicMock(return_value=state)
+        tq = AsyncMock()
+        am = AsyncMock()
+        am.get_client_for_repo = AsyncMock(return_value=mock_client)
+        return EventRouter(sm, tq, account_manager=am), sm, tq
+
+    async def test_replay_with_no_new_comments_is_skipped(
+        self, router: tuple[EventRouter, AsyncMock, AsyncMock]
+    ) -> None:
+        """同じコメント集合での再ルーティングは遷移・エンキューしない."""
+        r, sm, tq = router
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "x"})
+
+        await r.route(event)  # 1回目: 通常処理
+        await r.route(event)  # 2回目 (延期再生相当): 新規コメントなし
+
+        assert tq.enqueue.call_count == 1
+        assert sm.transition.call_count == 1
+
+    async def test_replay_with_new_comment_is_processed(
+        self,
+        router: tuple[EventRouter, AsyncMock, AsyncMock],
+        mock_client: AsyncMock,
+    ) -> None:
+        """新しいコメントが増えていれば再エンキューされる."""
+        r, _sm, tq = router
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "x"})
+
+        await r.route(event)
+        mock_client.get_pr_review_comments.return_value = [
+            *mock_client.get_pr_review_comments.return_value,
+            {"id": 103, "user": {"login": "u"}, "body": "追加質問", "path": "c.py", "line": 3},
+        ]
+        await r.route(event)
+
+        assert tq.enqueue.call_count == 2
+
+    async def test_enqueue_duplicate_skip_does_not_mark_handled(
+        self,
+        router: tuple[EventRouter, AsyncMock, AsyncMock],
+    ) -> None:
+        """キューが重複スキップ (False) した場合は handled に記録せず、再生時に再試行する."""
+        r, _sm, tq = router
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "x"})
+
+        tq.enqueue.return_value = False  # 実行中のため重複スキップ
+        await r.route(event)
+        tq.enqueue.return_value = True  # タスク完了後の再生では受理される
+        await r.route(event)
+
+        # 2回目で実際にエンキューされる（handled 誤記録による喪失がない）
+        assert tq.enqueue.call_count == 2

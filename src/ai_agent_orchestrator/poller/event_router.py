@@ -97,6 +97,9 @@ class EventRouter:
         self._account_manager = account_manager
         self._notifier = notifier
         self._guard = execution_guard
+        # impl-revise に渡し済みのレビューコメント ID（延期イベント再生時の
+        # 二重実行防止。インメモリのため再起動後の初回は再実行され得るが許容）
+        self._handled_review_comment_ids: dict[IssueKey, set[int]] = {}
 
     @staticmethod
     def _issue_key_from_event(event: PollEvent) -> IssueKey:
@@ -661,9 +664,20 @@ class EventRouter:
 
         comment_ids = [c["id"] for c in all_review_comments]
 
+        # 延期イベント再生の二重実行防止: 収集したコメントが全て処理済みなら
+        # 再エンキューしない（先行タスクが全コメント包含で対応済みのため）
+        handled = self._handled_review_comment_ids.get(issue_key, set())
+        if comment_ids and set(comment_ids) <= handled:
+            logger.info(
+                "Issue #%d: no new review comments (%d already handled), skipping re-enqueue",
+                event.issue.number,
+                len(comment_ids),
+            )
+            return
+
         # フェーズ遷移・エンキュー（先に確定させる）
         await self._sm.transition(issue_key, Phase.IMPL_REVISE)
-        await self._tq.enqueue(
+        accepted = await self._tq.enqueue(
             TaskRequest(
                 issue_number=event.issue.number,
                 repo=event.repo,
@@ -672,9 +686,21 @@ class EventRouter:
                 extra={
                     "comments": comments_text,
                     "review_comment_ids": comment_ids,
+                    # 構造化リスト（U2: 修正要求/質問の分類と ID 対応付けに使用）
+                    "review_comments": all_review_comments,
                 },
             )
         )
+        if accepted is False:
+            # キュー側で重複スキップされた場合は処理済みとして記録しない。
+            # 記録すると次回の延期再生時に「処理済み」と誤判定され、
+            # このコメントへの対応が永久に行われなくなる。
+            logger.info(
+                "Issue #%d: enqueue was skipped as duplicate, leaving comments unhandled for retry",
+                event.issue.number,
+            )
+            return
+        self._handled_review_comment_ids[issue_key] = handled | set(comment_ids)
 
         # 着手通知: 遷移・エンキュー成功後に各レビューコメントのスレッドへ返信
         # （遷移失敗時は例外が上位に伝播するため、ここに到達した場合は必ず修正が開始される）

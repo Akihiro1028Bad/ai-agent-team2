@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -181,6 +181,9 @@ class TaskRequest:
     repo: str
     phase: Phase
     priority: int = 5
+    # フェーズ実行に必要な付帯情報 (review_comment_ids / ci_logs 等)。
+    # task_queue.TaskRequest.extra から dispatch 経由で透過される
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def __lt__(self, other: TaskRequest) -> bool:
         """PriorityQueue での優先度比較。値が小さいほど優先。"""

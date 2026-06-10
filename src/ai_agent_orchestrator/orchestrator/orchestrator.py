@@ -77,6 +77,7 @@ class PhaseDispatcher(Protocol):
         worktree_path: str,
         context: str,
         resume_session_id: str | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> PhaseResultLike:
         """Execute a phase and return the result."""
         ...
@@ -191,6 +192,7 @@ class NullPhaseDispatcher:
         worktree_path: str,
         context: str,
         resume_session_id: str | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> _NullPhaseResult:
         """Return a no-op result."""
         logger.info("[NullPhaseDispatcher] phase=%s issue=#%d", phase, issue_number)
@@ -245,6 +247,7 @@ class _RealPhaseDispatcherAdapter:
         worktree_path: str,
         context: str,
         resume_session_id: str | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> _NullPhaseResult:
         """Dispatch phase execution via the real PhaseDispatcher.
 
@@ -266,6 +269,7 @@ class _RealPhaseDispatcherAdapter:
             issue_number=issue_number,
             repo=repo,  # type: ignore[arg-type]
             phase=phase_enum,
+            extra=extra or {},
         )
         await self._concrete.execute(request)
         return _NullPhaseResult()
@@ -827,6 +831,7 @@ class Orchestrator:
                     worktree_path=worktree_path,
                     context=context,
                     resume_session_id=task.extra.get("resume_session_id"),
+                    extra=task.extra,
                 )
             logger.debug(
                 "issue #%d: phase=%s dispatch returned (next_phase=%s, cost=$%s)",

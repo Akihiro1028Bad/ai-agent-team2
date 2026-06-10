@@ -1002,3 +1002,89 @@ class TestRateLimitGuard:
         await poller._poll_repo(repo)  # type: ignore[arg-type]
 
         assert client.get_issues_with_label.call_count > 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: _detect_pr_events (インラインのみレビューの検知 / U2)
+# ---------------------------------------------------------------------------
+
+
+class TestDetectPrEventsInlineOnlyReview:
+    """body 空の COMMENTED レビュー（インラインコメントのみ）の検知."""
+
+    def _setup(
+        self,
+        reviews: list[dict[str, object]],
+        review_comments: list[dict[str, object]],
+    ) -> tuple[AsyncMock, MagicMock, GitHubPoller]:
+        client = _make_client()
+        impl_issue = _make_issue(number=131, labels=["ai-agent", "phase:impl-review"])
+        # design-review(0件) → impl-review(1件) の順で呼ばれる
+        client.get_issues_with_label = AsyncMock(side_effect=[[], [impl_issue]])
+        pr = MagicMock()
+        pr.number = 132
+        pr.title = "修正: #131 テスト"
+        pr.body = "Closes #131"
+        pr.merged_at = None
+        pr.merged = False
+        pr.head = MagicMock(ref="feature/issue-131")
+        client.list_pull_requests = AsyncMock(return_value=[pr])
+        client.get_pr_reviews = AsyncMock(return_value=reviews)
+        client.get_pr_review_comments = AsyncMock(return_value=review_comments)
+        client.list_comments = AsyncMock(return_value=[])
+        repo = _make_repo()
+        am = _make_account_manager(client)
+        poller = GitHubPoller(account_manager=am, repos=[repo], interval_sec=60)
+        return client, repo, poller
+
+    async def test_inline_only_review_is_detected(self) -> None:
+        """body 空でもトップレベルのインラインコメントがあれば IMPL_PR_COMMENTED."""
+        reviews = [{"id": 900, "state": "COMMENTED", "body": "", "submitted_at": "2026-06-10T09:00:00Z"}]
+        comments = [
+            {
+                "id": 100,
+                "body": "質問です: この実装の意図は？",
+                "user": {"login": "alice"},
+                "path": "a.py",
+                "line": 3,
+                "pull_request_review_id": 900,
+                "in_reply_to_id": None,
+            }
+        ]
+        client, repo, poller = self._setup(reviews, comments)
+
+        events = await poller._detect_pr_events(client, repo, None)
+
+        impl_events = [e for e in events if e.type == EventType.IMPL_PR_COMMENTED]
+        assert len(impl_events) == 1
+        assert impl_events[0].issue.number == 131
+
+    async def test_reply_only_review_is_ignored(self) -> None:
+        """返信（in_reply_to_id あり）だけのレビューは検知しない（bot 応答ループ防止）."""
+        reviews = [{"id": 901, "state": "COMMENTED", "body": "", "submitted_at": "2026-06-10T09:01:00Z"}]
+        comments = [
+            {
+                "id": 101,
+                "body": "回答しました",
+                "user": {"login": "bot"},
+                "path": "a.py",
+                "line": 3,
+                "pull_request_review_id": 901,
+                "in_reply_to_id": 100,
+            }
+        ]
+        client, repo, poller = self._setup(reviews, comments)
+
+        events = await poller._detect_pr_events(client, repo, None)
+
+        assert [e for e in events if e.type == EventType.IMPL_PR_COMMENTED] == []
+
+    async def test_body_review_still_detected_without_extra_fetch(self) -> None:
+        """本文ありレビューは従来通り検知される（インライン照会は不要）."""
+        reviews = [{"id": 902, "state": "COMMENTED", "body": "デバウンスを入れてください", "submitted_at": ""}]
+        client, repo, poller = self._setup(reviews, [])
+
+        events = await poller._detect_pr_events(client, repo, None)
+
+        impl_events = [e for e in events if e.type == EventType.IMPL_PR_COMMENTED]
+        assert len(impl_events) == 1

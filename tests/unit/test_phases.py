@@ -1093,9 +1093,10 @@ class TestImplReviseExecutor:
         call_ids = [mock_github.reply_to_review_comment.call_args_list[i].args[2] for i in range(2)]
         assert 101 in call_ids
         assert 102 in call_ids
-        # 完了通知の文言確認
+        # U2: 定型文「修正が完了しました」は廃止。生成文 or サマリのフォールバックで返信する
         call_bodies = [mock_github.reply_to_review_comment.call_args_list[i].args[3] for i in range(2)]
-        assert all("修正が完了しました" in body for body in call_bodies)
+        assert all("修正が完了しました。コードをご確認ください。" not in body for body in call_bodies)
+        assert all(body.strip() for body in call_bodies)
 
     async def test_process_result_no_reply_when_review_comment_ids_empty(
         self,

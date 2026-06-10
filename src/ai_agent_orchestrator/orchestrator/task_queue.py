@@ -125,7 +125,7 @@ class TaskQueue:
 
     # --- public methods ---
 
-    async def enqueue(self, request: TaskRequest) -> None:
+    async def enqueue(self, request: TaskRequest) -> bool:
         """タスクをキューに追加する。
 
         同一 Issue のタスクが既にキューにある場合は、
@@ -134,6 +134,11 @@ class TaskQueue:
 
         Args:
             request: 実行するタスクリクエスト
+
+        Returns:
+            キューに追加された場合 True、重複スキップされた場合 False。
+            呼び出し側はこの戻り値で「タスクが実際に積まれたか」を判定できる
+            (False を無視して処理済み扱いにすると、そのタスクの内容が失われる)。
         """
         ik = request.issue_key
         task_key: tuple[IssueKey, str] = (ik, request.phase)
@@ -143,7 +148,7 @@ class TaskQueue:
                 request.issue_number,
                 request.phase,
             )
-            return
+            return False
 
         # 同一Issueが実行中でも、フェーズが変わった場合は
         # 次フェーズのタスクとしてエンキューを許可する
@@ -161,7 +166,7 @@ class TaskQueue:
                     "Issue #%d is already queued and executing, skipping",
                     request.issue_number,
                 )
-                return
+                return False
 
         if ik in self._queued_issues:
             logger.info(
@@ -187,6 +192,7 @@ class TaskQueue:
             self._queue.qsize(),
             len(self._active_tasks),
         )
+        return True
 
     async def dequeue(self) -> TaskRequest:
         """キューからタスクを取り出す。

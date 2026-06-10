@@ -33,6 +33,20 @@ class ConfigError(Exception):
     """設定エラー."""
 
 
+def _unset_to_none(value: object) -> object:
+    """githubkit の UNSET センチネルを None に正規化する.
+
+    Args:
+        value: 任意の値。
+
+    Returns:
+        UNSET の場合 None、それ以外はそのまま。
+    """
+    if value is not None and type(value).__name__ == "Unset":
+        return None
+    return value
+
+
 @dataclass(frozen=True)
 class RateLimitStatus:
     """GitHub API のレート制限状態.
@@ -558,6 +572,10 @@ class GitHubClient:
                 "path": comment.path,
                 "line": comment.line,
                 "created_at": comment.created_at.isoformat(),
+                # 所属レビュー ID と返信元 ID (インラインのみレビューの検知に使用)
+                # githubkit は欠損フィールドを UNSET センチネルで返すため None に正規化する
+                "pull_request_review_id": _unset_to_none(getattr(comment, "pull_request_review_id", None)),
+                "in_reply_to_id": _unset_to_none(getattr(comment, "in_reply_to_id", None)),
             }
             for comment in comments_list
             if "<!-- ai-agent-bot -->" not in (comment.body or "")

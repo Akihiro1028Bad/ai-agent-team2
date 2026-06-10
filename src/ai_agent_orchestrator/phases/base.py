@@ -976,15 +976,20 @@ class PhaseExecutor(ABC):
         Returns:
             パースされた辞書。失敗時は None。
         """
-        # Try ```json block first
-        json_block = re.search(r"```json\s*\n?(.*?)\n?```", text, re.DOTALL)
-        if json_block:
+        # Try ```json blocks first.
+        # 複数ある場合は最後のブロックを優先する: プロンプト内の出力フォーマット例を
+        # エージェントが復唱した場合に、例示 JSON を誤って拾わないため（実際の
+        # 出力は指示により末尾に置かれる）。
+        json_blocks = re.findall(r"```json\s*\n?(.*?)\n?```", text, re.DOTALL)
+        for block in reversed(json_blocks):
             try:
-                return json.loads(json_block.group(1).strip())  # type: ignore[no-any-return]
+                return json.loads(block.strip())  # type: ignore[no-any-return]
             except json.JSONDecodeError:
-                pass
+                continue
 
         # Try finding { ... } pattern
+        # 注意: こちらは先頭一致のまま（json ブロックが1つも parse できない場合の
+        # 最終フォールバック）。プロンプト例の復唱を拾うリスクは残るが到達頻度は低い
         brace_match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text)
         if brace_match:
             try:
