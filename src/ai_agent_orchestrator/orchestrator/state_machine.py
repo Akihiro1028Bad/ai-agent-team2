@@ -569,6 +569,8 @@ class StateMachineManager:
 
         遷移を伴わない IssueState フィールドの更新
         (acknowledged/answered_review_comment_ids 等) の保存に使用する。
+        デバウンスなしで即時にファイル書き込みを行う (呼び出しは
+        1イベントあたり高々数回を想定)。
         """
         self._auto_save()
 

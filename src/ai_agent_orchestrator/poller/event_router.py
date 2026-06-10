@@ -662,7 +662,10 @@ class EventRouter:
         had_inline_comments = bool(all_review_comments)
         if answered:
             all_review_comments = [c for c in all_review_comments if c.get("id") not in answered]
-        if had_inline_comments and not all_review_comments:
+        # トップレベルコメント（PR 本文コメント）はインライン収集に含まれないため、
+        # それが存在する場合は「全件回答済み」でもスキップしない（サイレント消失防止）
+        has_top_level_comment = bool((event.extra or {}).get("comments", ""))
+        if had_inline_comments and not all_review_comments and not has_top_level_comment:
             logger.info(
                 "Issue #%d: all review comments already answered (%d), skipping re-enqueue",
                 event.issue.number,
@@ -723,18 +726,17 @@ class EventRouter:
             acked = set(acked_ids_ref) if isinstance(acked_ids_ref, list) else set()
             to_ack = [c for c in all_review_comments if c.get("id") not in acked]
             if to_ack:
-                await self._reply_to_review_comments(
+                acked_now = await self._reply_to_review_comments(
                     client,
                     event.repo,
                     state.pr_number,
                     to_ack,
                     "レビュー指摘を確認しました。修正を開始します。",
                 )
-                if isinstance(acked_ids_ref, list):
-                    acked_ids_ref.extend(c["id"] for c in to_ack if c.get("id") is not None)
-                    persist = getattr(self._sm, "persist", None)
-                    if callable(persist):
-                        persist()
+                # 送信に成功した ID のみ記録（失敗分は次回再送される）
+                if acked_now and isinstance(acked_ids_ref, list):
+                    acked_ids_ref.extend(acked_now)
+                    self._sm.persist()
         else:
             # フォールバック: PRスレッドへの返信ができない場合は Issue コメントで通知
             await self._notify_review_received(event, comments_text)
@@ -746,7 +748,7 @@ class EventRouter:
         pr_number: int,
         review_comments: list[dict[str, Any]],
         body: str,
-    ) -> None:
+    ) -> list[int]:
         """PRレビューコメントの各スレッドに返信する.
 
         Args:
@@ -755,7 +757,11 @@ class EventRouter:
             pr_number: PR 番号.
             review_comments: レビューコメントのリスト.
             body: 返信本文.
+
+        Returns:
+            返信に成功したコメント ID のリスト（失敗分は次回再送できるよう含めない）.
         """
+        succeeded: list[int] = []
         for comment in review_comments:
             comment_id = comment.get("id")
             if not comment_id:
@@ -767,12 +773,14 @@ class EventRouter:
                     comment_id,
                     body,
                 )
+                succeeded.append(comment_id)
             except Exception:
                 logger.debug(
                     "Failed to reply to review comment %d",
                     comment_id,
                     exc_info=True,
                 )
+        return succeeded
 
     async def _notify_review_received(self, event: PollEvent, comments: str) -> None:
         """PR レビュー指摘を検出したことを Issue 上で通知する."""

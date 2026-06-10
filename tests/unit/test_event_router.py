@@ -938,14 +938,39 @@ class TestReviewReplyDedupPersistence:
         return EventRouter(sm, tq, account_manager=am), state, tq, client
 
     async def test_all_answered_skips_even_on_fresh_router(self) -> None:
-        """全コメント回答済みなら、新インスタンス（再起動相当）でも再エンキューしない."""
+        """全コメント回答済みなら、新インスタンス（再起動相当）でも再エンキューしない.
+
+        インラインのみのレビューは event.extra の comments が空（review body 空）。
+        """
         router, _state, tq, client = self._make(answered=[101, 102])
-        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "x"})
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": ""})
 
         await router.route(event)
 
         tq.enqueue.assert_not_called()
         client.reply_to_review_comment.assert_not_called()
+
+    async def test_top_level_comment_prevents_skip(self) -> None:
+        """インライン全件回答済みでも、トップレベル本文があればスキップしない（消失防止）."""
+        router, _state, tq, _client = self._make(answered=[101, 102])
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "新しい質問です"})
+
+        await router.route(event)
+
+        tq.enqueue.assert_called_once()
+        enqueued = tq.enqueue.call_args.args[0]
+        assert enqueued.extra["review_comment_ids"] == []
+        assert "新しい質問" in enqueued.extra["comments"]
+
+    async def test_partial_ack_failure_records_only_succeeded(self) -> None:
+        """着手通知が部分失敗した場合、成功した ID のみ記録される（失敗分は次回再送）."""
+        router, state, _tq, client = self._make()
+        client.reply_to_review_comment.side_effect = [Exception("api error"), None]
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": ""})
+
+        await router.route(event)
+
+        assert state.acknowledged_review_comment_ids == [102]
 
     async def test_ack_sent_only_to_unacknowledged(self) -> None:
         """着手通知は未通知のコメントにのみ送られ、state に記録される."""

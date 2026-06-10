@@ -244,6 +244,10 @@ class StateMachineProtocol:
         """Increment CI retry counter."""
         ...  # pragma: no cover
 
+    def persist(self) -> None:
+        """Persist current state to storage."""
+        ...  # pragma: no cover
+
 
 class WorkspaceProtocol:
     """Minimal workspace protocol."""

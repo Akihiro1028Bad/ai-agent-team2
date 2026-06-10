@@ -274,7 +274,17 @@ class ReviseExecutorBase(PhaseExecutor):
         answered_ids_ref = getattr(state, "answered_review_comment_ids", None) if state else None
         answered = set(answered_ids_ref) if isinstance(answered_ids_ref, list) else set()
         if answered:
+            original_count = len(review_comment_ids)
             review_comment_ids = [i for i in review_comment_ids if i not in answered]
+            if original_count > 0 and not review_comment_ids:
+                # 全件回答済み: top-level 分岐に落として create_comment を
+                # 再投稿しない（router 非経由の呼び出しでもスパムを防止）
+                logger.info(
+                    "Issue #%d: all %d review comments already answered, skipping responses",
+                    request.issue_number,
+                    original_count,
+                )
+                return
 
         if pr_number is None:
             logger.debug(
@@ -311,9 +321,7 @@ class ReviseExecutorBase(PhaseExecutor):
             # 返信成功した ID を永続化（再起動を跨いだ再回答の防止 #103）
             if succeeded and isinstance(answered_ids_ref, list):
                 answered_ids_ref.extend(succeeded)
-                persist = getattr(self._sm, "persist", None)
-                if callable(persist):
-                    persist()
+                self._sm.persist()
         elif comments_text or summary:
             # トップレベルレビュー（comment ID なし）: PR コメントで応答
             try:
