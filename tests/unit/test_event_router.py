@@ -877,7 +877,7 @@ class TestImplPrCommentedDeferredReplayDedup:
         mock_client: AsyncMock,
     ) -> None:
         """新しいコメントが増えていれば再エンキューされる."""
-        r, sm, tq = router
+        r, _sm, tq = router
         event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "x"})
 
         await r.route(event)
@@ -894,7 +894,7 @@ class TestImplPrCommentedDeferredReplayDedup:
         router: tuple[EventRouter, AsyncMock, AsyncMock],
     ) -> None:
         """キューが重複スキップ (False) した場合は handled に記録せず、再生時に再試行する."""
-        r, sm, tq = router
+        r, _sm, tq = router
         event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "x"})
 
         tq.enqueue.return_value = False  # 実行中のため重複スキップ
