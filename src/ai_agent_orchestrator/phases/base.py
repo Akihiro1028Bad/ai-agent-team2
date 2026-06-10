@@ -988,6 +988,8 @@ class PhaseExecutor(ABC):
                 continue
 
         # Try finding { ... } pattern
+        # 注意: こちらは先頭一致のまま（json ブロックが1つも parse できない場合の
+        # 最終フォールバック）。プロンプト例の復唱を拾うリスクは残るが到達頻度は低い
         brace_match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text)
         if brace_match:
             try:

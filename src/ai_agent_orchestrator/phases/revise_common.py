@@ -238,9 +238,13 @@ class ReviseExecutorBase(PhaseExecutor):
         for entry in data.get("replies") or []:
             if not isinstance(entry, dict):
                 continue
-            cid = entry.get("comment_id")
+            # LLM 出力の揺れに寛容化: 文字列 ID ("123") も受理する
+            try:
+                cid = int(entry.get("comment_id"))  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
             reply = entry.get("reply")
-            if isinstance(cid, int) and isinstance(reply, str) and reply.strip():
+            if isinstance(reply, str) and reply.strip():
                 replies[cid] = reply.strip()
         summary = data.get("summary")
         if not isinstance(summary, str) or not summary.strip():
@@ -282,7 +286,7 @@ class ReviseExecutorBase(PhaseExecutor):
             )
             return
 
-        fallback = summary or "対応しました。詳細はコミットをご確認ください。"
+        fallback = summary or "上記の指摘・質問に対応しました。"
 
         logger.info(
             "Issue #%d: sending review responses (inline=%d, generated=%d, summary=%s, pr=#%d)",
