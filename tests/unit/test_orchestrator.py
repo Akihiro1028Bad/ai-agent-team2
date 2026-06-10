@@ -492,3 +492,41 @@ class TestOrchestratorTaskExecutor:
         )
         await executor.execute(task)
         orch._execute_task.assert_awaited_once_with(task)
+
+
+# ---------------------------------------------------------------------------
+# Tests: dispatch 経由の extra 透過 (U2 実走で発見したバグの回帰)
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchExtraForwarding:
+    """task.extra が executor まで届くこと（review_comment_ids 消失の回帰）."""
+
+    async def test_real_adapter_forwards_extra_to_concrete_request(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from ai_agent_orchestrator.orchestrator.orchestrator import (
+            _RealPhaseDispatcherAdapter,
+        )
+
+        concrete = AsyncMock()
+        adapter = _RealPhaseDispatcherAdapter(concrete)
+
+        await adapter.dispatch(
+            "impl_revise",
+            issue_number=131,
+            repo=MagicMock(owner="org", repo="app"),
+            worktree_path="",
+            context="",
+            extra={"review_comment_ids": [100, 101], "comments": "Q"},
+        )
+
+        request = concrete.execute.call_args.args[0]
+        assert request.extra == {"review_comment_ids": [100, 101], "comments": "Q"}
+
+    async def test_models_task_request_has_extra_field(self) -> None:
+        from ai_agent_orchestrator.models import Phase
+        from ai_agent_orchestrator.models import TaskRequest as ModelsTaskRequest
+
+        req = ModelsTaskRequest(issue_number=1, repo="org/app", phase=Phase.IMPL_REVISE)
+        assert req.extra == {}

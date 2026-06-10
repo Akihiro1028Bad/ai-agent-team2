@@ -284,6 +284,15 @@ class ReviseExecutorBase(PhaseExecutor):
 
         fallback = summary or "対応しました。詳細はコミットをご確認ください。"
 
+        logger.info(
+            "Issue #%d: sending review responses (inline=%d, generated=%d, summary=%s, pr=#%d)",
+            request.issue_number,
+            len(review_comment_ids),
+            len(replies),
+            "yes" if summary else "no",
+            pr_number,
+        )
+
         if review_comment_ids:
             await self._reply_inline_comments(client, request, pr_number, review_comment_ids, replies, fallback)
         elif comments_text or summary:
