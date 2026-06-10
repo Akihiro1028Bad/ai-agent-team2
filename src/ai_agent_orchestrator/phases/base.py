@@ -30,7 +30,9 @@ class NoChangesError(RuntimeError):
 
 # ---------------------------------------------------------------------------
 # コミット除外パターン（U1: コミット一本化）
-# .gitignore に無くてもコミットに混入させない生成物（git pathspec glob 形式）
+# .gitignore に無くてもコミットに混入させない生成物（git pathspec glob 形式）。
+# 注意: ディレクトリ名ベースのため、対象リポジトリが同名ディレクトリ
+# (dist/ 等) を正規に追跡している場合、その変更もコミットから除外される。
 # ---------------------------------------------------------------------------
 
 _COMMIT_EXCLUDE_GLOBS: tuple[str, ...] = (
@@ -43,6 +45,10 @@ _COMMIT_EXCLUDE_GLOBS: tuple[str, ...] = (
     "**/.pytest_cache/**",
     "**/.mypy_cache/**",
     "**/.ruff_cache/**",
+    "**/.tox/**",
+    "**/.venv/**",
+    "**/*.egg-info/**",
+    "**/build/**",
     "**/node_modules/**",
     "**/dist/**",
     "**/.next/**",
