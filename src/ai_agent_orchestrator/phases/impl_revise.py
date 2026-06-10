@@ -21,3 +21,4 @@ class ImplReviseExecutor(ReviseExecutorBase):
     notification_type = "impl_revised"
     notification_message = "の実装を修正しました"
     next_action = "→ 実装PRを再レビューしてください"
+    pr_attr = "pr_number"

@@ -21,3 +21,4 @@ class DesignReviseExecutor(ReviseExecutorBase):
     notification_type = "design_revised"
     notification_message = "の設計書を修正しました"
     next_action = "→ 設計PRを再レビューしてください"
+    pr_attr = "design_pr_number"

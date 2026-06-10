@@ -11,12 +11,13 @@ Phase enum は変更しない（旧フェーズ名のまま実行器のみ共通
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from ai_agent_orchestrator.phases.base import PhaseExecutor
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.models import AgentResult, TaskRequest
+    from ai_agent_orchestrator.phases.base import GitHubClientProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +25,10 @@ logger = logging.getLogger(__name__)
 _OUTPUT_FORMAT_INSTRUCTION = """
 ## 出力フォーマット (必ず守ること)
 
-全ての対応が終わったら、出力の最後に以下の JSON ブロックを必ず含めてください。
+全ての対応が終わったら、**出力の最後に** 以下の形式の JSON ブロックを必ず含めてください。
 各コメントの `[ID:n]` に対応する返信文を書きます。
+
+以下は**形式の例**です（値はそのまま使わず、実際の対応内容で置き換えること）:
 
 ```json
 {
@@ -50,14 +53,17 @@ class ReviseExecutorBase(PhaseExecutor):
     """
 
     # --- サブクラスで上書きする属性 ---
-    phase_name: str = "impl-revise"
-    next_phase: str = "impl-review"
-    target_description: str = "コード"
-    commit_summary: str = "実装レビュー指摘に対応"
-    commit_type: str = "fix"
-    notification_type: str = "impl_revised"
-    notification_message: str = "の実装を修正しました"
-    next_action: str = "→ 実装PRを再レビューしてください"
+    phase_name: ClassVar[str] = "impl-revise"
+    next_phase: ClassVar[str] = "impl-review"
+    target_description: ClassVar[str] = "コード"
+    commit_summary: ClassVar[str] = "実装レビュー指摘に対応"
+    commit_type: ClassVar[str] = "fix"
+    notification_type: ClassVar[str] = "impl_revised"
+    notification_message: ClassVar[str] = "の実装を修正しました"
+    next_action: ClassVar[str] = "→ 実装PRを再レビューしてください"
+    # 返信先 PR 番号として参照する IssueState のフィールド名
+    # (impl 系は pr_number、design 系は design_pr_number。混在させない)
+    pr_attr: ClassVar[str] = "pr_number"
 
     # ------------------------------------------------------------------
     # Prompt
@@ -73,10 +79,6 @@ class ReviseExecutorBase(PhaseExecutor):
             プロンプト文字列。
         """
         from ai_agent_orchestrator.phases.prompt_enhancer import enhance_prompt
-        from ai_agent_orchestrator.phases.review_classifier import (
-            classify_review_comments,
-            format_classified_comments,
-        )
 
         extra = getattr(request, "extra", {}) or {}
         comments_text, structured = self._normalize_comments(extra)
@@ -94,19 +96,7 @@ class ReviseExecutorBase(PhaseExecutor):
                 "全ての指摘に対応してください。"
             )
 
-        if structured:
-            classified = classify_review_comments(structured)
-            classified_section = format_classified_comments(classified)
-            # ID マーカーを付与した一覧（返信の対応付け用）
-            id_lines = "\n".join(
-                f"- [ID:{c.get('id')}] {(c.get('path') or '')}:{c.get('line') or ''} {(c.get('body') or '')[:200]}"
-                for c in structured
-                if c.get("id") is not None
-            )
-            if id_lines:
-                classified_section += f"\n\n## コメント ID 一覧（返信の対応付けに使用）\n{id_lines}"
-        else:
-            classified_section = f"## レビュー指摘内容\n{comments_text}"
+        classified_section = self._build_comments_section(comments_text, structured)
 
         raw = (
             f"## Issue #{request.issue_number}: {issue.title}\n\n"
@@ -121,6 +111,42 @@ class ReviseExecutorBase(PhaseExecutor):
             f"{_OUTPUT_FORMAT_INSTRUCTION}"
         )
         return enhance_prompt(raw, self.phase_name)
+
+    @staticmethod
+    def _build_comments_section(
+        comments_text: str,
+        structured: list[dict[str, Any]],
+    ) -> str:
+        """プロンプト用のコメントセクションを構築する。
+
+        構造化リストがあれば優先度分類と ID マーカー一覧を付与する。
+
+        Args:
+            comments_text: コメントのテキスト表現。
+            structured: 構造化コメントリスト。
+
+        Returns:
+            プロンプトに埋め込むセクション文字列。
+        """
+        from ai_agent_orchestrator.phases.review_classifier import (
+            classify_review_comments,
+            format_classified_comments,
+        )
+
+        if not structured:
+            return f"## レビュー指摘内容\n{comments_text}"
+
+        classified = classify_review_comments(structured)
+        section = format_classified_comments(classified)
+        # ID マーカーを付与した一覧（返信の対応付け用）
+        id_lines = "\n".join(
+            f"- [ID:{c.get('id')}] {(c.get('path') or '')}:{c.get('line') or ''} {(c.get('body') or '')[:200]}"
+            for c in structured
+            if c.get("id") is not None
+        )
+        if id_lines:
+            section += f"\n\n## コメント ID 一覧（返信の対応付けに使用）\n{id_lines}"
+        return section
 
     # ------------------------------------------------------------------
     # Agent execution (session resume)
@@ -181,7 +207,15 @@ class ReviseExecutorBase(PhaseExecutor):
         replies, summary = self._parse_revise_output(result.output)
         await self._send_review_responses(request, replies, summary)
 
-        await self._notify_revised(request, client)
+        # 遷移は完了済みのため、通知失敗でフェーズを失敗扱いにしない
+        try:
+            await self._notify_revised(request, client)
+        except Exception:
+            logger.warning(
+                "Issue #%d: revise notification failed (transition already done)",
+                request.issue_number,
+                exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # Review responses
@@ -251,27 +285,46 @@ class ReviseExecutorBase(PhaseExecutor):
         fallback = summary or "対応しました。詳細はコミットをご確認ください。"
 
         if review_comment_ids:
-            for comment_id in review_comment_ids:
-                body = replies.get(comment_id, fallback)
-                try:
-                    await client.reply_to_review_comment(request.repo, pr_number, comment_id, body)
-                except Exception:
-                    logger.debug(
-                        "Issue #%d: failed to reply to review comment %d",
-                        request.issue_number,
-                        comment_id,
-                        exc_info=True,
-                    )
-            return
-
-        # トップレベルレビュー（comment ID なし）: PR コメントで応答
-        if comments_text or summary:
+            await self._reply_inline_comments(client, request, pr_number, review_comment_ids, replies, fallback)
+        elif comments_text or summary:
+            # トップレベルレビュー（comment ID なし）: PR コメントで応答
             try:
                 await client.create_comment(request.repo, pr_number, fallback)
             except Exception:
                 logger.debug(
                     "Issue #%d: failed to post top-level review response",
                     request.issue_number,
+                    exc_info=True,
+                )
+
+    async def _reply_inline_comments(
+        self,
+        client: GitHubClientProtocol,
+        request: TaskRequest,
+        pr_number: int,
+        comment_ids: list[int],
+        replies: dict[int, str],
+        fallback: str,
+    ) -> None:
+        """各インラインコメントへ生成返信文（無ければフォールバック）で返信する。
+
+        Args:
+            client: GitHub クライアント。
+            request: タスクリクエスト。
+            pr_number: 返信先 PR 番号。
+            comment_ids: 返信対象のコメント ID 一覧。
+            replies: comment_id → 生成された返信文。
+            fallback: 該当返信が無い場合の文面。
+        """
+        for comment_id in comment_ids:
+            body = replies.get(comment_id, fallback)
+            try:
+                await client.reply_to_review_comment(request.repo, pr_number, comment_id, body)
+            except Exception:
+                logger.debug(
+                    "Issue #%d: failed to reply to review comment %d",
+                    request.issue_number,
+                    comment_id,
                     exc_info=True,
                 )
 
@@ -306,12 +359,16 @@ class ReviseExecutorBase(PhaseExecutor):
         return text, structured_list
 
     def _resolve_pr_number(self, request: TaskRequest) -> int | None:
-        """state から返信先 PR 番号を取得する。"""
+        """state から返信先 PR 番号を取得する。
+
+        サブクラスの ``pr_attr`` で指定されたフィールドのみを参照する
+        （impl が design PR へ誤返信する経路を作らない）。
+        """
         state = self._sm.get_state(self._issue_key(request))
         if state is None:
             return None
-        pr: int | None = state.pr_number or state.design_pr_number
-        return pr
+        pr = getattr(state, self.pr_attr, None)
+        return pr if isinstance(pr, int) else None
 
     async def _resolve_pr_info(self, request: TaskRequest) -> str:
         """プロンプト用の PR 表記を解決する。"""
@@ -336,7 +393,7 @@ class ReviseExecutorBase(PhaseExecutor):
             )
         return "PR"
 
-    async def _notify_revised(self, request: TaskRequest, client: Any) -> None:
+    async def _notify_revised(self, request: TaskRequest, client: GitHubClientProtocol) -> None:
         """修正完了を通知する。"""
         repo_full_name = self._get_repo_full_name(request)
         pr_number = self._resolve_pr_number(request)

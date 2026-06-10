@@ -5,8 +5,6 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from ai_agent_orchestrator.models import AgentResult
 from ai_agent_orchestrator.phases.design_revise import DesignReviseExecutor
 from ai_agent_orchestrator.phases.impl_revise import ImplReviseExecutor
@@ -50,11 +48,16 @@ def _make_executor(
     return executor
 
 
-def _mock_sm(pr_number: int | None = 42) -> MagicMock:
+def _mock_sm(
+    pr_number: int | None = 42,
+    design_pr_number: int | None = 55,
+) -> MagicMock:
+    # pr_number と design_pr_number は意図的に異なる値:
+    # impl が design PR へ（またはその逆へ）誤返信しないことを検証するため
     sm = MagicMock()
     sm.get_state.return_value = MagicMock(
         pr_number=pr_number,
-        design_pr_number=pr_number,
+        design_pr_number=design_pr_number,
         session_id="prev-session",
         branch_head_sha=None,
     )
@@ -118,11 +121,28 @@ class TestParseReviseOutput:
 
     def test_malformed_entries_are_skipped(self) -> None:
         output = """```json
-{"replies": [{"comment_id": null, "reply": "全体回答"}, {"reply": "ID なし"}, {"comment_id": 7, "reply": "OK"}], "summary": "s"}
+{"replies": [{"comment_id": null, "reply": "全体回答"}, {"reply": "x"},
+ {"comment_id": 7, "reply": "OK"}], "summary": "s"}
 ```"""
         replies, summary = ReviseExecutorBase._parse_revise_output(output)
         assert replies == {7: "OK"}
         assert summary == "s"
+
+    def test_last_json_block_wins_over_prompt_echo(self) -> None:
+        """プロンプトの出力例を復唱しても、最後の JSON ブロック（実出力）を採用する。"""
+        output = """指示に従い出力フォーマットを確認します:
+```json
+{"replies": [{"comment_id": 123, "kind": "fixed", "reply": "<修正内容の具体的な説明>"}], "summary": "<要約>"}
+```
+
+対応が完了しました。
+
+```json
+{"replies": [{"comment_id": 200, "kind": "answered", "reply": "実際の回答です。"}], "summary": "実際のサマリ。"}
+```"""
+        replies, summary = ReviseExecutorBase._parse_revise_output(output)
+        assert replies == {200: "実際の回答です。"}
+        assert summary == "実際のサマリ。"
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +247,30 @@ class TestSubclassIntegration:
     async def test_both_are_revise_base_subclasses(self) -> None:
         assert issubclass(ImplReviseExecutor, ReviseExecutorBase)
         assert issubclass(DesignReviseExecutor, ReviseExecutorBase)
+
+    async def test_impl_replies_use_impl_pr_not_design_pr(self) -> None:
+        """impl_revise は pr_number(42) を使い design_pr_number(55) を参照しない。"""
+        gh = _mock_github()
+        sm = _mock_sm(pr_number=42, design_pr_number=55)
+        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        request = _make_request(extra={"comments": "c", "review_comment_ids": [100]})
+
+        await executor.process_result(request, _agent_result(REPLIES_OUTPUT))
+
+        assert gh.reply_to_review_comment.call_args.args[1] == 42
+
+    async def test_design_top_level_response_uses_design_pr(self) -> None:
+        """design_revise のトップレベル応答は design_pr_number(55) 宛て。"""
+        gh = _mock_github()
+        sm = _mock_sm(pr_number=None, design_pr_number=55)
+        executor = _make_executor(DesignReviseExecutor, gh, sm)
+        output = '```json\n{"replies": [], "summary": "設計の意図を回答しました。"}\n```'
+        request = _make_request(phase="design-revise", extra={"comments": "質問"})
+
+        await executor.process_result(request, _agent_result(output))
+
+        gh.create_comment.assert_called_once()
+        assert gh.create_comment.call_args.args[1] == 55
 
     async def test_resume_session_is_used(self) -> None:
         gh = _mock_github()
