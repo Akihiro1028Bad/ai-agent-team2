@@ -656,6 +656,20 @@ class EventRouter:
                     exc_info=True,
                 )
 
+        # 回答済みコメントを対象から除外 (#103: 永続化された ID。再起動を跨いで有効)
+        answered_ids_ref = getattr(state, "answered_review_comment_ids", None) if state else None
+        answered = set(answered_ids_ref) if isinstance(answered_ids_ref, list) else set()
+        had_inline_comments = bool(all_review_comments)
+        if answered:
+            all_review_comments = [c for c in all_review_comments if c.get("id") not in answered]
+        if had_inline_comments and not all_review_comments:
+            logger.info(
+                "Issue #%d: all review comments already answered (%d), skipping re-enqueue",
+                event.issue.number,
+                len(answered),
+            )
+            return
+
         # コメント一覧をフォーマット（プロンプト用）
         comments_text = _format_review_comments(all_review_comments)
         if not comments_text:
@@ -702,16 +716,25 @@ class EventRouter:
             return
         self._handled_review_comment_ids[issue_key] = handled | set(comment_ids)
 
-        # 着手通知: 遷移・エンキュー成功後に各レビューコメントのスレッドへ返信
+        # 着手通知: 遷移・エンキュー成功後、未通知のコメントにのみ返信する (#103)
         # （遷移失敗時は例外が上位に伝播するため、ここに到達した場合は必ず修正が開始される）
         if client and state and state.pr_number and all_review_comments:
-            await self._reply_to_review_comments(
-                client,
-                event.repo,
-                state.pr_number,
-                all_review_comments,
-                "レビュー指摘を確認しました。修正を開始します。",
-            )
+            acked_ids_ref = getattr(state, "acknowledged_review_comment_ids", None)
+            acked = set(acked_ids_ref) if isinstance(acked_ids_ref, list) else set()
+            to_ack = [c for c in all_review_comments if c.get("id") not in acked]
+            if to_ack:
+                await self._reply_to_review_comments(
+                    client,
+                    event.repo,
+                    state.pr_number,
+                    to_ack,
+                    "レビュー指摘を確認しました。修正を開始します。",
+                )
+                if isinstance(acked_ids_ref, list):
+                    acked_ids_ref.extend(c["id"] for c in to_ack if c.get("id") is not None)
+                    persist = getattr(self._sm, "persist", None)
+                    if callable(persist):
+                        persist()
         else:
             # フォールバック: PRスレッドへの返信ができない場合は Issue コメントで通知
             await self._notify_review_received(event, comments_text)

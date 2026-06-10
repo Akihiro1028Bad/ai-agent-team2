@@ -311,3 +311,52 @@ class TestRevisePrompt:
         assert "コードを変更せず" in prompt or "コード変更は不要" in prompt
         assert '"replies"' in prompt  # 出力フォーマット指定
         assert "git commit" not in prompt.lower() or "不要" in prompt
+
+
+class TestAnsweredPersistence:
+    """#103: 回答済み ID の永続化と再回答抑制."""
+
+    async def test_successful_replies_recorded_as_answered(self) -> None:
+        """返信成功した comment_id が state.answered_review_comment_ids に記録され persist される."""
+        gh = _mock_github()
+        sm = _mock_sm()
+        state = sm.get_state.return_value
+        state.answered_review_comment_ids = []
+        sm.persist = MagicMock()
+        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        request = _make_request(extra={"comments": "c", "review_comment_ids": [100, 101]})
+
+        await executor.process_result(request, _agent_result(REPLIES_OUTPUT))
+
+        assert set(state.answered_review_comment_ids) == {100, 101}
+        sm.persist.assert_called()
+
+    async def test_answered_ids_are_not_replied_again(self) -> None:
+        """answered 済みの ID には返信しない（router を経由しない呼び出しでも防御）."""
+        gh = _mock_github()
+        sm = _mock_sm()
+        state = sm.get_state.return_value
+        state.answered_review_comment_ids = [100]
+        sm.persist = MagicMock()
+        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        request = _make_request(extra={"comments": "c", "review_comment_ids": [100, 101]})
+
+        await executor.process_result(request, _agent_result(REPLIES_OUTPUT))
+
+        ids = [c.args[2] for c in gh.reply_to_review_comment.call_args_list]
+        assert ids == [101]
+
+    async def test_reply_failure_is_not_recorded_as_answered(self) -> None:
+        """返信に失敗した ID は answered に記録しない（次回リトライ可能）."""
+        gh = _mock_github()
+        gh.reply_to_review_comment.side_effect = [Exception("api error"), None]
+        sm = _mock_sm()
+        state = sm.get_state.return_value
+        state.answered_review_comment_ids = []
+        sm.persist = MagicMock()
+        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        request = _make_request(extra={"comments": "c", "review_comment_ids": [100, 101]})
+
+        await executor.process_result(request, _agent_result(REPLIES_OUTPUT))
+
+        assert state.answered_review_comment_ids == [101]

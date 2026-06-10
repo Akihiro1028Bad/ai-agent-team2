@@ -269,6 +269,13 @@ class ReviseExecutorBase(PhaseExecutor):
         comments_text, _ = self._normalize_comments(extra)
         pr_number = self._resolve_pr_number(request)
 
+        # 回答済み ID を除外 (#103: router を経由しない呼び出しでも防御)
+        state = self._sm.get_state(self._issue_key(request))
+        answered_ids_ref = getattr(state, "answered_review_comment_ids", None) if state else None
+        answered = set(answered_ids_ref) if isinstance(answered_ids_ref, list) else set()
+        if answered:
+            review_comment_ids = [i for i in review_comment_ids if i not in answered]
+
         if pr_number is None:
             logger.debug(
                 "Issue #%d: no PR number, skipping review responses",
@@ -298,7 +305,15 @@ class ReviseExecutorBase(PhaseExecutor):
         )
 
         if review_comment_ids:
-            await self._reply_inline_comments(client, request, pr_number, review_comment_ids, replies, fallback)
+            succeeded = await self._reply_inline_comments(
+                client, request, pr_number, review_comment_ids, replies, fallback
+            )
+            # 返信成功した ID を永続化（再起動を跨いだ再回答の防止 #103）
+            if succeeded and isinstance(answered_ids_ref, list):
+                answered_ids_ref.extend(succeeded)
+                persist = getattr(self._sm, "persist", None)
+                if callable(persist):
+                    persist()
         elif comments_text or summary:
             # トップレベルレビュー（comment ID なし）: PR コメントで応答
             try:
@@ -318,7 +333,7 @@ class ReviseExecutorBase(PhaseExecutor):
         comment_ids: list[int],
         replies: dict[int, str],
         fallback: str,
-    ) -> None:
+    ) -> list[int]:
         """各インラインコメントへ生成返信文（無ければフォールバック）で返信する。
 
         Args:
@@ -328,11 +343,16 @@ class ReviseExecutorBase(PhaseExecutor):
             comment_ids: 返信対象のコメント ID 一覧。
             replies: comment_id → 生成された返信文。
             fallback: 該当返信が無い場合の文面。
+
+        Returns:
+            返信に成功したコメント ID のリスト（失敗分は次回リトライ可能なよう含めない）。
         """
+        succeeded: list[int] = []
         for comment_id in comment_ids:
             body = replies.get(comment_id, fallback)
             try:
                 await client.reply_to_review_comment(request.repo, pr_number, comment_id, body)
+                succeeded.append(comment_id)
             except Exception:
                 logger.debug(
                     "Issue #%d: failed to reply to review comment %d",
@@ -340,6 +360,7 @@ class ReviseExecutorBase(PhaseExecutor):
                     comment_id,
                     exc_info=True,
                 )
+        return succeeded
 
     # ------------------------------------------------------------------
     # Helpers

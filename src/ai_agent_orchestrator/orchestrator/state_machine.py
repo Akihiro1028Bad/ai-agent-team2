@@ -564,6 +564,14 @@ class StateMachineManager:
         """
         return _PHASE_TO_ATTR[phase.value]
 
+    def persist(self) -> None:
+        """現在の状態を明示的に永続化する.
+
+        遷移を伴わない IssueState フィールドの更新
+        (acknowledged/answered_review_comment_ids 等) の保存に使用する。
+        """
+        self._auto_save()
+
     def _auto_save(self) -> None:
         """状態変更時に自動的に永続化する."""
         self._persistence.save(self._states)

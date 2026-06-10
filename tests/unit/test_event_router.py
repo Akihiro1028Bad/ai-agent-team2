@@ -904,3 +904,69 @@ class TestImplPrCommentedDeferredReplayDedup:
 
         # 2回目で実際にエンキューされる（handled 誤記録による喪失がない）
         assert tq.enqueue.call_count == 2
+
+
+class TestReviewReplyDedupPersistence:
+    """#103: 着手通知・再エンキューの重複防止（永続化された回答/通知済み ID を尊重）."""
+
+    def _make(
+        self,
+        answered: list[int] | None = None,
+        acknowledged: list[int] | None = None,
+    ) -> tuple[EventRouter, MagicMock, AsyncMock, AsyncMock]:
+        client = AsyncMock()
+        client.get_pr_review_comments = AsyncMock(
+            return_value=[
+                {"id": 101, "user": {"login": "u"}, "body": "指摘A", "path": "a.py", "line": 1},
+                {"id": 102, "user": {"login": "u"}, "body": "指摘B", "path": "b.py", "line": 2},
+            ]
+        )
+        sm = AsyncMock()
+        sm.register_issue = MagicMock()
+        sm.get_phase = MagicMock(return_value=Phase.IMPL_REVIEW)
+        sm.get_issue_type = MagicMock(return_value="feature-m")
+        state = MagicMock()
+        state.pr_number = 10
+        state.answered_review_comment_ids = list(answered or [])
+        state.acknowledged_review_comment_ids = list(acknowledged or [])
+        sm.get_state = MagicMock(return_value=state)
+        sm.persist = MagicMock()
+        tq = AsyncMock()
+        tq.enqueue.return_value = True
+        am = AsyncMock()
+        am.get_client_for_repo = AsyncMock(return_value=client)
+        return EventRouter(sm, tq, account_manager=am), state, tq, client
+
+    async def test_all_answered_skips_even_on_fresh_router(self) -> None:
+        """全コメント回答済みなら、新インスタンス（再起動相当）でも再エンキューしない."""
+        router, _state, tq, client = self._make(answered=[101, 102])
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "x"})
+
+        await router.route(event)
+
+        tq.enqueue.assert_not_called()
+        client.reply_to_review_comment.assert_not_called()
+
+    async def test_ack_sent_only_to_unacknowledged(self) -> None:
+        """着手通知は未通知のコメントにのみ送られ、state に記録される."""
+        router, state, _tq, client = self._make(acknowledged=[101])
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "x"})
+
+        await router.route(event)
+
+        # 102 のみに着手通知
+        assert client.reply_to_review_comment.call_count == 1
+        assert client.reply_to_review_comment.call_args.args[2] == 102
+        # 記録と永続化
+        assert set(state.acknowledged_review_comment_ids) == {101, 102}
+
+    async def test_answered_comments_excluded_from_task_extra(self) -> None:
+        """回答済みコメントはタスクの対象（ids/構造化リスト）から除外される."""
+        router, _state, tq, _client = self._make(answered=[101])
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "x"})
+
+        await router.route(event)
+
+        enqueued = tq.enqueue.call_args.args[0]
+        assert enqueued.extra["review_comment_ids"] == [102]
+        assert [c["id"] for c in enqueued.extra["review_comments"]] == [102]
