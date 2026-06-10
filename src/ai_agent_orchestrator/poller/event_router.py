@@ -677,7 +677,7 @@ class EventRouter:
 
         # フェーズ遷移・エンキュー（先に確定させる）
         await self._sm.transition(issue_key, Phase.IMPL_REVISE)
-        await self._tq.enqueue(
+        accepted = await self._tq.enqueue(
             TaskRequest(
                 issue_number=event.issue.number,
                 repo=event.repo,
@@ -691,6 +691,15 @@ class EventRouter:
                 },
             )
         )
+        if accepted is False:
+            # キュー側で重複スキップされた場合は処理済みとして記録しない。
+            # 記録すると次回の延期再生時に「処理済み」と誤判定され、
+            # このコメントへの対応が永久に行われなくなる。
+            logger.info(
+                "Issue #%d: enqueue was skipped as duplicate, leaving comments unhandled for retry",
+                event.issue.number,
+            )
+            return
         self._handled_review_comment_ids[issue_key] = handled | set(comment_ids)
 
         # 着手通知: 遷移・エンキュー成功後に各レビューコメントのスレッドへ返信

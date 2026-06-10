@@ -888,3 +888,19 @@ class TestImplPrCommentedDeferredReplayDedup:
         await r.route(event)
 
         assert tq.enqueue.call_count == 2
+
+    async def test_enqueue_duplicate_skip_does_not_mark_handled(
+        self,
+        router: tuple[EventRouter, AsyncMock, AsyncMock],
+    ) -> None:
+        """キューが重複スキップ (False) した場合は handled に記録せず、再生時に再試行する."""
+        r, sm, tq = router
+        event = _make_event(EventType.IMPL_PR_COMMENTED, extra={"comments": "x"})
+
+        tq.enqueue.return_value = False  # 実行中のため重複スキップ
+        await r.route(event)
+        tq.enqueue.return_value = True  # タスク完了後の再生では受理される
+        await r.route(event)
+
+        # 2回目で実際にエンキューされる（handled 誤記録による喪失がない）
+        assert tq.enqueue.call_count == 2
