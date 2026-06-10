@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ai_agent_orchestrator.models import AgentResult
+from ai_agent_orchestrator.phases.base import NoChangesError
 
 # ---------------------------------------------------------------------------
 # Common fixtures
@@ -940,7 +941,7 @@ class TestCiFixExecutor:
         )
 
         async def raise_runtime(*args: Any, **kwargs: Any) -> None:
-            raise RuntimeError("no commit")
+            raise NoChangesError("no commit")
 
         executor._finalize_phase_commit = raise_runtime  # type: ignore[method-assign]
 
@@ -969,7 +970,7 @@ class TestCiFixExecutor:
         )
 
         async def raise_runtime(*args: Any, **kwargs: Any) -> None:
-            raise RuntimeError("no commit")
+            raise NoChangesError("no commit")
 
         executor._finalize_phase_commit = raise_runtime  # type: ignore[method-assign]
 

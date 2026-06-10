@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ai_agent_orchestrator.phases.base import PhaseExecutor
+from ai_agent_orchestrator.phases.base import NoChangesError, PhaseExecutor
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.models import AgentResult, TaskRequest
@@ -84,7 +84,7 @@ class CiFixExecutor(PhaseExecutor):
                 commit_type="fix",
                 branch_prefix="feature",
             )
-        except RuntimeError as exc:
+        except NoChangesError as exc:
             # エージェントがコードを変更しなかった場合
             retry_count = state.retry_count if state else 0
             logger.warning(

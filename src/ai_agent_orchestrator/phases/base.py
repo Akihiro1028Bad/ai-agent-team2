@@ -18,6 +18,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+class NoChangesError(RuntimeError):
+    """フェーズ終端で変更ゼロ（無作業）を示す例外。
+
+    git 操作の失敗（RuntimeError）と区別するための専用型。
+    呼び出し側はこの型でのみ「変更なし」を判定し、
+    インフラ障害（add/commit/push 失敗）は上位へ伝播させる。
+    """
+
+
 # ---------------------------------------------------------------------------
 # コミット除外パターン（U1: コミット一本化）
 # .gitignore に無くてもコミットに混入させない生成物（git pathspec glob 形式）
@@ -648,11 +658,17 @@ class PhaseExecutor(ABC):
         エージェントは commit/push を行わない前提で、システムがフェーズ文脈の
         メッセージ（``{commit_type}: #{issue} {summary}``）でコミット・プッシュする。
         生成物（coverage/ 等）は除外パススペックでコミット対象から外す。
+        コミットは正常フローのため Issue へのコメント通知は行わない
+        （旧 _recover_uncommitted_work の「自動回復」通知は廃止）。
 
         変更も新コミットも無い場合:
         - ``allow_no_changes=True``（REVISE 系: 質問回答のみ等）は正常終了
-        - ``False``（IMPLEMENT/FIX 系）は無作業として RuntimeError を送出し、
+        - ``False``（IMPLEMENT/FIX 系）は無作業として NoChangesError を送出し、
           呼び出し元の execute() が _handle_error() 経由で SUSPENDED に遷移する
+
+        Raises:
+            NoChangesError: 無作業検知（allow_no_changes=False 時のみ）。
+            RuntimeError: git 操作（add/commit/push）の失敗。
 
         Args:
             request: タスクリクエスト。
@@ -669,27 +685,11 @@ class PhaseExecutor(ABC):
         wt = str(worktree)
         branch_name = f"{branch_prefix}/issue-{request.issue_number}"
 
-        # 1. 作業ツリーの変更を確認し、生成物を除外してステージ
-        committed = False
-        rc, stdout, _ = await self._workspace._run_git("status", "--porcelain", cwd=wt)
-        if rc == 0 and stdout.strip() != "":
-            add_args = ["add", "-A", "--", "."] + [f":(glob,exclude){g}" for g in _COMMIT_EXCLUDE_GLOBS]
-            rc, _, stderr = await self._workspace._run_git(*add_args, cwd=wt)
-            if rc != 0:
-                msg = f"Issue #{request.issue_number}: git add 失敗: {stderr}"
-                raise RuntimeError(msg)
+        committed = await self._stage_and_commit(request, wt, summary=summary, commit_type=commit_type)
 
-            # 除外後に実際にステージされた変更があるか（生成物のみなら何も残らない）
-            rc_diff, _, _ = await self._workspace._run_git("diff", "--cached", "--quiet", cwd=wt)
-            if rc_diff != 0:
-                commit_msg = f"{commit_type}: #{request.issue_number} {summary}"
-                rc, _, stderr = await self._workspace._run_git("commit", "-m", commit_msg, cwd=wt)
-                if rc != 0:
-                    msg = f"Issue #{request.issue_number}: git commit 失敗: {stderr}"
-                    raise RuntimeError(msg)
-                committed = True
-
-        # 2. 未プッシュコミットの確認（途中失敗からの回復も兼ねる）
+        # 未プッシュコミットの確認（途中失敗からの回復も兼ねる）。
+        # rc != 0 はリモートブランチ未存在（新規ブランチ）を含むため、
+        # その場合は committed フラグのみで判定する。
         rc, stdout, _ = await self._workspace._run_git(
             "log",
             f"origin/{branch_name}..HEAD",
@@ -699,12 +699,7 @@ class PhaseExecutor(ABC):
         has_unpushed = committed or (rc == 0 and stdout.strip() != "")
 
         if has_unpushed:
-            rc_push, _, stderr = await self._workspace._run_git(
-                "push",
-                "origin",
-                branch_name,
-                cwd=wt,
-            )
+            rc_push, _, stderr = await self._workspace._run_git("push", "origin", branch_name, cwd=wt)
             if rc_push != 0:
                 msg = f"Issue #{request.issue_number}: git push 失敗: {stderr}"
                 raise RuntimeError(msg)
@@ -721,36 +716,102 @@ class PhaseExecutor(ABC):
             )
             return
 
-        # 3. 変更なし・未プッシュなし
+        # 変更なし・未プッシュなし
         if allow_no_changes:
             return  # 正常（REVISE 系: 質問回答のみ等）
+        await self._raise_if_no_work(request, wt, branch_name)
 
-        # 無作業検知（IMPLEMENT/FIX 系）: baseline 以降に remote へ新コミットが
-        # あれば正常、無ければ失敗として SUSPENDED に落とす
+    async def _stage_and_commit(
+        self,
+        request: TaskRequest,
+        wt: str,
+        *,
+        summary: str,
+        commit_type: str,
+    ) -> bool:
+        """生成物を除外して作業ツリーの変更をステージ・コミットする。
+
+        Args:
+            request: タスクリクエスト。
+            wt: worktree パス。
+            summary: コミットメッセージの要約。
+            commit_type: conventional commits のタイプ。
+
+        Returns:
+            コミットを作成した場合 True。
+        """
+        rc, stdout, _ = await self._workspace._run_git("status", "--porcelain", cwd=wt)
+        if rc != 0 or stdout.strip() == "":
+            return False
+
+        add_args = ["add", "-A", "--", "."] + [f":(glob,exclude){g}" for g in _COMMIT_EXCLUDE_GLOBS]
+        rc, _, stderr = await self._workspace._run_git(*add_args, cwd=wt)
+        if rc != 0:
+            msg = f"Issue #{request.issue_number}: git add 失敗: {stderr}"
+            raise RuntimeError(msg)
+
+        # 除外後に実際にステージされた変更があるか（生成物のみなら何も残らない）
+        rc_diff, _, _ = await self._workspace._run_git("diff", "--cached", "--quiet", cwd=wt)
+        if rc_diff == 0:
+            return False
+
+        commit_msg = f"{commit_type}: #{request.issue_number} {summary}"
+        rc, _, stderr = await self._workspace._run_git("commit", "-m", commit_msg, cwd=wt)
+        if rc != 0:
+            msg = f"Issue #{request.issue_number}: git commit 失敗: {stderr}"
+            raise RuntimeError(msg)
+        return True
+
+    async def _raise_if_no_work(
+        self,
+        request: TaskRequest,
+        wt: str,
+        branch_name: str,
+    ) -> None:
+        """無作業検知: baseline 以降に remote へ新コミットが無ければ NoChangesError。
+
+        フェーズが外部変更されていた場合は抑制する。baseline 未記録の場合は
+        判定不能のため警告のみで正常終了する。
+
+        Args:
+            request: タスクリクエスト。
+            wt: worktree パス。
+            branch_name: ブランチ名。
+        """
         state = self._sm.get_state(self._issue_key(request))
         baseline = state.branch_head_sha if state else None
-        if baseline:
-            rc, stdout, _ = await self._workspace._run_git(
-                "log",
-                f"{baseline}..origin/{branch_name}",
-                "--oneline",
-                cwd=wt,
+        if not baseline:
+            # baseline 未記録（process_result 直呼び等）: 無作業判定不可
+            logger.warning(
+                "Issue #%d: no baseline SHA recorded, cannot detect no-change for phase %s",
+                request.issue_number,
+                request.phase,
             )
-            new_commits = rc == 0 and stdout.strip() != ""
-            if not new_commits:
-                # フェーズが外部変更されていた場合は RuntimeError を抑制
-                current_phase = self._sm.get_phase(self._issue_key(request))
-                req_phase_str = str(request.phase).replace("Phase.", "").replace("_", "-").lower()
-                if isinstance(current_phase, Phase) and current_phase.value != req_phase_str:
-                    logger.warning(
-                        "Issue #%d: phase changed externally (%s → %s) during finalize check, skipping no-change error",
-                        request.issue_number,
-                        req_phase_str,
-                        current_phase.value,
-                    )
-                    return
-                msg = f"Issue #{request.issue_number}: エージェントがコードの変更を行いませんでした。"
-                raise RuntimeError(msg)
+            return
+
+        rc, stdout, _ = await self._workspace._run_git(
+            "log",
+            f"{baseline}..origin/{branch_name}",
+            "--oneline",
+            cwd=wt,
+        )
+        new_commits = rc == 0 and stdout.strip() != ""
+        if new_commits:
+            return
+
+        # フェーズが外部変更されていた場合はエラーを抑制
+        current_phase = self._sm.get_phase(self._issue_key(request))
+        req_phase_str = str(request.phase).replace("Phase.", "").replace("_", "-").lower()
+        if isinstance(current_phase, Phase) and current_phase.value != req_phase_str:
+            logger.warning(
+                "Issue #%d: phase changed externally (%s → %s) during finalize check, skipping no-change error",
+                request.issue_number,
+                req_phase_str,
+                current_phase.value,
+            )
+            return
+        msg = f"Issue #{request.issue_number}: エージェントがコードの変更を行いませんでした。"
+        raise NoChangesError(msg)
 
     # ------------------------------------------------------------------
     # Utility helpers

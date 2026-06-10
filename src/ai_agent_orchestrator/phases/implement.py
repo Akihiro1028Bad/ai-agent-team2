@@ -14,7 +14,7 @@ from ai_agent_orchestrator.context.engine import (
     IMPL_PLAN_HEADING,
 )
 from ai_agent_orchestrator.models import AgentResult, Phase, Subtask
-from ai_agent_orchestrator.phases.base import PhaseExecutor
+from ai_agent_orchestrator.phases.base import NoChangesError, PhaseExecutor
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.models import TaskRequest
@@ -296,7 +296,7 @@ class ImplementExecutor(PhaseExecutor):
                     commit_type="feat",
                     branch_prefix="feature",
                 )
-            except RuntimeError:
+            except NoChangesError:
                 logger.warning(
                     "Issue #%d: subtask %d/%d made no changes, continuing to next",
                     request.issue_number,
@@ -440,7 +440,7 @@ class ImplementExecutor(PhaseExecutor):
                     commit_type="feat",
                     branch_prefix="feature",
                 )
-            except RuntimeError:
+            except NoChangesError:
                 logger.warning(
                     "Issue #%d: no changes in pass %d, stopping and finalizing with current progress",
                     request.issue_number,

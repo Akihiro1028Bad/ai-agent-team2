@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ai_agent_orchestrator.phases.base import NoChangesError
 from ai_agent_orchestrator.phases.fix import FixExecutor
 
 # ---------------------------------------------------------------------------
@@ -200,7 +201,7 @@ class TestNoChangePolicy:
         _, baseline, _ = await _git("rev-parse", "HEAD", cwd=git_repo)
         executor = _make_executor(_RealGitWorkspace(git_repo), _mock_sm(branch_head_sha=baseline.strip()))
 
-        with pytest.raises(RuntimeError, match="変更"):
+        with pytest.raises(NoChangesError, match="変更"):
             await executor._finalize_phase_commit(
                 _make_request(),
                 summary="実装",
@@ -248,6 +249,41 @@ class TestNoChangePolicy:
 
         await executor._finalize_phase_commit(
             _make_request(phase="fix"),
+            summary="実装",
+            commit_type="feat",
+            allow_no_changes=False,
+        )  # 例外が出ないこと
+
+
+# ---------------------------------------------------------------------------
+# 例外型の分離（NoChangesError vs RuntimeError）
+# ---------------------------------------------------------------------------
+
+
+class TestErrorTypeSeparation:
+    """git 操作失敗は RuntimeError、無作業は NoChangesError で区別される。"""
+
+    async def test_push_failure_is_not_no_changes_error(self, git_repo: Path) -> None:
+        """push 失敗は NoChangesError ではない（呼び出し側で飲み込まれない）。"""
+        (git_repo / "src.py").write_text("code\n")
+        # origin を壊して push を失敗させる
+        await _git("remote", "set-url", "origin", "/nonexistent/origin.git", cwd=git_repo)
+        executor = _make_executor(_RealGitWorkspace(git_repo), _mock_sm())
+
+        with pytest.raises(RuntimeError, match="push") as exc_info:
+            await executor._finalize_phase_commit(
+                _make_request(),
+                summary="実装",
+                commit_type="feat",
+            )
+        assert not isinstance(exc_info.value, NoChangesError)
+
+    async def test_no_baseline_returns_with_warning(self, git_repo: Path) -> None:
+        """baseline 未記録時は無作業判定不可のため警告のみで正常終了。"""
+        executor = _make_executor(_RealGitWorkspace(git_repo), _mock_sm(branch_head_sha=None))
+
+        await executor._finalize_phase_commit(
+            _make_request(),
             summary="実装",
             commit_type="feat",
             allow_no_changes=False,
