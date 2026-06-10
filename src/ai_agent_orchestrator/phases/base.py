@@ -19,6 +19,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# コミット除外パターン（U1: コミット一本化）
+# .gitignore に無くてもコミットに混入させない生成物（git pathspec glob 形式）
+# ---------------------------------------------------------------------------
+
+_COMMIT_EXCLUDE_GLOBS: tuple[str, ...] = (
+    "**/coverage/**",
+    "**/.coverage",
+    "**/.coverage.*",
+    "**/htmlcov/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/.pytest_cache/**",
+    "**/.mypy_cache/**",
+    "**/.ruff_cache/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/.next/**",
+    "**/playwright-report/**",
+    "**/test-results/**",
+)
+
+# ---------------------------------------------------------------------------
 # Next action footer for bot comments
 # ---------------------------------------------------------------------------
 
@@ -612,23 +634,31 @@ class PhaseExecutor(ABC):
         except Exception:
             logger.debug("Failed to record branch baseline for issue #%d", request.issue_number)
 
-    async def _recover_uncommitted_work(
+    async def _finalize_phase_commit(
         self,
         request: TaskRequest,
         *,
+        summary: str,
+        commit_type: str = "feat",
+        allow_no_changes: bool = False,
         branch_prefix: str = "feature",
     ) -> None:
-        """未コミット・未プッシュの作業を自動回復する。
+        """フェーズ終端の唯一のコミット・プッシュ処理（U1: コミット一本化）。
 
-        エージェントがコミット・プッシュを完了せずに終了した場合に、
-        システムが代わりに実行する。feature ブランチへのプッシュなので
-        main は汚染されず、impl-review / CI が品質ゲートとして機能する。
+        エージェントは commit/push を行わない前提で、システムがフェーズ文脈の
+        メッセージ（``{commit_type}: #{issue} {summary}``）でコミット・プッシュする。
+        生成物（coverage/ 等）は除外パススペックでコミット対象から外す。
 
-        失敗時は RuntimeError を送出し、呼び出し元の execute() が
-        _handle_error() 経由で SUSPENDED に遷移する。
+        変更も新コミットも無い場合:
+        - ``allow_no_changes=True``（REVISE 系: 質問回答のみ等）は正常終了
+        - ``False``（IMPLEMENT/FIX 系）は無作業として RuntimeError を送出し、
+          呼び出し元の execute() が _handle_error() 経由で SUSPENDED に遷移する
 
         Args:
             request: タスクリクエスト。
+            summary: コミットメッセージの要約（フェーズ文脈から呼び出し元が指定）。
+            commit_type: conventional commits のタイプ（feat / fix / docs 等）。
+            allow_no_changes: 変更ゼロを正常とみなすか。
             branch_prefix: ブランチプレフィックス。
         """
         worktree = await self._workspace.create_worktree(
@@ -639,110 +669,88 @@ class PhaseExecutor(ABC):
         wt = str(worktree)
         branch_name = f"{branch_prefix}/issue-{request.issue_number}"
 
-        # 1. 未コミットファイルの確認
+        # 1. 作業ツリーの変更を確認し、生成物を除外してステージ
+        committed = False
         rc, stdout, _ = await self._workspace._run_git("status", "--porcelain", cwd=wt)
-        has_uncommitted = rc == 0 and stdout.strip() != ""
+        if rc == 0 and stdout.strip() != "":
+            add_args = ["add", "-A", "--", "."] + [f":(glob,exclude){g}" for g in _COMMIT_EXCLUDE_GLOBS]
+            rc, _, stderr = await self._workspace._run_git(*add_args, cwd=wt)
+            if rc != 0:
+                msg = f"Issue #{request.issue_number}: git add 失敗: {stderr}"
+                raise RuntimeError(msg)
 
-        # 2. 未プッシュコミットの確認
+            # 除外後に実際にステージされた変更があるか（生成物のみなら何も残らない）
+            rc_diff, _, _ = await self._workspace._run_git("diff", "--cached", "--quiet", cwd=wt)
+            if rc_diff != 0:
+                commit_msg = f"{commit_type}: #{request.issue_number} {summary}"
+                rc, _, stderr = await self._workspace._run_git("commit", "-m", commit_msg, cwd=wt)
+                if rc != 0:
+                    msg = f"Issue #{request.issue_number}: git commit 失敗: {stderr}"
+                    raise RuntimeError(msg)
+                committed = True
+
+        # 2. 未プッシュコミットの確認（途中失敗からの回復も兼ねる）
         rc, stdout, _ = await self._workspace._run_git(
             "log",
             f"origin/{branch_name}..HEAD",
             "--oneline",
             cwd=wt,
         )
-        has_unpushed = rc == 0 and stdout.strip() != ""
+        has_unpushed = committed or (rc == 0 and stdout.strip() != "")
 
-        if not has_uncommitted and not has_unpushed:
-            # 3. baseline SHA があれば、新コミットが remote に存在するか確認
-            state = self._sm.get_state(self._issue_key(request))
-            baseline = state.branch_head_sha if state else None
-            if baseline:
-                rc, stdout, _ = await self._workspace._run_git(
-                    "log",
-                    f"{baseline}..origin/{branch_name}",
-                    "--oneline",
-                    cwd=wt,
-                )
-                new_commits = rc == 0 and stdout.strip() != ""
-                if not new_commits:
-                    # フェーズが外部変更されていた場合は RuntimeError を抑制
-                    current_phase = self._sm.get_phase(self._issue_key(request))
-                    req_phase_str = str(request.phase).replace("Phase.", "").replace("_", "-").lower()
-                    if isinstance(current_phase, Phase) and current_phase.value != req_phase_str:
-                        logger.warning(
-                            "Issue #%d: phase changed externally (%s → %s) "
-                            "during recovery check, skipping no-commit error",
-                            request.issue_number,
-                            req_phase_str,
-                            current_phase.value,
-                        )
-                        return
-                    msg = (
-                        f"Issue #{request.issue_number}: "
-                        "エージェントがコードの変更・コミット・プッシュを行いませんでした。"
+        if has_unpushed:
+            rc_push, _, stderr = await self._workspace._run_git(
+                "push",
+                "origin",
+                branch_name,
+                cwd=wt,
+            )
+            if rc_push != 0:
+                msg = f"Issue #{request.issue_number}: git push 失敗: {stderr}"
+                raise RuntimeError(msg)
+            logger.info(
+                "Issue #%d: phase commit finalized (committed=%s)",
+                request.issue_number,
+                committed,
+            )
+            await self._tracker.track(
+                "phase_committed",
+                issue_number=request.issue_number,
+                phase=str(request.phase),
+                data={"committed": committed, "commit_type": commit_type, "summary": summary},
+            )
+            return
+
+        # 3. 変更なし・未プッシュなし
+        if allow_no_changes:
+            return  # 正常（REVISE 系: 質問回答のみ等）
+
+        # 無作業検知（IMPLEMENT/FIX 系）: baseline 以降に remote へ新コミットが
+        # あれば正常、無ければ失敗として SUSPENDED に落とす
+        state = self._sm.get_state(self._issue_key(request))
+        baseline = state.branch_head_sha if state else None
+        if baseline:
+            rc, stdout, _ = await self._workspace._run_git(
+                "log",
+                f"{baseline}..origin/{branch_name}",
+                "--oneline",
+                cwd=wt,
+            )
+            new_commits = rc == 0 and stdout.strip() != ""
+            if not new_commits:
+                # フェーズが外部変更されていた場合は RuntimeError を抑制
+                current_phase = self._sm.get_phase(self._issue_key(request))
+                req_phase_str = str(request.phase).replace("Phase.", "").replace("_", "-").lower()
+                if isinstance(current_phase, Phase) and current_phase.value != req_phase_str:
+                    logger.warning(
+                        "Issue #%d: phase changed externally (%s → %s) during finalize check, skipping no-change error",
+                        request.issue_number,
+                        req_phase_str,
+                        current_phase.value,
                     )
-                    raise RuntimeError(msg)
-            return  # 正常: コミット・プッシュ済み
-
-        # --- 自動回復 ---
-        recovered_actions: list[str] = []
-
-        if has_uncommitted:
-            logger.warning(
-                "Issue #%d: uncommitted files detected, auto-committing",
-                request.issue_number,
-            )
-            # git add -A
-            rc, _, stderr = await self._workspace._run_git("add", "-A", cwd=wt)
-            if rc != 0:
-                msg = f"Issue #{request.issue_number}: git add 失敗: {stderr}"
+                    return
+                msg = f"Issue #{request.issue_number}: エージェントがコードの変更を行いませんでした。"
                 raise RuntimeError(msg)
-
-            # git commit
-            commit_msg = f"feat: #{request.issue_number} 自動コミット (エージェント未コミット分)"
-            rc, _, stderr = await self._workspace._run_git("commit", "-m", commit_msg, cwd=wt)
-            if rc != 0:
-                msg = f"Issue #{request.issue_number}: git commit 失敗: {stderr}"
-                raise RuntimeError(msg)
-            recovered_actions.append("auto-commit")
-
-        # push
-        rc_push, _, stderr = await self._workspace._run_git(
-            "push",
-            "origin",
-            branch_name,
-            cwd=wt,
-        )
-        if rc_push != 0:
-            msg = f"Issue #{request.issue_number}: git push 失敗: {stderr}"
-            raise RuntimeError(msg)
-        recovered_actions.append("auto-push")
-
-        # 回復ログ
-        actions_str = " + ".join(recovered_actions)
-        logger.info(
-            "Issue #%d: auto-recovery succeeded (%s)",
-            request.issue_number,
-            actions_str,
-        )
-        await self._tracker.track(
-            "uncommitted_work_recovered",
-            issue_number=request.issue_number,
-            phase=str(request.phase),
-            data={"actions": recovered_actions},
-        )
-
-        # Issue コメントで通知
-        try:
-            client = await self._get_client(request.repo)
-            await client.create_comment(
-                request.repo,
-                request.issue_number,
-                f"⚠️ エージェントが変更をコミット/プッシュせずに終了したため、"
-                f"システムが自動回復しました ({actions_str})。",
-            )
-        except Exception:
-            logger.debug("Failed to post recovery comment for issue #%d", request.issue_number)
 
     # ------------------------------------------------------------------
     # Utility helpers

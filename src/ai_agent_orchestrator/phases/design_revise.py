@@ -45,8 +45,7 @@ class DesignReviseExecutor(PhaseExecutor):
             f"## レビュー指摘内容\n{comments}\n\n"
             f"## 指示\n"
             f"1. 設計書を修正する\n"
-            f"2. git add && git commit (コミットメッセージは日本語で)\n"
-            f"3. git push origin feature/issue-{request.issue_number}\n"
+            f"2. **git commit / push は不要です** (システムが行います)\n"
         )
         return enhance_prompt(raw, "design-revise")
 
@@ -84,7 +83,14 @@ class DesignReviseExecutor(PhaseExecutor):
         if state:
             state.session_id = result.session_id
 
-        await self._recover_uncommitted_work(request, branch_prefix="feature")
+        # REVISE 系: 質問への回答のみ等、変更ゼロでも正常
+        await self._finalize_phase_commit(
+            request,
+            summary="設計レビュー指摘に対応",
+            commit_type="docs",
+            allow_no_changes=True,
+            branch_prefix="feature",
+        )
 
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:design-review")

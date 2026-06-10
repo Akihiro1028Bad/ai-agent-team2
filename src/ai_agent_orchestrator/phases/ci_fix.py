@@ -17,7 +17,7 @@ class CiFixExecutor(PhaseExecutor):
     """CI 失敗自動修正フェーズ (最大 3 回)。
 
     CI_FIX 完了後のフロー:
-    1. CiFixExecutor がコード修正 + git push
+    1. CiFixExecutor がコード修正 (commit/push はシステムが実行)
     2. CI が自動実行される (GitHub Actions 等)
     3. Poller が CI 結果を検知
     4. CI_PASSED -> EventRouter が IMPL_REVIEW に遷移
@@ -53,7 +53,7 @@ class CiFixExecutor(PhaseExecutor):
             f"1. 上記エラーサマリーを確認して原因を特定\n"
             f"2. コードを修正\n"
             f"3. テスト・lint・ビルドをローカルで再実行して確認\n"
-            f"4. git commit して Push (コミットメッセージは日本語で)"
+            f"4. **git commit / push は不要です** (システムが行います)"
         )
         return enhance_prompt(raw, "ci-fix")
 
@@ -78,9 +78,14 @@ class CiFixExecutor(PhaseExecutor):
             state.session_id = result.session_id
 
         try:
-            await self._recover_uncommitted_work(request, branch_prefix="feature")
+            await self._finalize_phase_commit(
+                request,
+                summary="CI 失敗を修正",
+                commit_type="fix",
+                branch_prefix="feature",
+            )
         except RuntimeError as exc:
-            # エージェントがコードを変更・コミット・プッシュしなかった場合
+            # エージェントがコードを変更しなかった場合
             retry_count = state.retry_count if state else 0
             logger.warning(
                 "Issue #%d: CI_FIX agent did not commit (attempt %d/3): %s",

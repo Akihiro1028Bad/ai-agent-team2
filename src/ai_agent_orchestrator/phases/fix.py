@@ -62,9 +62,7 @@ class FixExecutor(PhaseExecutor):
             f"1. 修正方針に従ってコードを修正\n"
             f"2. 再現テスト・リグレッションテストを作成\n"
             f"3. テスト・lint を実行して確認\n"
-            f"4. git commit して Push (コミットメッセージは日本語で)\n"
-            f"5. PRを作成 (タイトル・本文は日本語で)\n"
-            f"6. PR descriptionに修正方針を再掲"
+            f"4. **git commit / push / PR 作成は不要です** (システムが行います)"
         )
         return enhance_prompt(raw, "fix")
 
@@ -75,7 +73,12 @@ class FixExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
-        await self._recover_uncommitted_work(request, branch_prefix="feature")
+        await self._finalize_phase_commit(
+            request,
+            summary="バグ修正を実装",
+            commit_type="fix",
+            branch_prefix="feature",
+        )
 
         # PR番号を確実に取得 (エージェント出力 → 既存PR検索 → API作成)
         pr_number = await self._ensure_pr_created(

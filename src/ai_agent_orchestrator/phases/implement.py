@@ -290,7 +290,12 @@ class ImplementExecutor(PhaseExecutor):
 
             # 変更なしでも次のサブタスクへ進む (suspended にしない)
             try:
-                await self._recover_uncommitted_work(request, branch_prefix="feature")
+                await self._finalize_phase_commit(
+                    request,
+                    summary=f"subtask-{subtask.id} {subtask.title}",
+                    commit_type="feat",
+                    branch_prefix="feature",
+                )
             except RuntimeError:
                 logger.warning(
                     "Issue #%d: subtask %d/%d made no changes, continuing to next",
@@ -368,8 +373,9 @@ class ImplementExecutor(PhaseExecutor):
             f"## 実装指示\n"
             f"1. 上記スコープのファイル **のみ** を実装してください\n"
             f"2. スコープ外のファイルは変更しないでください\n"
-            f"3. git commit して Push (コミットメッセージは日本語で)\n"
-            f"4. **PR はまだ作成しないでください** (全サブタスク完了後に作成します)\n"
+            f"3. テスト・lint を実行して確認してください\n"
+            f"4. **git commit / push は不要です** (システムが行います)\n"
+            f"5. **PR は作成しないでください** (全サブタスク完了後にシステムが作成します)\n"
         )
         return enhance_prompt(raw, "implement")
 
@@ -428,7 +434,12 @@ class ImplementExecutor(PhaseExecutor):
             last_result = result
 
             try:
-                await self._recover_uncommitted_work(request, branch_prefix="feature")
+                await self._finalize_phase_commit(
+                    request,
+                    summary=f"実装パス {iteration + 1}",
+                    commit_type="feat",
+                    branch_prefix="feature",
+                )
             except RuntimeError:
                 logger.warning(
                     "Issue #%d: no changes in pass %d, stopping and finalizing with current progress",
@@ -535,9 +546,7 @@ class ImplementExecutor(PhaseExecutor):
             f"1. 実装計画の順序に従ってコードを実装\n"
             f"2. テストコードも作成\n"
             f"3. テスト・lint・ビルドを実行して確認\n"
-            f"4. git commit して Push (コミットメッセージは日本語で)\n"
-            f"5. PRを作成 (タイトル・本文は日本語で)\n"
-            f"6. PR descriptionに変更概要を含める"
+            f"4. **git commit / push / PR 作成は不要です** (システムが行います)"
         )
         return enhance_prompt(raw, "implement")
 
@@ -548,7 +557,12 @@ class ImplementExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
-        await self._recover_uncommitted_work(request, branch_prefix="feature")
+        await self._finalize_phase_commit(
+            request,
+            summary="実装を完了",
+            commit_type="feat",
+            branch_prefix="feature",
+        )
         await self._finalize(request, result)
 
     # ------------------------------------------------------------------
@@ -597,7 +611,7 @@ class ImplementExecutor(PhaseExecutor):
             f"2. 既にコミット済みの内容は変更不要\n"
             f"3. テストコードも作成\n"
             f"4. テスト・lint・ビルドを実行して確認\n"
-            f"5. git commit して Push (コミットメッセージは日本語で)\n"
+            f"5. **git commit / push は不要です** (システムが行います)\n"
         )
 
     @staticmethod

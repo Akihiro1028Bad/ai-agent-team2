@@ -897,7 +897,7 @@ class TestCiFixExecutor:
         mock_context: AsyncMock,
         mock_sm: MagicMock,
     ) -> None:
-        """increment_ci_retry が _recover_uncommitted_work より先に呼ばれる."""
+        """increment_ci_retry が _finalize_phase_commit より先に呼ばれる."""
         call_order: list[str] = []
 
         async def fake_increment(issue_number: int) -> None:
@@ -913,7 +913,7 @@ class TestCiFixExecutor:
         async def patched_recover(*args: Any, **kwargs: Any) -> None:
             call_order.append("recover")
 
-        executor._recover_uncommitted_work = patched_recover  # type: ignore[method-assign]
+        executor._finalize_phase_commit = patched_recover  # type: ignore[method-assign]
 
         request = _make_request(phase="ci-fix")
         result = AgentResult(session_id="s1", output="fixed", tool_uses=[], cost_usd=0.1, duration_sec=5.0)
@@ -942,7 +942,7 @@ class TestCiFixExecutor:
         async def raise_runtime(*args: Any, **kwargs: Any) -> None:
             raise RuntimeError("no commit")
 
-        executor._recover_uncommitted_work = raise_runtime  # type: ignore[method-assign]
+        executor._finalize_phase_commit = raise_runtime  # type: ignore[method-assign]
 
         request = _make_request(phase="ci-fix")
         result = AgentResult(session_id="s1", output="", tool_uses=[], cost_usd=0.1, duration_sec=5.0)
@@ -971,7 +971,7 @@ class TestCiFixExecutor:
         async def raise_runtime(*args: Any, **kwargs: Any) -> None:
             raise RuntimeError("no commit")
 
-        executor._recover_uncommitted_work = raise_runtime  # type: ignore[method-assign]
+        executor._finalize_phase_commit = raise_runtime  # type: ignore[method-assign]
 
         request = _make_request(phase="ci-fix")
         result = AgentResult(session_id="s1", output="", tool_uses=[], cost_usd=0.1, duration_sec=5.0)
@@ -997,7 +997,7 @@ class TestCiFixExecutor:
         async def ok_recover(*args: Any, **kwargs: Any) -> None:
             return
 
-        executor._recover_uncommitted_work = ok_recover  # type: ignore[method-assign]
+        executor._finalize_phase_commit = ok_recover  # type: ignore[method-assign]
 
         request = _make_request(phase="ci-fix")
         result = AgentResult(session_id="s1", output="fixed", tool_uses=[], cost_usd=0.1, duration_sec=5.0)

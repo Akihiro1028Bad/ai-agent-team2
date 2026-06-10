@@ -87,9 +87,7 @@ class DesignExecutor(PhaseExecutor):
             f"1. docs/designs/issue-{request.issue_number}.md に設計書を作成\n"
             f"   設計書には設計内容に加え、**末尾に `## サブタスク` セクション** "
             f"(実装計画) を必ず含めること\n"
-            f"2. git commit して Push (コミットメッセージは日本語で)\n"
-            f"3. PRを作成 (タイトル・本文は日本語で、Closes #{request.issue_number} を含める)\n"
-            f"4. PRのURLを出力"
+            f"2. **git commit / push / PR 作成は不要です** (システムが行います)"
             f"\n\n## 設計書末尾の `## サブタスク` セクション (必ず守ること)\n\n"
             f"設計書の末尾に以下のフォーマットで `## サブタスク` セクションを含めること。\n"
             f"このセクションは後続フェーズが自動的に読み取り構造を検証するため、"
@@ -127,7 +125,12 @@ class DesignExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
-        await self._recover_uncommitted_work(request, branch_prefix="feature")
+        await self._finalize_phase_commit(
+            request,
+            summary="設計書を作成",
+            commit_type="docs",
+            branch_prefix="feature",
+        )
 
         # 設計フェーズでソースコードが作成された場合の警告
         await self._warn_if_source_files_added(request)
@@ -198,11 +201,17 @@ class DesignExecutor(PhaseExecutor):
             fix_prompt = (
                 f"docs/designs/issue-{request.issue_number}.md を作成または修正し、"
                 f"## サブタスク セクション（### subtask-N: ＋ files/depends_on/description、"
-                f"連番・循環なし・テストファイル必須）を含めて commit/push してください。\n"
+                f"連番・循環なし・テストファイル必須）を含めてください。"
+                f"commit / push は不要です (システムが行います)。\n"
                 f"現在の問題点:\n" + "\n".join(f"- {e}" for e in errors)
             )
             await self.run_agent(request, fix_prompt)
-            await self._recover_uncommitted_work(request, branch_prefix="feature")
+            await self._finalize_phase_commit(
+                request,
+                summary="設計書を修正（再検証対応）",
+                commit_type="docs",
+                branch_prefix="feature",
+            )
 
         remaining = self._validate_design_doc(design_path, str(worktree))
         if remaining:
