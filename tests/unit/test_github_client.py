@@ -940,6 +940,11 @@ async def test_get_pr_review_comments_returns_expected_fields(
     assert c["path"] == "src/foo.py"
     assert c["line"] == 99
     assert "created_at" in c
+    # U2: インラインのみレビュー検知用フィールド。
+    # in_reply_to_id は JSON に存在しない場合 githubkit が UNSET を返すため
+    # None に正規化されること（is None 判定が成立すること）を検証する
+    assert c["pull_request_review_id"] == 1
+    assert c["in_reply_to_id"] is None
 
 
 # ──────────────────────────────────────
