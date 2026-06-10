@@ -3,6 +3,10 @@
 ImplementExecutor から呼ばれる fix フェーズ固有の処理
 （修正方針コメントの参照・修正 PR の作成と通知）を提供する。
 旧 fix.py の FixExecutor から移植し、挙動は維持している。
+
+注意: 循環 import 回避のため executor を引数で受け、そのプライベート
+メソッド（_get_client / _ensure_pr_created 等）に依存する。
+PhaseExecutor 側のシグネチャ変更時は本モジュールも追従が必要。
 """
 
 from __future__ import annotations
@@ -15,6 +19,23 @@ if TYPE_CHECKING:
     from ai_agent_orchestrator.phases.base import PhaseExecutor
 
 logger = logging.getLogger(__name__)
+
+
+def is_fix_phase(request: TaskRequest) -> bool:
+    """リクエストが旧 FIX フェーズかどうかを判定する。
+
+    request.phase は Phase enum / 文字列の両方があり得るため正規化して比較する。
+
+    Args:
+        request: タスクリクエスト。
+
+    Returns:
+        fix フェーズなら True。
+    """
+    from ai_agent_orchestrator.models import Phase
+
+    value = request.phase.value if isinstance(request.phase, Phase) else str(request.phase)
+    return value.replace("_", "-").lower() == "fix"
 
 
 async def build_fix_prompt(executor: PhaseExecutor, request: TaskRequest) -> str:
@@ -68,7 +89,10 @@ async def finalize_fix(
     request: TaskRequest,
     result: AgentResult,
 ) -> None:
-    """修正 PR を作成し IMPL_REVIEW に遷移する（旧 FixExecutor.process_result 相当）。
+    """修正 PR を作成し IMPL_REVIEW に遷移する。
+
+    コミットは呼び出し元（ImplementExecutor._execute_fix）が
+    _finalize_phase_commit で実施済みであることを前提とする。
 
     Args:
         executor: 呼び出し元の executor。

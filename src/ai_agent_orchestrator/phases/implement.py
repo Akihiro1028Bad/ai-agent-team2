@@ -15,6 +15,7 @@ from ai_agent_orchestrator.context.engine import (
 )
 from ai_agent_orchestrator.models import AgentResult, Phase, Subtask
 from ai_agent_orchestrator.phases.base import NoChangesError, PhaseExecutor
+from ai_agent_orchestrator.phases.fix_flow import is_fix_phase
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.models import TaskRequest
@@ -28,21 +29,6 @@ _COMPLETION_THRESHOLD = 0.8  # 計画ファイルの 80% 以上が変更済み�
 # 実装計画からファイルパスを抽出するパターン (ドキュメント拡張子は除外)
 _FILE_PATH_PATTERN = re.compile(r"[`*]*([a-zA-Z_][\w./\-]*\.\w{1,5})[`*]*")
 _IMPL_SOURCE_EXTENSIONS = _ALL_SOURCE_EXTENSIONS - {".md", ".rst"}
-
-
-def _is_fix_phase(request: TaskRequest) -> bool:
-    """リクエストが旧 FIX フェーズかどうかを判定する。
-
-    request.phase は Phase enum / 文字列の両方があり得るため正規化して比較する。
-
-    Args:
-        request: タスクリクエスト。
-
-    Returns:
-        fix フェーズなら True。
-    """
-    phase_str = str(request.phase).replace("Phase.", "").replace("_", "-").lower()
-    return phase_str == "fix"
 
 
 def extract_planned_files(impl_plan_text: str) -> set[str]:
@@ -187,7 +173,7 @@ class ImplementExecutor(PhaseExecutor):
                 phase=str(request.phase),
             )
 
-            if _is_fix_phase(request):
+            if is_fix_phase(request):
                 result = await self._execute_fix(request)
                 await self._tracker.track(
                     "phase_end",
@@ -266,13 +252,26 @@ class ImplementExecutor(PhaseExecutor):
         from ai_agent_orchestrator.phases.fix_flow import build_fix_prompt, finalize_fix
 
         prompt = await build_fix_prompt(self, request)
+        logger.debug(
+            "fix flow: prompt built (%d chars) for issue #%d",
+            len(prompt),
+            request.issue_number,
+        )
         await self._record_branch_baseline(request)
         result = await self.run_agent(request, prompt)
+        logger.debug(
+            "fix flow: agent finished for issue #%d (cost=$%.4f, %.1fs)",
+            request.issue_number,
+            result.cost_usd,
+            result.duration_sec,
+        )
 
+        # fix は無作業を失敗として検知する（変更ゼロ正常は REVISE 系のみ）
         await self._finalize_phase_commit(
             request,
             summary="バグ修正を実装",
             commit_type="fix",
+            allow_no_changes=False,
             branch_prefix="feature",
         )
         await finalize_fix(self, request, result)
