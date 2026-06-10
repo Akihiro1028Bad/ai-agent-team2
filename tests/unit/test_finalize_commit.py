@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ai_agent_orchestrator.phases.base import NoChangesError
-from ai_agent_orchestrator.phases.fix import FixExecutor
+from ai_agent_orchestrator.phases.implement import ImplementExecutor
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -62,8 +62,8 @@ def _make_request(issue_number: int = 1, phase: str = "fix") -> MagicMock:
     return req
 
 
-def _make_executor(workspace: Any, sm: Any) -> FixExecutor:
-    return FixExecutor(
+def _make_executor(workspace: Any, sm: Any) -> ImplementExecutor:
+    return ImplementExecutor(
         AsyncMock(),  # runner
         AsyncMock(),  # github
         AsyncMock(),  # notifier

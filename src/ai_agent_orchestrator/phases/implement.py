@@ -15,6 +15,7 @@ from ai_agent_orchestrator.context.engine import (
 )
 from ai_agent_orchestrator.models import AgentResult, Phase, Subtask
 from ai_agent_orchestrator.phases.base import NoChangesError, PhaseExecutor
+from ai_agent_orchestrator.phases.fix_flow import build_fix_prompt, finalize_fix, is_fix_phase
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.models import TaskRequest
@@ -145,18 +146,22 @@ def parse_subtasks(impl_plan_text: str) -> list[Subtask]:
 
 
 class ImplementExecutor(PhaseExecutor):
-    """コード実装フェーズ (サブタスク対応)。
+    """コード実装フェーズ (サブタスク対応・Bug 修正統合)。
 
     実装計画に基づいてコードを実装し、テスト・lint を実行した上で
     PR を作成する。計画にサブタスクが含まれる場合はサブタスク単位で
     エージェントを実行する。サブタスクがない場合は旧来のマルチパスループにフォールバック。
+
+    U5a (#94): 旧 FIX フェーズも本 executor が処理する（enum は不変。
+    request.phase が fix の場合は修正方針コメントに基づく単一パスで実行）。
     """
 
     async def execute(self, request: TaskRequest) -> None:
         """実装を実行する。
 
-        計画ファイルにサブタスクセクションがあればサブタスクイテレータで実行し、
-        なければ旧来のマルチパスループ (_execute_legacy_multipass) にフォールバックする。
+        fix フェーズの場合は修正方針ベースの単一パスを実行する。
+        それ以外は、計画ファイルにサブタスクセクションがあればサブタスク
+        イテレータで実行し、なければ旧来のマルチパスループにフォールバックする。
 
         Args:
             request: タスクリクエスト。
@@ -167,6 +172,16 @@ class ImplementExecutor(PhaseExecutor):
                 issue_number=request.issue_number,
                 phase=str(request.phase),
             )
+
+            if is_fix_phase(request):
+                result = await self._execute_fix(request)
+                await self._tracker.track(
+                    "phase_end",
+                    issue_number=request.issue_number,
+                    phase=str(request.phase),
+                    data={"cost_usd": result.cost_usd, "duration_sec": result.duration_sec},
+                )
+                return
 
             wt_path = str(
                 await self._workspace.create_worktree(
@@ -217,6 +232,48 @@ class ImplementExecutor(PhaseExecutor):
             await self._handle_timeout(request)
         except Exception as exc:
             await self._handle_error(request, exc)
+
+    # ------------------------------------------------------------------
+    # Fix flow (U5a: 旧 FIX フェーズの統合)
+    # ------------------------------------------------------------------
+
+    async def _execute_fix(self, request: TaskRequest) -> AgentResult:
+        """Bug 修正フローを単一パスで実行する。
+
+        修正方針コメントに基づくプロンプトでエージェントを実行し、
+        コミット・修正 PR 作成・IMPL_REVIEW 遷移まで行う。
+
+        Args:
+            request: タスクリクエスト。
+
+        Returns:
+            エージェント実行結果。
+        """
+        prompt = await build_fix_prompt(self, request)
+        logger.debug(
+            "fix flow: prompt built (%d chars) for issue #%d",
+            len(prompt),
+            request.issue_number,
+        )
+        await self._record_branch_baseline(request)
+        result = await self.run_agent(request, prompt)
+        logger.debug(
+            "fix flow: agent finished for issue #%d (cost=$%.4f, %.1fs)",
+            request.issue_number,
+            result.cost_usd,
+            result.duration_sec,
+        )
+
+        # fix は無作業を失敗として検知する（変更ゼロ正常は REVISE 系のみ）
+        await self._finalize_phase_commit(
+            request,
+            summary="バグ修正を実装",
+            commit_type="fix",
+            allow_no_changes=False,
+            branch_prefix="feature",
+        )
+        await finalize_fix(self, request, result)
+        return result
 
     # ------------------------------------------------------------------
     # Subtask execution
