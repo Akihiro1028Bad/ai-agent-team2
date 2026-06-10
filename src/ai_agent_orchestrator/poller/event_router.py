@@ -672,6 +672,8 @@ class EventRouter:
                 extra={
                     "comments": comments_text,
                     "review_comment_ids": comment_ids,
+                    # 構造化リスト（U2: 修正要求/質問の分類と ID 対応付けに使用）
+                    "review_comments": all_review_comments,
                 },
             )
         )
