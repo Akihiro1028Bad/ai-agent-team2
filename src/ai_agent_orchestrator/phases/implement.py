@@ -15,7 +15,7 @@ from ai_agent_orchestrator.context.engine import (
 )
 from ai_agent_orchestrator.models import AgentResult, Phase, Subtask
 from ai_agent_orchestrator.phases.base import NoChangesError, PhaseExecutor
-from ai_agent_orchestrator.phases.fix_flow import is_fix_phase
+from ai_agent_orchestrator.phases.fix_flow import build_fix_prompt, finalize_fix, is_fix_phase
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.models import TaskRequest
@@ -249,8 +249,6 @@ class ImplementExecutor(PhaseExecutor):
         Returns:
             エージェント実行結果。
         """
-        from ai_agent_orchestrator.phases.fix_flow import build_fix_prompt, finalize_fix
-
         prompt = await build_fix_prompt(self, request)
         logger.debug(
             "fix flow: prompt built (%d chars) for issue #%d",
