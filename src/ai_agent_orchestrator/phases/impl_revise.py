@@ -80,7 +80,7 @@ class ImplReviseExecutor(PhaseExecutor):
             f"## 指示\n"
             f"1. 全てのレビュー指摘に基づいてコードを修正する\n"
             f"2. テスト・lint・ビルドを実行して確認する\n"
-            f"3. git commit して push する (コミットメッセージは日本語で)\n"
+            f"3. **git commit / push は不要です** (システムが行います)\n"
         )
         return enhance_prompt(raw, "impl-revise")
 
@@ -118,7 +118,14 @@ class ImplReviseExecutor(PhaseExecutor):
         if state:
             state.session_id = result.session_id
 
-        await self._recover_uncommitted_work(request, branch_prefix="feature")
+        # REVISE 系: 質問への回答のみ等、変更ゼロでも正常
+        await self._finalize_phase_commit(
+            request,
+            summary="実装レビュー指摘に対応",
+            commit_type="fix",
+            allow_no_changes=True,
+            branch_prefix="feature",
+        )
 
         client = await self._get_client(request.repo)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:impl-review")
