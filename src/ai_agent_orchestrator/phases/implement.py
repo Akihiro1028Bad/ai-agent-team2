@@ -30,6 +30,21 @@ _FILE_PATH_PATTERN = re.compile(r"[`*]*([a-zA-Z_][\w./\-]*\.\w{1,5})[`*]*")
 _IMPL_SOURCE_EXTENSIONS = _ALL_SOURCE_EXTENSIONS - {".md", ".rst"}
 
 
+def _is_fix_phase(request: TaskRequest) -> bool:
+    """リクエストが旧 FIX フェーズかどうかを判定する。
+
+    request.phase は Phase enum / 文字列の両方があり得るため正規化して比較する。
+
+    Args:
+        request: タスクリクエスト。
+
+    Returns:
+        fix フェーズなら True。
+    """
+    phase_str = str(request.phase).replace("Phase.", "").replace("_", "-").lower()
+    return phase_str == "fix"
+
+
 def extract_planned_files(impl_plan_text: str) -> set[str]:
     """実装計画テキストからファイルパスを抽出する。
 
@@ -145,18 +160,22 @@ def parse_subtasks(impl_plan_text: str) -> list[Subtask]:
 
 
 class ImplementExecutor(PhaseExecutor):
-    """コード実装フェーズ (サブタスク対応)。
+    """コード実装フェーズ (サブタスク対応・Bug 修正統合)。
 
     実装計画に基づいてコードを実装し、テスト・lint を実行した上で
     PR を作成する。計画にサブタスクが含まれる場合はサブタスク単位で
     エージェントを実行する。サブタスクがない場合は旧来のマルチパスループにフォールバック。
+
+    U5a (#94): 旧 FIX フェーズも本 executor が処理する（enum は不変。
+    request.phase が fix の場合は修正方針コメントに基づく単一パスで実行）。
     """
 
     async def execute(self, request: TaskRequest) -> None:
         """実装を実行する。
 
-        計画ファイルにサブタスクセクションがあればサブタスクイテレータで実行し、
-        なければ旧来のマルチパスループ (_execute_legacy_multipass) にフォールバックする。
+        fix フェーズの場合は修正方針ベースの単一パスを実行する。
+        それ以外は、計画ファイルにサブタスクセクションがあればサブタスク
+        イテレータで実行し、なければ旧来のマルチパスループにフォールバックする。
 
         Args:
             request: タスクリクエスト。
@@ -167,6 +186,16 @@ class ImplementExecutor(PhaseExecutor):
                 issue_number=request.issue_number,
                 phase=str(request.phase),
             )
+
+            if _is_fix_phase(request):
+                result = await self._execute_fix(request)
+                await self._tracker.track(
+                    "phase_end",
+                    issue_number=request.issue_number,
+                    phase=str(request.phase),
+                    data={"cost_usd": result.cost_usd, "duration_sec": result.duration_sec},
+                )
+                return
 
             wt_path = str(
                 await self._workspace.create_worktree(
@@ -217,6 +246,37 @@ class ImplementExecutor(PhaseExecutor):
             await self._handle_timeout(request)
         except Exception as exc:
             await self._handle_error(request, exc)
+
+    # ------------------------------------------------------------------
+    # Fix flow (U5a: 旧 FIX フェーズの統合)
+    # ------------------------------------------------------------------
+
+    async def _execute_fix(self, request: TaskRequest) -> AgentResult:
+        """Bug 修正フローを単一パスで実行する。
+
+        修正方針コメントに基づくプロンプトでエージェントを実行し、
+        コミット・修正 PR 作成・IMPL_REVIEW 遷移まで行う。
+
+        Args:
+            request: タスクリクエスト。
+
+        Returns:
+            エージェント実行結果。
+        """
+        from ai_agent_orchestrator.phases.fix_flow import build_fix_prompt, finalize_fix
+
+        prompt = await build_fix_prompt(self, request)
+        await self._record_branch_baseline(request)
+        result = await self.run_agent(request, prompt)
+
+        await self._finalize_phase_commit(
+            request,
+            summary="バグ修正を実装",
+            commit_type="fix",
+            branch_prefix="feature",
+        )
+        await finalize_fix(self, request, result)
+        return result
 
     # ------------------------------------------------------------------
     # Subtask execution
