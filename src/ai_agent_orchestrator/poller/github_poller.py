@@ -806,6 +806,10 @@ class GitHubPoller:
                 approved.append({"state": "approved", "body": "PR merged", "id": f"merged-{pr.number}"})
                 continue
             reviews = await client.get_pr_reviews(repo.owner, repo.repo, pr.number)
+            # body 空の COMMENTED レビュー（インラインコメントのみの一般的なレビュー）
+            # を検知するため、必要時のみ非botトップレベルコメントの所属レビューIDを取得。
+            # 返信のみのレビュー（bot の回答等）は含まれないため自己応答ループしない。
+            inline_review_ids: set[str] | None = None
             last_approved_at: str = ""
             last_commented_at: str = ""
             for review in reviews:
@@ -815,11 +819,16 @@ class GitHubPoller:
                 submitted_at = review.get("submitted_at", "") or ""
                 is_approved = state == "APPROVED"
                 is_lgtm = state == "COMMENTED" and body.strip().upper() == self._approve_comment.upper()
+                has_content = bool(body)
+                if state == "COMMENTED" and not body:
+                    if inline_review_ids is None:
+                        inline_review_ids = await self._get_inline_review_ids(client, repo, pr.number)
+                    has_content = review_id in inline_review_ids
                 if is_approved or is_lgtm:
                     approved.append({"state": "approved", "body": body, "id": review_id})
                     if submitted_at > last_approved_at:
                         last_approved_at = submitted_at
-                elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and body):
+                elif state == "CHANGES_REQUESTED" or (state == "COMMENTED" and has_content):
                     commented.append({"state": "commented", "body": body, "id": review_id})
                     if submitted_at > last_commented_at:
                         last_commented_at = submitted_at
@@ -837,6 +846,43 @@ class GitHubPoller:
             return commented
         # 承認があればコメントは無視(遷移競合を防止)
         return approved if approved else commented
+
+    async def _get_inline_review_ids(
+        self,
+        client: GitHubClient,
+        repo: RepositoryConfig,
+        pr_number: int,
+    ) -> set[str]:
+        """非bot のトップレベルインラインコメントが属するレビュー ID 集合を返す.
+
+        返信コメント（in_reply_to_id あり）と bot コメントは除外されるため、
+        bot が返信した際に生成される空レビューはこの集合に含まれない
+        （自己応答による検知ループの防止）。
+
+        Args:
+            client: GitHub クライアント.
+            repo: リポジトリ設定.
+            pr_number: PR 番号.
+
+        Returns:
+            レビュー ID（文字列）の集合。取得失敗時は空集合。
+        """
+        try:
+            comments = await client.get_pr_review_comments(repo, pr_number)
+        except Exception:
+            logger.debug(
+                "inline-review-id fetch failed for %s/%s#%d",
+                repo.owner,
+                repo.repo,
+                pr_number,
+                exc_info=True,
+            )
+            return set()
+        return {
+            str(c.get("pull_request_review_id"))
+            for c in comments
+            if c.get("pull_request_review_id") is not None and c.get("in_reply_to_id") is None
+        }
 
     async def _check_ci_status(
         self,

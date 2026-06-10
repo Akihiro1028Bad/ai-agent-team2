@@ -558,6 +558,9 @@ class GitHubClient:
                 "path": comment.path,
                 "line": comment.line,
                 "created_at": comment.created_at.isoformat(),
+                # 所属レビュー ID と返信元 ID (インラインのみレビューの検知に使用)
+                "pull_request_review_id": getattr(comment, "pull_request_review_id", None),
+                "in_reply_to_id": getattr(comment, "in_reply_to_id", None),
             }
             for comment in comments_list
             if "<!-- ai-agent-bot -->" not in (comment.body or "")
