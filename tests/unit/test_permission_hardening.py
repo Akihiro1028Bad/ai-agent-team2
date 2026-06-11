@@ -68,6 +68,10 @@ class TestToolPolicyFor:
         for phase in non_shell_config_phases:
             assert tool_policy_for(phase) == ["Bash"], phase
 
+    def test_shell_allowed_phases_are_real_phases(self) -> None:
+        """許可集合は実在フェーズのみ (タイポで許可が無効化される事故を検知)."""
+        assert _SHELL_ALLOWED_PHASES <= set(PHASE_CONFIG)
+
     @pytest.mark.parametrize("phase", ["plan", "implement", "revise"])
     def test_impl_phases_deny_interpreters_and_git_commit(self, phase: str) -> None:
         """インタプリタ直接実行と git commit (U1 一本化) も deny する."""
