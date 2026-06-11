@@ -53,10 +53,12 @@ def classify_pr_review(state: str, body: str, approve_comment: str) -> ApprovalD
 
     if normalized_state == "APPROVED":
         return ApprovalDecision.APPROVED
-    if text and text.upper() == approve_comment.upper():
-        return ApprovalDecision.APPROVED
+    # 明示的な state を本文の慣用句一致より優先する: 「変更を要求」しつつ本文が
+    # LGTM のようなケースで、差し戻し意図が承認へ反転しないよう安全側に倒す
     if normalized_state == "CHANGES_REQUESTED":
         return ApprovalDecision.CHANGES_REQUESTED
+    if text and text.upper() == approve_comment.upper():
+        return ApprovalDecision.APPROVED
     if text:
         return ApprovalDecision.CHANGES_REQUESTED
     return ApprovalDecision.NONE

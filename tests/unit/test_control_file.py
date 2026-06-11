@@ -55,6 +55,20 @@ class TestParseControlLine:
 
         assert parse_control_line('{"issue": 5, "action": "explode"}') is None
 
+    def test_returns_none_on_bool_issue(self) -> None:
+        """issue が bool (int サブクラス) の場合は不正として None を返す."""
+        from ai_agent_orchestrator.orchestrator.control_file import parse_control_line
+
+        assert parse_control_line('{"issue": true, "action": "approve"}') is None
+
+    def test_returns_none_on_non_dict_json(self) -> None:
+        """有効な JSON でも dict でなければ None を返す (配列・文字列・数値)."""
+        from ai_agent_orchestrator.orchestrator.control_file import parse_control_line
+
+        assert parse_control_line("[1, 2]") is None
+        assert parse_control_line('"x"') is None
+        assert parse_control_line("42") is None
+
     def test_blank_line_is_none(self) -> None:
         from ai_agent_orchestrator.orchestrator.control_file import parse_control_line
 
@@ -134,6 +148,17 @@ class TestReadNewControlCommands:
         commands, new_offset = read_new_control_commands(tmp_path / "nope.jsonl", 0, ["alice"])
         assert commands == []
         assert new_offset == 0
+
+    def test_expanduser_path_is_resolved(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """~ を含むパスが home 展開されて読まれる."""
+        from ai_agent_orchestrator.orchestrator.control_file import read_new_control_commands
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        f = tmp_path / "control.jsonl"
+        f.write_text('{"issue": 3, "action": "approve", "approver": "alice"}\n', encoding="utf-8")
+        commands, new_offset = read_new_control_commands(Path("~/control.jsonl"), 0, ["alice"])
+        assert [c.issue_number for c in commands] == [3]
+        assert new_offset == 1
 
 
 if __name__ == "__main__":

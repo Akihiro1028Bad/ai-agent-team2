@@ -47,6 +47,12 @@ class TestClassifyPrReview:
 
         assert classify_pr_review("COMMENTED", "", "LGTM") is ApprovalDecision.NONE
 
+    def test_changes_requested_with_lgtm_body_stays_changes(self) -> None:
+        """明示的な CHANGES_REQUESTED は本文が LGTM でも差し戻し (安全側)."""
+        from ai_agent_orchestrator.orchestrator.approval import ApprovalDecision, classify_pr_review
+
+        assert classify_pr_review("CHANGES_REQUESTED", "LGTM", "LGTM") is ApprovalDecision.CHANGES_REQUESTED
+
 
 # ---------------------------------------------------------------------------
 # 承認者検証 (#102)
