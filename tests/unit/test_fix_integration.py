@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from ai_agent_orchestrator.models import AgentResult
+from ai_agent_orchestrator.models import AgentResult, derive_workflow_params
 from ai_agent_orchestrator.phases.implement import ImplementExecutor
 
 # ---------------------------------------------------------------------------
@@ -68,6 +68,7 @@ def _mock_sm(issue_type: str = "bug") -> MagicMock:
     sm.transition = AsyncMock()
     sm.get_phase = MagicMock(return_value=None)
     sm.get_issue_type = MagicMock(return_value=issue_type)
+    sm.get_workflow_params = MagicMock(side_effect=lambda key: derive_workflow_params(sm.get_issue_type(key)))
     return sm
 
 

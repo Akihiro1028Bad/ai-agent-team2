@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_agent_orchestrator.models import EventType, Phase, PollEvent
+from ai_agent_orchestrator.models import (
+    EventType,
+    Phase,
+    PollEvent,
+    derive_workflow_params,
+)
 from ai_agent_orchestrator.orchestrator.task_queue import Priority
 from ai_agent_orchestrator.poller.event_router import EventRouter
 
@@ -24,6 +29,7 @@ def mock_sm() -> AsyncMock:
     sm.get_phase = MagicMock(return_value="approve")  # 同期メソッド
     sm.get_issue_type = MagicMock(return_value="bug")
     sm.set_issue_type = MagicMock()  # 同期メソッド
+    sm.get_workflow_params = MagicMock(side_effect=lambda key: derive_workflow_params(sm.get_issue_type(key)))
     sm.get_state = MagicMock(return_value=None)  # 同期メソッド
     sm.get_ci_retry_count = AsyncMock(return_value=0)
     return sm
@@ -329,6 +335,7 @@ class TestEventRouterCIResultWithReview:
         sm.get_phase = MagicMock(return_value="approve")
         sm.get_issue_type = MagicMock(return_value="bug")
         sm.set_issue_type = MagicMock()
+        sm.get_workflow_params = MagicMock(side_effect=lambda key: derive_workflow_params(sm.get_issue_type(key)))
         sm.get_ci_retry_count = AsyncMock(return_value=0)
         state = MagicMock()
         state.pr_number = 10
@@ -591,6 +598,7 @@ class TestEventRouterHearingWait:
         sm.get_phase = MagicMock(return_value=Phase.CLARIFY_WAIT)
         sm.get_issue_type = MagicMock(return_value="feature-m")
         sm.set_issue_type = MagicMock()
+        sm.get_workflow_params = MagicMock(side_effect=lambda key: derive_workflow_params(sm.get_issue_type(key)))
         sm.get_ci_retry_count = AsyncMock(return_value=0)
         return sm
 

@@ -14,7 +14,14 @@ from typing import TYPE_CHECKING, Any, Protocol
 from statemachine import State, StateMachine
 from statemachine.exceptions import TransitionNotAllowed
 
-from ai_agent_orchestrator.models import IssueKey, IssueState, Phase, make_issue_key
+from ai_agent_orchestrator.models import (
+    IssueKey,
+    IssueState,
+    Phase,
+    WorkflowParams,
+    derive_workflow_params,
+    make_issue_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -427,6 +434,21 @@ class StateMachineManager:
         """
         state = self._states.get(issue_key)
         return state.issue_type if state else ""
+
+    def get_workflow_params(self, issue_key: IssueKey) -> WorkflowParams:
+        """Issue のワークフローパラメータを取得する (U5c #95).
+
+        INTAKE が付与した issue_type から plan_depth / needs_split /
+        approval_style を導出する。下流フェーズはタイプ分岐の代わりに本パラメータ
+        で振る舞いを切り替える。
+
+        Args:
+            issue_key: IssueKey (repo, issue_number)。
+
+        Returns:
+            導出された WorkflowParams (未登録/未判定は安全側フォールバック)。
+        """
+        return derive_workflow_params(self.get_issue_type(issue_key))
 
     def set_issue_type(self, issue_key: IssueKey, issue_type: str) -> None:
         """Issue のタイプを設定する.

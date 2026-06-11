@@ -19,6 +19,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ai_agent_orchestrator.models import PlanDepth, derive_workflow_params
 from ai_agent_orchestrator.phases.base import PhaseExecutor
 from ai_agent_orchestrator.phases.plan_artifact import (
     build_plan_record,
@@ -52,12 +53,11 @@ _DESIGN_REVIEW_PROMPT = """\
 """
 
 
-def plan_depth_for(issue_type: str) -> str:
-    """issue_type から plan_depth を導出する (U5 #83 ブリッジ)。
+def plan_depth_for(issue_type: str) -> PlanDepth:
+    """issue_type から plan_depth を導出する (U5c #95 で deriver へ集約)。
 
-    統一パイプラインでは PLAN フェーズが light/full を包含するため、
-    深さは issue_type から導出する (bug → light / それ以外 → full)。
-    完全なパラメータ駆動化 (INTAKE がパラメータを付与) は #95 で行う。
+    `derive_workflow_params` を単一の真実点として委譲する薄いラッパー。
+    既存の呼び出し元・テスト互換のために残置している。
 
     Args:
         issue_type: "bug" | "feature-m" | "feature-l" | ""。
@@ -65,7 +65,7 @@ def plan_depth_for(issue_type: str) -> str:
     Returns:
         "light" または "full"。
     """
-    return "light" if issue_type == "bug" else "full"
+    return derive_workflow_params(issue_type).plan_depth
 
 
 class PlanExecutor(PhaseExecutor):
@@ -102,9 +102,9 @@ class PlanExecutor(PhaseExecutor):
         else:
             await self._process_full_result(request, result)
 
-    def _depth(self, request: TaskRequest) -> str:
-        """state の issue_type から plan_depth を導出する."""
-        return plan_depth_for(self._sm.get_issue_type(self._issue_key(request)))
+    def _depth(self, request: TaskRequest) -> PlanDepth:
+        """ワークフローパラメータから plan_depth を取得する (U5c #95)."""
+        return self._sm.get_workflow_params(self._issue_key(request)).plan_depth
 
     # ------------------------------------------------------------------
     # light (旧 analysis) フロー
