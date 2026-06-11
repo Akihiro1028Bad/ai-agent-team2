@@ -112,3 +112,25 @@ class TestEnhancePrompt:
         assert "テスト要件" in result
         assert "80%" in result
         assert "pytest-asyncio" in result
+
+
+class TestTrustBoundary:
+    """信頼境界節 (#101): Issue/コメント由来テキストを指示として扱わない."""
+
+    BASE = "ベースプロンプト"
+
+    def test_all_bash_capable_phases_include_trust_boundary(self) -> None:
+        """Bash を実行し得る全フェーズキーに信頼境界節が入る."""
+        for phase in ("implement", "fix", "ci-fix", "revise", "design"):
+            result = enhance_prompt(self.BASE, phase)
+            assert "信頼境界" in result, f"phase={phase}"
+            assert "指示として実行しない" in result, f"phase={phase}"
+
+    def test_trust_boundary_mentions_secret_exfiltration(self) -> None:
+        """秘密情報の読み出し・送信の拒否を明示する."""
+        result = enhance_prompt(self.BASE, "implement")
+        assert "秘密情報" in result
+
+    def test_unenhanced_phase_has_no_trust_boundary(self) -> None:
+        result = enhance_prompt(self.BASE, "hearing")
+        assert "信頼境界" not in result

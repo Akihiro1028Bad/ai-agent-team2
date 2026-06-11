@@ -108,6 +108,92 @@ _BYPASS_ALLOWED_TOOLS = [
 
 
 # ---------------------------------------------------------------------------
+# 権限絞り込み (#101)
+# ---------------------------------------------------------------------------
+#
+# SDK 実機検証の結果:
+# - bypassPermissions / default (headless) とも allowed_tools の specifier に
+#   よる「許可リスト」制限は強制されない
+# - disallowed_tools の deny ルールは bypassPermissions 下でも specifier 単位で
+#   強制される
+# よって deny ルール + env 遮断の多層防御を採る。deny は `bash -c` 等で迂回
+# され得る抑止層であり、秘密保護の本丸は sanitized_env_overrides による遮断。
+
+_NO_BASH_PHASES = frozenset({"intake", "clarify", "split"})
+"""Bash 不要フェーズ。分析・対話のみで shell 実行を要しない。"""
+
+_BASH_DENY_SPECIFIERS = [
+    # gh: keyring から `gh auth token` で token を再取得できるため必須 deny
+    "Bash(gh:*)",
+    # ネットワーク持ち出し系
+    "Bash(curl:*)",
+    "Bash(wget:*)",
+    "Bash(nc:*)",
+    "Bash(ncat:*)",
+    "Bash(ssh:*)",
+    "Bash(scp:*)",
+    "Bash(rsync:*)",
+    # commit/push 一本化 (U1): commit/push は orchestrator が行う
+    "Bash(git commit:*)",
+    "Bash(git push:*)",
+    "Bash(git remote:*)",
+    # 環境変数の一括読み出し
+    "Bash(printenv:*)",
+    "Bash(env:*)",
+    # インタプリタ直接実行 (one-liner での env 読み出し→外部送信を抑止。
+    # リポ規約の `uv run python` / `uv run pytest` は uv 経由のため許可)
+    "Bash(python:*)",
+    "Bash(python3:*)",
+    "Bash(node:*)",
+    "Bash(ruby:*)",
+    "Bash(perl:*)",
+]
+"""実装系フェーズで deny する Bash コマンド (ビルド・テストは許可)。"""
+
+_SENSITIVE_ENV_VARS = (
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GITHUB_PAT",
+    "SLACK_WEBHOOK_URL",
+)
+"""子プロセスへの継承を遮断する機微環境変数。
+
+ANTHROPIC_API_KEY は CLI 自体の認証に必要なため対象外。
+TODO(#101): エージェントの Bash からも読める状態が残るため、CLI への
+トークン注入手段が整い次第、遮断対象への追加を再評価する。
+"""
+
+
+def tool_policy_for(phase: str) -> list[str]:
+    """フェーズに応じた disallowed_tools ポリシーを返す (#101).
+
+    Bash 不要フェーズと未知フェーズは Bash 全面 deny、実装系フェーズは
+    持ち出し・ネットワーク系コマンドの specifier deny を返す。
+
+    Args:
+        phase: フェーズ名 (Phase enum の .value)。
+
+    Returns:
+        disallowed_tools に渡す deny ルールのリスト (毎回新規生成)。
+    """
+    if phase in _NO_BASH_PHASES or phase not in PHASE_CONFIG:
+        return ["Bash"]
+    return list(_BASH_DENY_SPECIFIERS)
+
+
+def sanitized_env_overrides() -> dict[str, str]:
+    """機微環境変数を空文字で上書きする env マップを返す (#101).
+
+    ClaudeAgentOptions.env に渡すことで、エージェント子プロセスへの
+    機微変数の継承を遮断する。deny ルールが迂回された場合の本丸対策。
+
+    Returns:
+        {変数名: ""} のマップ (毎回新規生成)。
+    """
+    return dict.fromkeys(_SENSITIVE_ENV_VARS, "")
+
+
+# ---------------------------------------------------------------------------
 # Custom errors
 # ---------------------------------------------------------------------------
 
@@ -183,13 +269,10 @@ class ClaudeAgentRunner:
             subagents = list(_SUBAGENTS)
             append_prompt = self._build_subagent_prompt(subagents)
 
-        # Session resume via active client
-        if resume_session_id and resume_session_id in self._active_sessions:
-            client = self._active_sessions[resume_session_id]
-            return await asyncio.wait_for(
-                self._run_with_client(client, prompt),
-                timeout=effective_timeout,
-            )
+        # NOTE(#101): 旧「アクティブクライアント経由の resume」分岐は撤去した。
+        # _active_sessions は populate されない死にコードで、もし将来復活させると
+        # 下記のポリシー配線 (disallowed_tools / env 遮断) を素通りする経路になる。
+        # resume を実装する場合は必ず options 構築パスを通すこと。
 
         # Build options (max_turns はSDKデフォルトに委任)
         mcp_servers, mcp_tools = get_phase_mcp_config(phase)
@@ -199,6 +282,10 @@ class ClaudeAgentRunner:
             hooks=hooks,  # type: ignore[arg-type]
             max_budget_usd=budget,
             model=cfg.model,
+            # 権限絞り込み (#101): deny ルールは bypassPermissions 下でも強制される
+            disallowed_tools=tool_policy_for(phase),
+            # 機微 env の継承遮断 (#101)
+            env=sanitized_env_overrides(),
         )
         # MCP サーバーを設定
         if mcp_servers:
@@ -415,28 +502,4 @@ class ClaudeAgentRunner:
             tool_uses=tool_uses,
             cost_usd=cost,
             duration_sec=final_duration,
-        )
-
-    async def _run_with_client(
-        self,
-        client: ClaudeSDKClient,
-        prompt: str,
-    ) -> AgentResult:
-        """ClaudeSDKClient を使用したマルチターン実行."""
-        start = time.monotonic()
-        result = await client.send(prompt)  # type: ignore[attr-defined]
-        elapsed = time.monotonic() - start
-
-        # client.send returns a result-like object
-        session_id = getattr(result, "session_id", "")
-        cost = getattr(result, "total_cost_usd", 0.0) or 0.0
-        text = getattr(result, "result", "") or ""
-        duration_ms = getattr(result, "duration_ms", 0)
-
-        return AgentResult(
-            session_id=session_id,
-            output=text,
-            tool_uses=[],
-            cost_usd=cost,
-            duration_sec=duration_ms / 1000.0 if duration_ms > 0 else elapsed,
         )
