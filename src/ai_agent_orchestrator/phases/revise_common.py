@@ -269,6 +269,26 @@ class ReviseExecutorBase(PhaseExecutor):
         comments_text, _ = self._normalize_comments(extra)
         pr_number = self._resolve_pr_number(request)
 
+        # 回答済み ID を除外 (#103: router を経由しない呼び出しでも防御)。
+        # getattr + isinstance は旧 state 形式・部分 mock への意図的な防御
+        # （Protocol 宣言済みのため型検査は効く）
+        state = self._sm.get_state(self._issue_key(request))
+        answered_ids_ref = getattr(state, "answered_review_comment_ids", None) if state else None
+        answered = set(answered_ids_ref) if isinstance(answered_ids_ref, list) else set()
+        if answered:
+            original_count = len(review_comment_ids)
+            review_comment_ids = [i for i in review_comment_ids if i not in answered]
+            if original_count > 0 and not review_comment_ids:
+                # 全件回答済み: top-level 分岐に落として create_comment を
+                # 再投稿しない（router 非経由の呼び出しでもスパムを防止）。
+                # summary の投稿もスキップされるが、既回答前提のため意図通り
+                logger.info(
+                    "Issue #%d: all %d review comments already answered, skipping responses",
+                    request.issue_number,
+                    original_count,
+                )
+                return
+
         if pr_number is None:
             logger.debug(
                 "Issue #%d: no PR number, skipping review responses",
@@ -298,9 +318,26 @@ class ReviseExecutorBase(PhaseExecutor):
         )
 
         if review_comment_ids:
-            await self._reply_inline_comments(client, request, pr_number, review_comment_ids, replies, fallback)
+            succeeded = await self._reply_inline_comments(
+                client, request, pr_number, review_comment_ids, replies, fallback
+            )
+            # 返信成功した ID を永続化（再起動を跨いだ再回答の防止 #103）
+            if succeeded and isinstance(answered_ids_ref, list):
+                answered_ids_ref.extend(succeeded)
+                answered_ids_ref[:] = sorted(set(answered_ids_ref))  # 防御的な重複排除
+                self._sm.persist()
         elif comments_text or summary:
-            # トップレベルレビュー（comment ID なし）: PR コメントで応答
+            # トップレベルレビュー（comment ID なし）: PR コメントで応答。
+            # router 非経由の呼び出しでも応答済み review_id には再応答しない（二層防御）
+            review_id = extra.get("review_id")
+            answered_rids_pre = getattr(state, "answered_review_ids", None) if state else None
+            if isinstance(review_id, int) and isinstance(answered_rids_pre, list) and review_id in answered_rids_pre:
+                logger.info(
+                    "Issue #%d: top-level review %d already answered, skipping response",
+                    request.issue_number,
+                    review_id,
+                )
+                return
             try:
                 await client.create_comment(request.repo, pr_number, fallback)
             except Exception:
@@ -309,6 +346,13 @@ class ReviseExecutorBase(PhaseExecutor):
                     request.issue_number,
                     exc_info=True,
                 )
+            else:
+                # 応答した review id を永続化（再起動を跨いだ本文応答の重複防止 #103）
+                answered_rids_ref = answered_rids_pre
+                if isinstance(review_id, int) and isinstance(answered_rids_ref, list):
+                    answered_rids_ref.append(review_id)
+                    answered_rids_ref[:] = sorted(set(answered_rids_ref))
+                    self._sm.persist()
 
     async def _reply_inline_comments(
         self,
@@ -318,7 +362,7 @@ class ReviseExecutorBase(PhaseExecutor):
         comment_ids: list[int],
         replies: dict[int, str],
         fallback: str,
-    ) -> None:
+    ) -> list[int]:
         """各インラインコメントへ生成返信文（無ければフォールバック）で返信する。
 
         Args:
@@ -328,11 +372,16 @@ class ReviseExecutorBase(PhaseExecutor):
             comment_ids: 返信対象のコメント ID 一覧。
             replies: comment_id → 生成された返信文。
             fallback: 該当返信が無い場合の文面。
+
+        Returns:
+            返信に成功したコメント ID のリスト（失敗分は次回リトライ可能なよう含めない）。
         """
+        succeeded: list[int] = []
         for comment_id in comment_ids:
             body = replies.get(comment_id, fallback)
             try:
                 await client.reply_to_review_comment(request.repo, pr_number, comment_id, body)
+                succeeded.append(comment_id)
             except Exception:
                 logger.debug(
                     "Issue #%d: failed to reply to review comment %d",
@@ -340,6 +389,7 @@ class ReviseExecutorBase(PhaseExecutor):
                     comment_id,
                     exc_info=True,
                 )
+        return succeeded
 
     # ------------------------------------------------------------------
     # Helpers

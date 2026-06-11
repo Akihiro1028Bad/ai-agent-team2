@@ -123,6 +123,9 @@ class IssueStateData(Protocol):
     branch_head_sha: str | None
     impl_iteration: int
     retry_count: int
+    acknowledged_review_comment_ids: list[int]
+    answered_review_comment_ids: list[int]
+    answered_review_ids: list[int]
 
 
 @runtime_checkable
@@ -242,6 +245,10 @@ class StateMachineProtocol:
 
     async def increment_ci_retry(self, issue_key: IssueKey) -> None:
         """Increment CI retry counter."""
+        ...  # pragma: no cover
+
+    def persist(self) -> None:
+        """Persist current state to storage."""
         ...  # pragma: no cover
 
 

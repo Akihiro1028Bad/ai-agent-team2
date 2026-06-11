@@ -529,7 +529,13 @@ class GitHubPoller:
                                 type=EventType.IMPL_PR_COMMENTED,
                                 repo=repo,
                                 issue=issue,
-                                extra={"comments": review_body},
+                                # review_id はトップレベル本文応答の永続 dedup に使用 (#103)。
+                                # _get_pr_reviews は id を str で返すため、消費側の
+                                # isinstance(int) ガードと整合するよう int へ変換する
+                                extra={
+                                    "comments": review_body,
+                                    "review_id": int(review_id) if str(review_id).isdigit() else None,
+                                },
                             )
                         )
                 # approve/LGTM は無視 (実装PRはマージで完了)

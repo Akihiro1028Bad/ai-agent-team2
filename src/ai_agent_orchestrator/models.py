@@ -206,6 +206,11 @@ class IssueState:
     impl_iteration: int = 0
     created_at: str = ""
     updated_at: str = ""
+    # レビュー返信の重複防止 (#103)。再起動を跨いで効くよう永続化する
+    acknowledged_review_comment_ids: list[int] = field(default_factory=list)
+    answered_review_comment_ids: list[int] = field(default_factory=list)
+    # トップレベル本文 (review submission) への応答済み review id
+    answered_review_ids: list[int] = field(default_factory=list)
 
 
 @dataclass
