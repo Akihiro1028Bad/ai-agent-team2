@@ -161,8 +161,32 @@ class TestUnifiedTransitions:
             for t in targets:
                 assert isinstance(t, Phase)
 
-    def test_suspended_can_resume_anywhere(self) -> None:
-        assert set(VALID_TRANSITIONS[Phase.SUSPENDED]) == set(Phase)
+    def test_suspended_resume_targets_match_state_machine(self) -> None:
+        """SUSPENDED の復帰先が state machine の resume_to_* と完全一致する."""
+        from ai_agent_orchestrator.orchestrator.state_machine import TRANSITION_MAP
+
+        valid = set(VALID_TRANSITIONS[Phase.SUSPENDED])
+        mapped = {dst for (src, dst) in TRANSITION_MAP if src is Phase.SUSPENDED}
+        assert valid == mapped
+
+    def test_valid_transitions_all_exist_in_transition_map(self) -> None:
+        """VALID_TRANSITIONS の全 (src, dst) が TRANSITION_MAP に存在する (乖離防止)."""
+        from ai_agent_orchestrator.orchestrator.state_machine import TRANSITION_MAP
+
+        missing = [
+            (src.value, dst.value)
+            for src, targets in VALID_TRANSITIONS.items()
+            for dst in targets
+            if src is not dst and (src, dst) not in TRANSITION_MAP
+        ]
+        assert missing == []
+
+    def test_transition_map_all_exist_in_valid_transitions(self) -> None:
+        """TRANSITION_MAP の全 (src, dst) が VALID_TRANSITIONS に存在する (逆方向)."""
+        from ai_agent_orchestrator.orchestrator.state_machine import TRANSITION_MAP
+
+        missing = [(src.value, dst.value) for (src, dst) in TRANSITION_MAP if dst not in VALID_TRANSITIONS.get(src, [])]
+        assert missing == []
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +304,35 @@ class TestStateJsonMigration:
             {"org/app:1": {"issue_number": 1, "phase": "plan", "repo": "org/app"}},
         )
         assert loaded[("org/app", 1)].phase is Phase.PLAN  # type: ignore[union-attr]
+
+    def test_feature_s_issue_type_is_migrated_without_crash(self, tmp_path: Path) -> None:
+        """feature-s の旧 state は issue_type のみ feature-m に読み替えられ、クラッシュしない."""
+        from unittest.mock import AsyncMock
+
+        from ai_agent_orchestrator.orchestrator.state_machine import StateMachineManager
+        from ai_agent_orchestrator.state_persistence import StatePersistence
+
+        f = tmp_path / "state" / "issues.json"
+        f.parent.mkdir(parents=True)
+        f.write_text(
+            json.dumps(
+                {
+                    "org/app:1": {
+                        "issue_number": 1,
+                        "phase": "plan-review",
+                        "issue_type": "feature-s",
+                        "repo": "org/app",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        sm = StateMachineManager(persistence=StatePersistence(f), tracker=AsyncMock())
+        sm.load_from_persistence()  # Phase("hearing") 等で ValueError にならないこと
+        state = sm.get_state(("org/app", 1))
+        assert state is not None
+        assert state.issue_type == "feature-m"
+        assert state.phase is Phase.APPROVE  # plan-review は persistence 層で読み替え済み
 
     def test_ancient_unknown_phase_falls_back_to_suspended(self, tmp_path: Path) -> None:
         """太古の廃止フェーズ (planning 等) は従来どおり SUSPENDED."""

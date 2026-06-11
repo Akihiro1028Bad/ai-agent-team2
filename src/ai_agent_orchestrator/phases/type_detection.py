@@ -60,11 +60,14 @@ class TypeDetectionExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
+        valid_types = {"bug", "feature-m", "feature-l"}
         parsed = self._extract_json(result.output)
-        if parsed and "type" in parsed:
+        if parsed and parsed.get("type") in valid_types:
             issue_type: str = parsed["type"]
             reason: str = parsed.get("reason", "AIが判定")
         else:
+            # JSON なし or AI が許可外タイプ ("feature" 等) を返した場合は
+            # フォールバック判定へ (set_issue_type の ValueError 回避)
             issue_type = self._fallback_detection(result.output)
             reason = "AI出力のパースに失敗、フォールバック判定"
 

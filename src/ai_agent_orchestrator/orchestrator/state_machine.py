@@ -431,7 +431,7 @@ class StateMachineManager:
     def set_issue_type(self, issue_key: IssueKey, issue_type: str) -> None:
         """Issue のタイプを設定する.
 
-        IssueWorkflow のガード関数で使用される issue_type も同時に更新する。
+        plan_depth 等のパラメータ導出に使う issue_type を更新する。
 
         Args:
             issue_key: IssueKey (repo, issue_number)。
@@ -471,12 +471,12 @@ class StateMachineManager:
         初期状態を指定する。
         """
         self._states = self._persistence.load()
-        # マイグレーション: feature-s → feature-m
+        # マイグレーション: feature-s → feature-m (廃止タイプの読み替え)。
+        # phase の読み替えは persistence 層 (PHASE_MIGRATION) に一本化済みのため
+        # ここでは issue_type のみ変更する
         for state in self._states.values():
             if state.issue_type == "feature-s":
                 state.issue_type = "feature-m"
-                if state.phase.value == "plan-brief" or state.phase.value == "plan-review":
-                    state.phase = Phase("hearing")
                 logger.info(
                     "Migrated issue #%d from feature-s to feature-m (phase=%s)",
                     state.issue_number,

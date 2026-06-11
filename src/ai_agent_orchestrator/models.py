@@ -305,5 +305,17 @@ VALID_TRANSITIONS: dict[Phase, list[Phase]] = {
     Phase.REVISE: [Phase.REVIEW, Phase.REVISE, Phase.SUSPENDED],
     # 特殊
     Phase.BLOCKED: [Phase.CLARIFY, Phase.PLAN, Phase.IMPLEMENT],
-    Phase.SUSPENDED: list(Phase),  # どのフェーズにも復帰可能
+    # SUSPENDED からの復帰先 (DONE/BLOCKED/自身は復帰対象外。state machine の
+    # resume_to_* と完全一致させる)
+    Phase.SUSPENDED: [
+        Phase.INTAKE,
+        Phase.CLARIFY,
+        Phase.CLARIFY_WAIT,
+        Phase.SPLIT,
+        Phase.PLAN,
+        Phase.APPROVE,
+        Phase.IMPLEMENT,
+        Phase.REVIEW,
+        Phase.REVISE,
+    ],
 }

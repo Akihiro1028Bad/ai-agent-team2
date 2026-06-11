@@ -1211,3 +1211,39 @@ class TestDetectPrEventsInlineOnlyReview:
         assert len(impl_events) == 1
         assert impl_events[0].extra["review_id"] == 4466060437
         assert isinstance(impl_events[0].extra["review_id"], int)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _get_issues_with_phase_label (新旧ラベル併読の dedup)
+# ---------------------------------------------------------------------------
+
+
+class TestGetIssuesWithPhaseLabelDedup:
+    """新旧ラベル併読時の重複排除 (U5 移行設計の保証)."""
+
+    async def test_issue_with_both_labels_is_returned_once(self) -> None:
+        """新旧両方のラベルを持つ Issue が 1 回だけ返る."""
+        client = _make_client()
+        issue = _make_issue(number=10, labels=["ai-agent", "phase:approve", "phase:plan-review"])
+        # 新ラベル検索・旧ラベル検索の両方で同じ Issue がヒットする
+        client.get_issues_with_label = AsyncMock(return_value=[issue])
+
+        repo = _make_repo()
+        poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
+
+        result = await poller._get_issues_with_phase_label(client, repo, "approve", ["plan-review"])
+        assert [i.number for i in result] == [10]
+        # 新 + 旧の 2 回検索される
+        assert client.get_issues_with_label.await_count == 2
+
+    async def test_legacy_only_issue_is_included(self) -> None:
+        """旧ラベルのみの Issue も検知される (取りこぼし防止)."""
+        client = _make_client()
+        legacy_issue = _make_issue(number=11, labels=["ai-agent", "phase:plan-review"])
+        client.get_issues_with_label = AsyncMock(side_effect=[[], [legacy_issue]])
+
+        repo = _make_repo()
+        poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
+
+        result = await poller._get_issues_with_phase_label(client, repo, "approve", ["plan-review"])
+        assert [i.number for i in result] == [11]

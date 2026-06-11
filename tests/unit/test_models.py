@@ -200,17 +200,20 @@ def test_valid_transitions_implement() -> None:
     assert Phase.DONE not in allowed  # IMPLEMENT -> DONE は不正
 
 
-def test_valid_transitions_suspended_allows_all() -> None:
-    """SUSPENDED からは全フェーズへの遷移が可能."""
+def test_valid_transitions_suspended_resume_targets() -> None:
+    """SUSPENDED からは終端/補助 (DONE/BLOCKED/自身) 以外へ復帰可能."""
     suspended_targets = VALID_TRANSITIONS[Phase.SUSPENDED]
     for phase in Phase:
-        assert phase in suspended_targets
+        if phase in (Phase.DONE, Phase.BLOCKED, Phase.SUSPENDED):
+            assert phase not in suspended_targets
+        else:
+            assert phase in suspended_targets
 
 
 def test_valid_transitions_all_active_phases_can_suspend() -> None:
     """全ての実行フェーズから SUSPENDED への遷移が可能."""
     for phase, targets in VALID_TRANSITIONS.items():
-        if phase not in (Phase.DONE, Phase.BLOCKED):
+        if phase not in (Phase.DONE, Phase.BLOCKED, Phase.SUSPENDED):
             assert Phase.SUSPENDED in targets, f"{phase} cannot transition to SUSPENDED"
 
 
