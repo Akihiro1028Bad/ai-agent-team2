@@ -144,14 +144,14 @@ def create_app(settings: AppSettings) -> FastAPI:
     @app.get("/api/issues/{issue_number}/events", response_model=list[EventRecord])
     async def get_issue_events(
         issue_number: int,
-        limit: int = Query(default=200, ge=1),
+        limit: int = Query(default=200, ge=1, le=1000),
     ) -> list[EventRecord]:
         """Issue の events.jsonl を新しい順で返す (既定 200 件)."""
         return read_issue_events(workspace, issue_number, limit=limit)
 
     @app.get("/api/activity", response_model=list[EventRecord])
     async def get_activity(
-        limit: int = Query(default=100, ge=1),
+        limit: int = Query(default=100, ge=1, le=1000),
     ) -> list[EventRecord]:
         """全 Issue のイベントをマージし ts 降順で返す (既定 100 件)."""
         return merge_activity(workspace, limit=limit)
@@ -186,15 +186,17 @@ def create_app(settings: AppSettings) -> FastAPI:
         except ConfigError as e:
             raise HTTPException(
                 status_code=404,
-                detail=f"Repository {state_repo} is not configured in config.yaml: {e}",
+                detail=f"Repository {state_repo} is not configured in config.yaml",
             ) from e
         except HTTPException:
             raise
         except Exception as e:
+            # detail に内部例外の文字列を含めない (内部 URL 等の情報漏えい防止)。
+            # 詳細はサーバーログ側にのみ出す。
             logger.warning("PR 差分の取得に失敗: repo=%s pr=%s", state_repo, state.pr_number, exc_info=True)
             raise HTTPException(
                 status_code=502,
-                detail=f"Failed to fetch pull request diff from GitHub: {e}",
+                detail="Failed to fetch pull request diff from GitHub",
             ) from e
         files = [DiffFile.model_validate(f) for f in raw_files]
         return DiffResponse(pr_number=state.pr_number, files=files)

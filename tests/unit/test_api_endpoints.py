@@ -287,3 +287,27 @@ def test_diff_github_error_returns_502(client: TestClient, workspace: Path) -> N
 
     resp = client.get("/api/issues/1/diff")
     assert resp.status_code == 502
+
+
+def test_events_limit_above_cap_returns_422(client: TestClient) -> None:
+    """limit はサービス拒否余地を絞るため上限 1000 でバリデーションする."""
+    assert client.get("/api/issues/1/events?limit=1001").status_code == 422
+    assert client.get("/api/activity?limit=1001").status_code == 422
+
+
+def test_diff_github_error_detail_hides_internal_message(client: TestClient, workspace: Path) -> None:
+    """502 の detail に内部例外の文字列を含めない (情報漏えい防止)."""
+    _write_state(workspace, {"o/r:1": _state_entry(number=1, repo="o/r", phase="review", pr_number=42)})
+
+    class _FailingClient:
+        async def get_pull_request_files(self, owner: str, repo: str, pr_number: int) -> list[dict[str, object]]:
+            raise RuntimeError("secret-internal-url https://internal")
+
+    async def factory(owner: str, repo: str) -> _FailingClient:
+        return _FailingClient()
+
+    client.app.state.github_client_factory = factory  # type: ignore[attr-defined]
+
+    resp = client.get("/api/issues/1/diff")
+    assert resp.status_code == 502
+    assert "secret-internal-url" not in resp.json()["detail"]
