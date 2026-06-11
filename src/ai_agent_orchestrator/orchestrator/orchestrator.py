@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ai_agent_orchestrator.agents.agent_log import AgentLogWriter
 from ai_agent_orchestrator.agents.claude_runner import ClaudeAgentRunner
 from ai_agent_orchestrator.context.engine import ContextEngine
 from ai_agent_orchestrator.credential import CredentialResolver
@@ -450,6 +451,7 @@ class Orchestrator:
         # Agent runner
         self._agent_runner = agent_runner or ClaudeAgentRunner(
             tracker=_AgentTrackerAdapter(self._event_logger),
+            agent_log_writer=AgentLogWriter(log_dir=workspace_path / "logs"),
         )
 
         # Context engine

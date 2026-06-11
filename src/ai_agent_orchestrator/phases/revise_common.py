@@ -173,6 +173,7 @@ class ReviseExecutorBase(PhaseExecutor):
             cwd=str(worktree),
             phase=self.phase_name,
             resume_session_id=(state.session_id if state else None),
+            issue_number=request.issue_number,
         )
 
     # ------------------------------------------------------------------

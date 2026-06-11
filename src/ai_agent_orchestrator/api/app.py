@@ -11,7 +11,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 
 from ai_agent_orchestrator.api.middleware import AuthMiddleware
 from ai_agent_orchestrator.api.readers import (
@@ -19,10 +20,12 @@ from ai_agent_orchestrator.api.readers import (
     detail_from_state,
     load_states,
     merge_activity,
+    read_agent_logs,
     read_issue_events,
     read_issue_summaries,
 )
 from ai_agent_orchestrator.api.schemas import (
+    AgentLogPage,
     CostsResponse,
     DiffFile,
     DiffResponse,
@@ -30,9 +33,15 @@ from ai_agent_orchestrator.api.schemas import (
     IssueDetailResponse,
     IssueSummaryResponse,
 )
+from ai_agent_orchestrator.api.stream import (
+    KEEPALIVE_INTERVAL_SEC,
+    format_sse,
+    parse_last_event_id,
+    tail_issue_streams,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import AsyncIterator, Awaitable, Callable
 
     from ai_agent_orchestrator.config.settings import AppSettings
     from ai_agent_orchestrator.models import IssueState
@@ -148,6 +157,54 @@ def create_app(settings: AppSettings) -> FastAPI:
     ) -> list[EventRecord]:
         """Issue の events.jsonl を新しい順で返す (既定 200 件)."""
         return read_issue_events(workspace, issue_number, limit=limit)
+
+    @app.get("/api/issues/{issue_number}/logs", response_model=AgentLogPage)
+    async def get_issue_logs(
+        issue_number: int,
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=200, ge=1, le=1000),
+    ) -> AgentLogPage:
+        """Issue の agent.jsonl を物理行オフセット基準でページング取得する (#85)."""
+        return read_agent_logs(workspace, issue_number, offset=offset, limit=limit)
+
+    @app.get("/api/stream")
+    async def get_stream(
+        request: Request,
+        issue: int = Query(..., description="対象 Issue 番号"),
+        last_event_id: str | None = Query(default=None),
+        # 下限 0.1s: 過小値での毎ループ全ファイル読みによる CPU 占有を防ぐ
+        poll_interval: float = Query(default=0.5, ge=0.1, le=5.0),
+        max_idle_sec: float | None = Query(default=None, gt=0.0),
+    ) -> StreamingResponse:
+        """events.jsonl + agent.jsonl の tail を SSE で配信する (#85).
+
+        Last-Event-ID は (EventSource polyfill 対応で) ヘッダとクエリの両方を
+        受ける。15 秒ごとに keep-alive コメント行を送出する。
+        """
+        header_id = request.headers.get("Last-Event-ID")
+        start_events, start_agent = parse_last_event_id(header_id or last_event_id)
+
+        async def _gen() -> AsyncIterator[str]:
+            # keepalive は tail_issue_streams がアイドル中も source="keepalive" として
+            # yield する (format_sse がコメント行へ整形)。イベント待ちで沈黙しない。
+            async for event in tail_issue_streams(
+                workspace,
+                issue,
+                start_events=start_events,
+                start_agent=start_agent,
+                poll_interval=poll_interval,
+                max_idle_sec=max_idle_sec,
+                keepalive_interval=KEEPALIVE_INTERVAL_SEC,
+            ):
+                if await request.is_disconnected():
+                    break
+                yield format_sse(event)
+
+        return StreamingResponse(
+            _gen(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.get("/api/activity", response_model=list[EventRecord])
     async def get_activity(

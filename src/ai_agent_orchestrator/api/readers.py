@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ai_agent_orchestrator.api.schemas import (
+    AgentLogPage,
+    AgentLogRecord,
     CostsResponse,
     EventRecord,
     IssueCost,
@@ -38,6 +40,77 @@ def _state_file(workspace: Path) -> Path:
 def _events_file(workspace: Path, issue_number: int) -> Path:
     """指定 Issue の events.jsonl のパスを返す."""
     return workspace / "logs" / f"issue-{issue_number}" / "events.jsonl"
+
+
+def _agent_log_file(workspace: Path, issue_number: int) -> Path:
+    """指定 Issue の agent.jsonl のパスを返す."""
+    return workspace / "logs" / f"issue-{issue_number}" / "agent.jsonl"
+
+
+def read_agent_logs(
+    workspace: Path,
+    issue_number: int,
+    offset: int = 0,
+    limit: int = 200,
+) -> AgentLogPage:
+    """指定 Issue の agent.jsonl を物理行オフセット基準でページング取得する (#85).
+
+    offset は古い順の物理行インデックス。壊れ行はレコードから除くが、
+    インデックスは消費する (オフセットは「物理行」基準で安定する。SSE の
+    Last-Event-ID と同じ単位)。
+
+    Args:
+        workspace: ワークスペースのルートパス。
+        issue_number: Issue 番号。
+        offset: 読み出し開始の物理行インデックス (0 始まり、古い順)。
+        limit: 返す最大件数。
+
+    Returns:
+        AgentLogPage。next_offset は今回読んだ最終物理行+1、total は物理行総数。
+    """
+    path = _agent_log_file(workspace, issue_number)
+    if not path.exists():
+        return AgentLogPage(records=[], next_offset=offset, total=0)
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("agent.jsonl の読み取りに失敗: %s", path, exc_info=True)
+        return AgentLogPage(records=[], next_offset=offset, total=0)
+
+    physical_lines = text.splitlines()
+    # 末尾未終端行 (書き込み途中の可能性) は消費しない。SSE の tail
+    # (stream._read_new_lines) と torn read 方針を揃え、next_offset を
+    # start_agent に渡したときの取りこぼしを防ぐ (#85 review #2)。
+    if text and not text.endswith("\n") and physical_lines:
+        physical_lines = physical_lines[:-1]
+    total = len(physical_lines)
+
+    records: list[AgentLogRecord] = []
+    next_offset = offset
+    for index in range(offset, total):
+        next_offset = index + 1
+        stripped = physical_lines[index].strip()
+        if stripped:
+            record = _parse_agent_log_line(stripped, path)
+            if record is not None:
+                records.append(record)
+        if len(records) >= limit:
+            break
+
+    return AgentLogPage(records=records, next_offset=next_offset, total=total)
+
+
+def _parse_agent_log_line(stripped: str, path: Path) -> AgentLogRecord | None:
+    """agent.jsonl の 1 行をパースして AgentLogRecord を返す (壊れ行は None)."""
+    try:
+        raw = json.loads(stripped)
+    except json.JSONDecodeError:
+        logger.warning("壊れた agent.jsonl 行をスキップ: %s", path)
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return AgentLogRecord.model_validate(raw)
 
 
 def load_states(workspace: Path) -> dict[tuple[str, int], IssueState]:

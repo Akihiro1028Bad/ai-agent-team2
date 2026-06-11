@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from claude_agent_sdk import (
@@ -25,6 +26,7 @@ from claude_agent_sdk.types import (
 
 from ai_agent_orchestrator.agents.mcp_config import get_phase_mcp_config
 from ai_agent_orchestrator.models import AgentResult, PhaseConfig
+from ai_agent_orchestrator.sanitize import sanitize_dict, sanitize_text
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,14 @@ class Tracker(Protocol):
 
     async def track(self, event: str, data: dict[str, Any]) -> None:
         """Record an event."""
+        ...
+
+
+class AgentLogWriterProtocol(Protocol):
+    """agent.jsonl への書き込みインターフェース (#85)."""
+
+    async def write(self, issue_number: int, record: dict[str, Any]) -> None:
+        """1 レコードを追記する."""
         ...
 
 
@@ -227,16 +237,73 @@ class MaxTurnsExceededError(ClaudeSDKError):
 # ---------------------------------------------------------------------------
 
 
+def _records_from_message(msg: Message, *, phase: str) -> list[dict[str, Any]]:
+    """SDK メッセージ 1 件を agent.jsonl レコード列へ変換する (#85).
+
+    text は sanitize_text、tool_use の input は sanitize_dict を通す
+    (AgentLogWriter 側のサニタイズと多層防御になる)。ResultMessage.usage は
+    SDK バージョン差異に備え getattr で防御。
+
+    Args:
+        msg: SDK メッセージ。
+        phase: 実行フェーズ名。
+
+    Returns:
+        変換されたレコードのリスト (該当なしは空)。
+    """
+    ts = datetime.now(UTC).isoformat()
+    records: list[dict[str, Any]] = []
+
+    if isinstance(msg, AssistantMessage):
+        for block in msg.content:
+            if isinstance(block, TextBlock):
+                records.append({"ts": ts, "phase": phase, "type": "text", "text": sanitize_text(block.text)})
+            elif isinstance(block, ToolUseBlock):
+                tool_input = block.input if isinstance(block.input, dict) else {}
+                records.append(
+                    {
+                        "ts": ts,
+                        "phase": phase,
+                        "type": "tool_use",
+                        "tool": block.name,
+                        "input": sanitize_dict(tool_input),
+                    }
+                )
+    elif isinstance(msg, ResultMessage):
+        records.append(
+            {
+                "ts": ts,
+                "phase": phase,
+                "type": "result",
+                "session_id": msg.session_id,
+                "cost_usd": msg.total_cost_usd,
+                "duration_ms": msg.duration_ms,
+                "usage": getattr(msg, "usage", None),
+                "is_error": msg.is_error,
+                "subtype": msg.subtype,
+            }
+        )
+
+    return records
+
+
 class ClaudeAgentRunner:
     """Claude Agent SDK を使用した AgentRunner 実装."""
 
-    def __init__(self, tracker: Tracker) -> None:
+    def __init__(
+        self,
+        tracker: Tracker,
+        agent_log_writer: AgentLogWriterProtocol | None = None,
+    ) -> None:
         """ClaudeAgentRunner を初期化する.
 
         Args:
             tracker: ツール使用ログの記録に使用する Tracker。
+            agent_log_writer: agent.jsonl への書き込みライター (#85)。
+                None の場合は従来どおりエージェントログを出力しない (後方互換)。
         """
         self._tracker = tracker
+        self._agent_log_writer = agent_log_writer
         self._active_sessions: dict[str, ClaudeSDKClient] = {}
 
     # ------------------------------------------------------------------
@@ -252,6 +319,7 @@ class ClaudeAgentRunner:
         max_budget_usd: float | None = None,
         resume_session_id: str | None = None,
         timeout_sec: int = 0,
+        issue_number: int | None = None,
     ) -> AgentResult:
         """AI エージェントを実行し、結果を返す.
 
@@ -262,6 +330,8 @@ class ClaudeAgentRunner:
             max_budget_usd: コスト上限 (USD)。None の場合はフェーズ設定のデフォルト値。
             resume_session_id: 継続するセッション ID。指定時はマルチターン実行。
             timeout_sec: タイムアウト (秒)。0 の場合はフェーズ設定の値を使用。
+            issue_number: Issue 番号。agent_log_writer と両方ある場合のみ
+                agent.jsonl へ実行ログを出力する (#85)。
 
         Returns:
             AgentResult: session_id, output, tool_uses, cost_usd, duration_sec を含む。
@@ -323,6 +393,8 @@ class ClaudeAgentRunner:
             self._run_query(
                 prompt=prompt,
                 options=options,
+                phase=phase,
+                issue_number=issue_number,
             ),
             timeout=effective_timeout,
         )
@@ -346,6 +418,8 @@ class ClaudeAgentRunner:
         *,
         prompt: str,
         options: ClaudeAgentOptions,
+        phase: str = "",
+        issue_number: int | None = None,
     ) -> AgentResult:
         """query() を実行してメッセージを収集し AgentResult を返す."""
         start = time.monotonic()
@@ -364,6 +438,7 @@ class ClaudeAgentRunner:
                             type(msg).__name__,
                             hasattr(msg, "content"),
                         )
+                        await self._log_messages([msg], issue_number=issue_number, phase=phase)
                 all_messages.extend(attempt_messages)
                 break  # success - got through without exception
             except Exception as e:
@@ -447,6 +522,39 @@ class ClaudeAgentRunner:
                     break
 
         return result
+
+    async def _log_messages(
+        self,
+        messages: list[Message],
+        *,
+        issue_number: int | None,
+        phase: str,
+    ) -> None:
+        """SDK メッセージを agent.jsonl 用レコードに変換して書き込む (#85).
+
+        writer と issue_number が両方ある場合のみ出力する。書き込み失敗は
+        フェーズ実行を止めない (warning ログのみで握りつぶす)。
+
+        Args:
+            messages: SDK から受信したメッセージ群。
+            issue_number: Issue 番号。None なら無出力。
+            phase: 実行フェーズ名 (レコードに付与)。
+        """
+        writer = self._agent_log_writer
+        if writer is None or issue_number is None:
+            return
+
+        for msg in messages:
+            for record in _records_from_message(msg, phase=phase):
+                try:
+                    await writer.write(issue_number, record)
+                except Exception:  # ログ失敗はフェーズを止めない (握りつぶす)
+                    logger.warning(
+                        "agent.jsonl への書き込みに失敗 (issue=%s, phase=%s)",
+                        issue_number,
+                        phase,
+                        exc_info=True,
+                    )
 
     @staticmethod
     def _build_subagent_prompt(subagents: list[SubAgentDefinition]) -> str:

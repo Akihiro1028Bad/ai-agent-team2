@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ai_agent_orchestrator import sanitize
+
 
 class EventLogger:
     """構造化イベントログの記録.
@@ -29,24 +31,13 @@ class EventLogger:
         TOKEN_PATTERN: トークン文字列にマッチする正規表現。
     """
 
-    SENSITIVE_KEYS: frozenset[str] = frozenset(
-        {
-            "token",
-            "password",
-            "secret",
-            "authorization",
-            "cookie",
-            "credential",
-        }
-    )
+    # サニタイズパターンは sanitize モジュールへ抽出済み (#85)。
+    # 公開クラス属性は後方互換のため同一オブジェクトを参照する。
+    SENSITIVE_KEYS: frozenset[str] = sanitize.SENSITIVE_KEYS
 
-    TOKEN_PATTERN: re.Pattern[str] = re.compile(
-        r"(ghp_[A-Za-z0-9]{36}|gho_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{82})"
-    )
+    TOKEN_PATTERN: re.Pattern[str] = sanitize.TOKEN_PATTERN
 
-    URL_TOKEN_PATTERN: re.Pattern[str] = re.compile(
-        r"([?&])(access_token|token|key|secret|password|credential)=([^&\s]+)"
-    )
+    URL_TOKEN_PATTERN: re.Pattern[str] = sanitize.URL_TOKEN_PATTERN
 
     def __init__(self, log_dir: Path) -> None:
         """初期化.
@@ -109,31 +100,5 @@ class EventLogger:
             await asyncio.to_thread(_write)
 
     def _sanitize_for_log(self, data: dict[str, Any]) -> dict[str, Any]:
-        """ログ出力前にセンシティブ情報をマスク."""
-        sanitized: dict[str, Any] = {}
-        for key, value in data.items():
-            if any(s in key.lower() for s in self.SENSITIVE_KEYS):
-                sanitized[key] = "***REDACTED***"
-            elif isinstance(value, dict):
-                sanitized[key] = self._sanitize_for_log(value)
-            elif isinstance(value, str):
-                masked = self.TOKEN_PATTERN.sub("***REDACTED***", value)
-                masked = self.URL_TOKEN_PATTERN.sub(r"\1\2=***REDACTED***", masked)
-                sanitized[key] = masked
-            elif isinstance(value, list):
-                sanitized[key] = [
-                    self._sanitize_for_log(item)
-                    if isinstance(item, dict)
-                    else (
-                        self.URL_TOKEN_PATTERN.sub(
-                            r"\1\2=***REDACTED***",
-                            self.TOKEN_PATTERN.sub("***REDACTED***", item),
-                        )
-                        if isinstance(item, str)
-                        else item
-                    )
-                    for item in value
-                ]
-            else:
-                sanitized[key] = value
-        return sanitized
+        """ログ出力前にセンシティブ情報をマスク (sanitize モジュールへ委譲)."""
+        return sanitize.sanitize_dict(data)

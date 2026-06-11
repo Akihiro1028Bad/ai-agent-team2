@@ -486,6 +486,7 @@ class PhaseExecutor(ABC):
             prompt=prompt,
             cwd=str(worktree),
             phase=str(request.phase),
+            issue_number=request.issue_number,
         )
 
     @abstractmethod
