@@ -10,6 +10,7 @@ import pytest
 from ai_agent_orchestrator.api.readers import (
     aggregate_costs,
     merge_activity,
+    read_agent_logs,
     read_issue_events,
     read_issue_summaries,
 )
@@ -245,3 +246,46 @@ def test_aggregate_costs_ignores_non_completed_events(tmp_path: Path) -> None:
     )
     costs = aggregate_costs(tmp_path)
     assert costs.total_usd == pytest.approx(0.5)
+
+
+# ──────────────────────────────────────
+# read_agent_logs (#85)
+# ──────────────────────────────────────
+def _write_agent_logs(workspace: Path, issue_number: int, lines: list[str]) -> None:
+    issue_dir = workspace / "logs" / f"issue-{issue_number}"
+    issue_dir.mkdir(parents=True, exist_ok=True)
+    (issue_dir / "agent.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_read_agent_logs_empty_missing_file(tmp_path: Path) -> None:
+    page = read_agent_logs(tmp_path, 99)
+    assert page.records == []
+    assert page.next_offset == 0
+    assert page.total == 0
+
+
+def test_read_agent_logs_paging(tmp_path: Path) -> None:
+    lines = [json.dumps({"ts": f"t{i}", "phase": "plan", "type": "text", "text": str(i)}) for i in range(5)]
+    _write_agent_logs(tmp_path, 1, lines)
+
+    page = read_agent_logs(tmp_path, 1, offset=1, limit=2)
+    assert [r.type for r in page.records] == ["text", "text"]
+    assert page.records[0].text == "1"  # type: ignore[attr-defined]
+    assert page.next_offset == 3
+    assert page.total == 5
+
+
+def test_read_agent_logs_skips_broken_but_consumes_index(tmp_path: Path) -> None:
+    """壊れ行はスキップするが物理行インデックスは消費する."""
+    lines = [
+        json.dumps({"ts": "t0", "phase": "p", "type": "text", "text": "a"}),
+        "{ broken json",
+        json.dumps({"ts": "t2", "phase": "p", "type": "text", "text": "c"}),
+    ]
+    _write_agent_logs(tmp_path, 1, lines)
+
+    page = read_agent_logs(tmp_path, 1, offset=0, limit=10)
+    # 壊れ行はレコードから除かれるが、next_offset は物理行 3 を指す
+    assert [r.text for r in page.records] == ["a", "c"]  # type: ignore[attr-defined]
+    assert page.next_offset == 3
+    assert page.total == 3

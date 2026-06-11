@@ -82,6 +82,28 @@ class EventRecord(BaseModel):
     data: dict[str, Any] | None = None
 
 
+class AgentLogRecord(BaseModel):
+    """agent.jsonl の 1 行を表すレコード (#85).
+
+    ts/phase/type は安定フィールド。それ以外 (text/tool/input/usage 等) は
+    レコード種別ごとに異なるため extra="allow" でそのまま通す。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    ts: str = ""
+    phase: str = ""
+    type: str = ""
+
+
+class AgentLogPage(BaseModel):
+    """agent.jsonl のページング応答 (#85)."""
+
+    records: list[AgentLogRecord] = Field(default_factory=list)
+    next_offset: int
+    total: int
+
+
 class IssueCost(BaseModel):
     """Issue 単位のコスト集計."""
 
