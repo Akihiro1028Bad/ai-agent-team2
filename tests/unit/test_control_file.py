@@ -43,6 +43,13 @@ class TestParseControlLine:
         assert parse_control_line('{"action": "approve"}') is None  # issue 欠落
         assert parse_control_line('{"issue": 5}') is None  # action 欠落
 
+    def test_returns_none_on_non_positive_issue(self) -> None:
+        """issue が 0 以下なら不正として None を返す."""
+        from ai_agent_orchestrator.orchestrator.control_file import parse_control_line
+
+        assert parse_control_line('{"issue": 0, "action": "approve"}') is None
+        assert parse_control_line('{"issue": -1, "action": "approve"}') is None
+
     def test_returns_none_on_unknown_action(self) -> None:
         from ai_agent_orchestrator.orchestrator.control_file import parse_control_line
 
@@ -58,24 +65,44 @@ class TestParseControlLine:
 class TestReadNewControlCommands:
     """ファイルからの未処理コマンド読み取り (オフセット管理)."""
 
-    def test_reads_all_lines_from_zero_offset(self, tmp_path: Path) -> None:
+    def test_reads_authorized_lines_from_zero_offset(self, tmp_path: Path) -> None:
         from ai_agent_orchestrator.orchestrator.control_file import read_new_control_commands
 
         f = tmp_path / "control.jsonl"
         f.write_text(
-            '{"issue": 1, "action": "approve"}\n{"issue": 2, "action": "reject", "feedback": "x"}\n',
+            '{"issue": 1, "action": "approve", "approver": "alice"}\n'
+            '{"issue": 2, "action": "reject", "approver": "alice", "feedback": "x"}\n',
             encoding="utf-8",
         )
-        commands, new_offset = read_new_control_commands(f, 0)
+        commands, new_offset = read_new_control_commands(f, 0, ["alice"])
         assert [c.issue_number for c in commands] == [1, 2]
+        assert new_offset == 2
+
+    def test_unauthorized_approver_command_is_filtered(self, tmp_path: Path) -> None:
+        """許可外 approver のコマンドは承認シグナルとして扱わない (#102 intake)."""
+        from ai_agent_orchestrator.orchestrator.control_file import read_new_control_commands
+
+        f = tmp_path / "control.jsonl"
+        f.write_text(
+            '{"issue": 1, "action": "approve", "approver": "mallory"}\n'
+            '{"issue": 2, "action": "approve", "approver": "alice"}\n',
+            encoding="utf-8",
+        )
+        commands, new_offset = read_new_control_commands(f, 0, ["alice"])
+        assert [c.issue_number for c in commands] == [2]
+        # 不正/許可外行も offset には数える (再処理しない)
         assert new_offset == 2
 
     def test_skips_already_processed_lines(self, tmp_path: Path) -> None:
         from ai_agent_orchestrator.orchestrator.control_file import read_new_control_commands
 
         f = tmp_path / "control.jsonl"
-        f.write_text('{"issue": 1, "action": "approve"}\n{"issue": 2, "action": "approve"}\n', encoding="utf-8")
-        commands, new_offset = read_new_control_commands(f, 1)
+        f.write_text(
+            '{"issue": 1, "action": "approve", "approver": "alice"}\n'
+            '{"issue": 2, "action": "approve", "approver": "alice"}\n',
+            encoding="utf-8",
+        )
+        commands, new_offset = read_new_control_commands(f, 1, ["alice"])
         assert [c.issue_number for c in commands] == [2]
         assert new_offset == 2
 
@@ -84,15 +111,27 @@ class TestReadNewControlCommands:
         from ai_agent_orchestrator.orchestrator.control_file import read_new_control_commands
 
         f = tmp_path / "control.jsonl"
-        f.write_text('{壊れた\n{"issue": 9, "action": "approve"}\n', encoding="utf-8")
-        commands, new_offset = read_new_control_commands(f, 0)
+        f.write_text('{壊れた\n{"issue": 9, "action": "approve", "approver": "alice"}\n', encoding="utf-8")
+        commands, new_offset = read_new_control_commands(f, 0, ["alice"])
         assert [c.issue_number for c in commands] == [9]
         assert new_offset == 2
+
+    def test_oversized_file_is_skipped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """サイズ上限を超える control ファイルは読まずにスキップする (DoS 対策)."""
+        import ai_agent_orchestrator.orchestrator.control_file as mod
+        from ai_agent_orchestrator.orchestrator.control_file import read_new_control_commands
+
+        monkeypatch.setattr(mod, "_MAX_CONTROL_FILE_BYTES", 10)
+        f = tmp_path / "control.jsonl"
+        f.write_text('{"issue": 1, "action": "approve", "approver": "alice"}\n', encoding="utf-8")
+        commands, new_offset = read_new_control_commands(f, 0, ["alice"])
+        assert commands == []
+        assert new_offset == 0
 
     def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
         from ai_agent_orchestrator.orchestrator.control_file import read_new_control_commands
 
-        commands, new_offset = read_new_control_commands(tmp_path / "nope.jsonl", 0)
+        commands, new_offset = read_new_control_commands(tmp_path / "nope.jsonl", 0, ["alice"])
         assert commands == []
         assert new_offset == 0
 

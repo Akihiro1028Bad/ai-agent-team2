@@ -880,7 +880,8 @@ class GitHubPoller:
                 body = comment.body or ""
                 if _is_bot_comment(body):
                     continue
-                if body.strip() == self._approve_comment:
+                # PR review 経路と同様に大小無視で比較する (一貫性)
+                if body.strip().upper() == self._approve_comment.upper():
                     # #102: LGTM コメントも許可された承認者のみ有効
                     commenter = getattr(getattr(comment, "user", None), "login", None)
                     if not is_authorized_approver(commenter, approvers):

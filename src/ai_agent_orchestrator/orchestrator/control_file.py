@@ -17,12 +17,17 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
 
 ControlAction = Literal["approve", "reject"]
 _VALID_ACTIONS: frozenset[str] = frozenset({"approve", "reject"})
+# DoS 対策: control.jsonl の最大サイズ (10 MiB)
+_MAX_CONTROL_FILE_BYTES = 10 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -60,8 +65,8 @@ def parse_control_line(line: str) -> ControlCommand | None:
 
     issue = data.get("issue")
     action = data.get("action")
-    # bool は int のサブクラスなので除外する
-    if not isinstance(issue, int) or isinstance(issue, bool) or action not in _VALID_ACTIONS:
+    # bool は int のサブクラスなので除外する。issue は 1 以上の正整数のみ許可
+    if not isinstance(issue, int) or isinstance(issue, bool) or issue <= 0 or action not in _VALID_ACTIONS:
         logger.warning("control line missing/invalid issue or action, skipping")
         return None
 
@@ -75,33 +80,59 @@ def parse_control_line(line: str) -> ControlCommand | None:
     )
 
 
-def read_new_control_commands(path: Path, offset: int) -> tuple[list[ControlCommand], int]:
-    """control.jsonl から未処理行のみを読み取る。
+def read_new_control_commands(
+    path: Path,
+    offset: int,
+    approvers: Iterable[str],
+) -> tuple[list[ControlCommand], int]:
+    """control.jsonl から未処理かつ承認者検証を通過したコマンドのみを読み取る。
 
     offset は「既に処理した行数」。それ以降の行のみを対象とし、新しい
-    offset (= 読み終えた総行数) を返す。不正行はコマンド化せず読み飛ばすが
-    offset には数える (再処理しないため)。ファイルがなければ空で返す。
+    offset (= 読み終えた総行数) を返す。不正行・許可外 approver のコマンドは
+    読み飛ばすが offset には数える (再処理しないため)。
+
+    #102 と同じ承認者検証を intake 境界で必須化する: approver が許可リストに
+    含まれないコマンドは承認シグナルとして扱わない (Web UI 等からの
+    なりすまし承認を防ぐ)。
+
+    DoS 対策としてファイルサイズ上限 (_MAX_CONTROL_FILE_BYTES) を超える
+    ファイルはスキップする。
 
     Args:
         path: control.jsonl のパス。
         offset: 既に処理した行数。
+        approvers: 許可された承認者 login の集合 (resolve_approvers の結果)。
 
     Returns:
         (新規 ControlCommand のリスト, 更新後の offset)。
     """
+    from ai_agent_orchestrator.orchestrator.approval import is_authorized_approver
+
     path = path.expanduser()
     if not path.exists():
         return [], offset
 
     try:
+        if path.stat().st_size > _MAX_CONTROL_FILE_BYTES:
+            logger.warning("control file %s exceeds size limit, skipping", path)
+            return [], offset
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         logger.warning("failed to read control file %s", path, exc_info=True)
         return [], offset
 
+    approver_list = list(approvers)
     commands: list[ControlCommand] = []
     for line in lines[offset:]:
         cmd = parse_control_line(line)
-        if cmd is not None:
-            commands.append(cmd)
+        if cmd is None:
+            continue
+        if not is_authorized_approver(cmd.approver, approver_list):
+            logger.info(
+                "control command for #%d from unauthorized approver '%s' ignored",
+                cmd.issue_number,
+                cmd.approver,
+            )
+            continue
+        commands.append(cmd)
     return commands, len(lines)
