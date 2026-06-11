@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -57,36 +56,12 @@ class TaskExecutor(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# TaskRequest dataclass
+# TaskRequest (U5 #83 で models.TaskRequest に一本化。後方互換 re-export)
 # ---------------------------------------------------------------------------
 
+from ai_agent_orchestrator.models import TaskRequest  # noqa: E402
 
-@dataclass
-class TaskRequest:
-    """タスク実行リクエスト。
-
-    asyncio.PriorityQueue で比較可能にするため __lt__ を実装。
-    """
-
-    issue_number: int
-    repo: Any  # RepoLike (has .owner and .repo)
-    phase: str
-    priority: int = Priority.NORMAL
-    extra: dict[str, Any] = field(default_factory=dict)
-
-    def __lt__(self, other: TaskRequest) -> bool:
-        """PriorityQueue 用の比較。priority が小さいほど優先。"""
-        return self.priority < other.priority
-
-    @property
-    def repo_key(self) -> str:
-        """リポジトリを一意に識別するキー。"""
-        return f"{self.repo.owner}/{self.repo.repo}"
-
-    @property
-    def issue_key(self) -> IssueKey:
-        """リポジトリ横断で Issue を一意に識別するキー。"""
-        return (self.repo_key, self.issue_number)
+__all__ = ["Priority", "TaskQueue", "TaskRequest"]
 
 
 # ---------------------------------------------------------------------------

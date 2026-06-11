@@ -21,7 +21,7 @@ def mock_sm() -> AsyncMock:
     """StateMachineManager のモック."""
     sm = AsyncMock()
     sm.register_issue = MagicMock()
-    sm.get_phase = MagicMock(return_value="plan-review")  # 同期メソッド
+    sm.get_phase = MagicMock(return_value="approve")  # 同期メソッド
     sm.get_issue_type = MagicMock(return_value="bug")
     sm.set_issue_type = MagicMock()  # 同期メソッド
     sm.get_state = MagicMock(return_value=None)  # 同期メソッド
@@ -93,7 +93,7 @@ class TestEventRouterNewIssue:
         mock_sm.register_issue.assert_called_once()
         mock_tq.enqueue.assert_called_once()
         enqueued = mock_tq.enqueue.call_args[0][0]
-        assert enqueued.phase == "type-detection"
+        assert enqueued.phase == "intake"
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +117,7 @@ class TestEventRouterPlanReaction:
 
         mock_sm.transition.assert_called_once()
         args = mock_sm.transition.call_args[0]
-        assert args[1].value == "fix"
+        assert args[1].value == "implement"
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +141,7 @@ class TestEventRouterPlanComment:
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]
-        assert args[1].value == "analysis"
+        assert args[1].value == "plan"
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +159,7 @@ class TestEventRouterDesignPR:
         mock_tq: AsyncMock,
     ) -> None:
         """設計 PR approve -> IMPLEMENT へ遷移する."""
-        mock_sm.get_phase.return_value = Phase.DESIGN_REVIEW
+        mock_sm.get_phase.return_value = Phase.APPROVE
         event = _make_event(EventType.DESIGN_PR_APPROVED)
         await router.route(event)
 
@@ -174,8 +174,8 @@ class TestEventRouterDesignPR:
         mock_sm: AsyncMock,
         mock_tq: AsyncMock,
     ) -> None:
-        """設計 PR の差し戻し (指摘) -> APPROVE ゲートとして design (PLAN) へ戻す (U4)."""
-        mock_sm.get_phase.return_value = Phase.DESIGN_REVIEW
+        """設計 PR の差し戻し (指摘) -> APPROVE ゲートとして plan (PLAN) へ戻す (U5)."""
+        mock_sm.get_phase.return_value = Phase.APPROVE
         event = _make_event(
             EventType.DESIGN_PR_COMMENTED,
             extra={"comments": "アーキを見直して"},
@@ -183,10 +183,10 @@ class TestEventRouterDesignPR:
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]
-        assert args[1].value == "design"
+        assert args[1].value == "plan"
         # 指摘全文が feedback として再実行プロンプトに渡る (受け入れ条件2)
         enqueued = mock_tq.enqueue.call_args[0][0]
-        assert enqueued.phase == Phase.DESIGN.value
+        assert enqueued.phase == Phase.PLAN.value
         assert "アーキを見直して" in enqueued.extra["feedback"]
 
 
@@ -234,7 +234,7 @@ class TestEventRouterImplPR:
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]
-        assert args[1].value == "impl-revise"
+        assert args[1].value == "revise"
         enqueued = mock_tq.enqueue.call_args[0][0]
         assert enqueued.priority == Priority.CRITICAL
 
@@ -254,7 +254,7 @@ class TestEventRouterCIResult:
         mock_tq: AsyncMock,
     ) -> None:
         """CI 失敗 (3回以内) -> CI_FIX へ遷移."""
-        mock_sm.get_phase.return_value = Phase.IMPL_REVIEW
+        mock_sm.get_phase.return_value = Phase.REVIEW
         mock_sm.get_ci_retry_count.return_value = 1
         event = _make_event(
             EventType.CI_RESULT,
@@ -266,7 +266,7 @@ class TestEventRouterCIResult:
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]
-        assert args[1].value == "ci-fix"
+        assert args[1].value == "revise"
 
     async def test_ci_failure_exceeds_limit_routes_to_suspended(
         self,
@@ -275,7 +275,7 @@ class TestEventRouterCIResult:
         mock_tq: AsyncMock,
     ) -> None:
         """CI 失敗 (3回超過) -> SUSPENDED へ遷移."""
-        mock_sm.get_phase.return_value = Phase.IMPL_REVIEW
+        mock_sm.get_phase.return_value = Phase.REVIEW
         mock_sm.get_ci_retry_count.return_value = 3
         event = _make_event(
             EventType.CI_RESULT,
@@ -297,7 +297,7 @@ class TestEventRouterCIResult:
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]
-        assert args[1].value == "impl-review"
+        assert args[1].value == "review"
         mock_tq.enqueue.assert_not_called()
 
 
@@ -326,7 +326,7 @@ class TestEventRouterCIResultWithReview:
         """pr_number を持つ IssueState を返す StateMachineManager モック."""
         sm = AsyncMock()
         sm.register_issue = MagicMock()
-        sm.get_phase = MagicMock(return_value="plan-review")
+        sm.get_phase = MagicMock(return_value="approve")
         sm.get_issue_type = MagicMock(return_value="bug")
         sm.set_issue_type = MagicMock()
         sm.get_ci_retry_count = AsyncMock(return_value=0)
@@ -375,7 +375,7 @@ class TestEventRouterCIResultWithReview:
         mock_client: AsyncMock,
     ) -> None:
         """既に IMPL_REVIEW 状態の場合はコメントが投稿されない（冪等性）。"""
-        mock_sm_with_state.get_phase.return_value = Phase.IMPL_REVIEW
+        mock_sm_with_state.get_phase.return_value = Phase.REVIEW
         event = _make_event(EventType.CI_RESULT, extra={"ci_status": "success"})
         await router_with_am.route(event)
 
@@ -399,7 +399,7 @@ class TestEventRouterCIResultWithReview:
         assert mock_client.create_comment.call_count == 1
 
         # 2回目: 既に IMPL_REVIEW なのでスキップ
-        mock_sm_with_state.get_phase.return_value = Phase.IMPL_REVIEW
+        mock_sm_with_state.get_phase.return_value = Phase.REVIEW
         await router_with_am.route(event)
         # create_comment は追加で呼ばれない
         assert mock_client.create_comment.call_count == 1
@@ -422,7 +422,7 @@ class TestEventRouterCIResultWithReview:
         # 遷移は完了する
         mock_sm_with_state.transition.assert_called_once()
         args = mock_sm_with_state.transition.call_args[0]
-        assert args[1].value == "impl-review"
+        assert args[1].value == "review"
         # コメントは投稿されない
         mock_client.create_comment.assert_not_called()
 
@@ -440,10 +440,10 @@ class TestEventRouterCIResultWithReview:
         # 例外が発生してもクラッシュしない
         await router_with_am.route(event)
 
-        # IMPL_REVIEW への遷移は完了している
+        # REVIEW への遷移は完了している
         mock_sm_with_state.transition.assert_called_once()
         args = mock_sm_with_state.transition.call_args[0]
-        assert args[1].value == "impl-review"
+        assert args[1].value == "review"
 
 
 # ---------------------------------------------------------------------------
@@ -460,13 +460,16 @@ class TestEventRouterSplit:
         mock_sm: AsyncMock,
         mock_tq: AsyncMock,
     ) -> None:
-        """分割承認 -> SPLIT_EXECUTE へ遷移."""
-        mock_sm.get_phase.return_value = Phase.SPLIT_PROPOSAL
+        """分割承認 -> SPLIT フェーズ内で execute ステップをエンキュー (遷移なし, U5)."""
+        mock_sm.get_phase.return_value = Phase.SPLIT
         event = _make_event(EventType.SPLIT_APPROVED)
         await router.route(event)
 
-        args = mock_sm.transition.call_args[0]
-        assert args[1].value == "split-execute"
+        mock_sm.transition.assert_not_called()
+        mock_tq.enqueue.assert_called_once()
+        enqueued = mock_tq.enqueue.call_args[0][0]
+        assert enqueued.phase == Phase.SPLIT.value
+        assert enqueued.extra["step"] == "execute"
 
     async def test_split_modified_routes_to_hearing(
         self,
@@ -474,13 +477,13 @@ class TestEventRouterSplit:
         mock_sm: AsyncMock,
         mock_tq: AsyncMock,
     ) -> None:
-        """分割修正指示 -> HEARING へ遷移."""
+        """分割修正指示 -> CLARIFY (旧 HEARING) へ遷移 (U5)."""
         comment = MagicMock(body="こう分割して")
         event = _make_event(EventType.SPLIT_MODIFIED, comment=comment)
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]
-        assert args[1].value == "hearing"
+        assert args[1].value == "clarify"
 
 
 # ---------------------------------------------------------------------------
@@ -510,10 +513,10 @@ class TestEventRouterHearing:
         mock_sm: AsyncMock,
         mock_tq: AsyncMock,
     ) -> None:
-        """ヒアリング回答 -> hearing エンキュー (遷移なし)."""
+        """ヒアリング回答 -> clarify エンキュー (遷移なし)."""
         from ai_agent_orchestrator.models import Phase
 
-        mock_sm.get_phase.return_value = Phase.HEARING
+        mock_sm.get_phase.return_value = Phase.CLARIFY
         comment = MagicMock()
         comment.body = "回答です"
         comment.issue_url = "https://api.github.com/repos/org/app/issues/1"
@@ -533,7 +536,7 @@ class TestEventRouterHearing:
         mock_sm: AsyncMock,
         mock_tq: AsyncMock,
     ) -> None:
-        """SUSPENDED の Issue にヒアリング回答 -> HEARING に復帰してエンキュー."""
+        """SUSPENDED の Issue にヒアリング回答 -> CLARIFY に復帰してエンキュー."""
         from ai_agent_orchestrator.models import Phase
 
         mock_sm.get_phase.return_value = Phase.SUSPENDED
@@ -549,7 +552,7 @@ class TestEventRouterHearing:
 
         mock_sm.transition.assert_called_once()
         args = mock_sm.transition.call_args[0]
-        assert args[1] == Phase.HEARING
+        assert args[1] == Phase.CLARIFY
         mock_tq.enqueue.assert_called_once()
 
 
@@ -585,7 +588,7 @@ class TestEventRouterHearingWait:
         sm = MagicMock()
         sm.transition = AsyncMock()
         sm.register_issue = MagicMock()
-        sm.get_phase = MagicMock(return_value=Phase.HEARING_WAIT)
+        sm.get_phase = MagicMock(return_value=Phase.CLARIFY_WAIT)
         sm.get_issue_type = MagicMock(return_value="feature-m")
         sm.set_issue_type = MagicMock()
         sm.get_ci_retry_count = AsyncMock(return_value=0)
@@ -614,12 +617,12 @@ class TestEventRouterHearingWait:
         await router.route(event)
 
         mock_sm.transition.assert_called_once()
-        assert mock_sm.transition.call_args[0][1] == Phase.HEARING
+        assert mock_sm.transition.call_args[0][1] == Phase.CLARIFY
         mock_tq.enqueue.assert_called_once()
 
     async def test_hearing_reply_during_hearing_enqueues_without_transition(self, router, mock_sm, mock_tq):
-        """hearing 実行中にユーザーコメント → 遷移せずエンキューのみ."""
-        mock_sm.get_phase.return_value = Phase.HEARING
+        """clarify 実行中にユーザーコメント → 遷移せずエンキューのみ."""
+        mock_sm.get_phase.return_value = Phase.CLARIFY
 
         comment = MagicMock()
         comment.issue_url = "https://api.github.com/repos/o/r/issues/42"
@@ -667,7 +670,7 @@ class TestEventRouterImplPRCommentedMultiple:
         """IMPL_REVIEW フェーズの StateMachineManager モック (pr_number=10)."""
         sm = AsyncMock()
         sm.register_issue = MagicMock()
-        sm.get_phase = MagicMock(return_value=Phase.IMPL_REVIEW)
+        sm.get_phase = MagicMock(return_value=Phase.REVIEW)
         sm.get_issue_type = MagicMock(return_value="feature-m")
         sm.set_issue_type = MagicMock()
         sm.get_ci_retry_count = AsyncMock(return_value=0)
@@ -739,7 +742,7 @@ class TestEventRouterImplPRCommentedMultiple:
         """IMPL_REVISE 中の後発 IMPL_PR_COMMENTED はスキップされる."""
         sm = AsyncMock()
         sm.register_issue = MagicMock()
-        sm.get_phase = MagicMock(return_value=Phase.IMPL_REVISE)
+        sm.get_phase = MagicMock(return_value=Phase.REVISE)
         sm.get_issue_type = MagicMock(return_value="feature-m")
         sm.set_issue_type = MagicMock()
         sm.get_ci_retry_count = AsyncMock(return_value=0)
@@ -770,7 +773,7 @@ class TestEventRouterImplPRCommentedMultiple:
 
         sm = AsyncMock()
         sm.register_issue = MagicMock()
-        sm.get_phase = MagicMock(return_value=Phase.IMPL_REVIEW)
+        sm.get_phase = MagicMock(return_value=Phase.REVIEW)
         sm.get_issue_type = MagicMock(return_value="feature-m")
         sm.set_issue_type = MagicMock()
         sm.get_ci_retry_count = AsyncMock(return_value=0)
@@ -812,7 +815,7 @@ class TestEventRouterImplPRCommentedMultiple:
         # 遷移・エンキューは完了している
         mock_sm_impl_review.transition.assert_called_once()
         args = mock_sm_impl_review.transition.call_args[0]
-        assert args[1].value == "impl-revise"
+        assert args[1].value == "revise"
         mock_tq.enqueue.assert_called_once()
 
 
@@ -852,7 +855,7 @@ class TestImplPrCommentedDeferredReplayDedup:
     def router(self, mock_client: AsyncMock) -> tuple[EventRouter, AsyncMock, AsyncMock]:
         sm = AsyncMock()
         sm.register_issue = MagicMock()
-        sm.get_phase = MagicMock(return_value=Phase.IMPL_REVIEW)
+        sm.get_phase = MagicMock(return_value=Phase.REVIEW)
         sm.get_issue_type = MagicMock(return_value="feature-m")
         state = MagicMock()
         state.pr_number = 10
@@ -927,7 +930,7 @@ class TestReviewReplyDedupPersistence:
         )
         sm = AsyncMock()
         sm.register_issue = MagicMock()
-        sm.get_phase = MagicMock(return_value=Phase.IMPL_REVIEW)
+        sm.get_phase = MagicMock(return_value=Phase.REVIEW)
         sm.get_issue_type = MagicMock(return_value="feature-m")
         state = MagicMock()
         state.pr_number = 10

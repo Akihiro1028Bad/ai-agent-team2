@@ -551,9 +551,9 @@ class TestDetectCIResults:
     async def test_detect_ci_failure(self) -> None:
         """CI 失敗が検知される."""
         client = _make_client()
-        issue = _make_issue(number=1, labels=["ai-agent", "phase:implement"])
-        # implement returns issue, ci-fix and impl-review return empty
-        client.get_issues_with_label = AsyncMock(side_effect=[[issue], [], []])
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:revise"])
+        # revise returns issue, ci-fix/impl-revise/review/impl-review return empty (U5: 5 calls total)
+        client.get_issues_with_label = AsyncMock(side_effect=[[issue], [], [], [], []])
 
         pr = MagicMock()
         pr.number = 10
@@ -580,9 +580,9 @@ class TestDetectCIResults:
     async def test_detect_ci_success(self) -> None:
         """CI 成功が検知される."""
         client = _make_client()
-        issue = _make_issue(number=1, labels=["ai-agent", "phase:implement"])
-        # implement returns issue, ci-fix and impl-review return empty
-        client.get_issues_with_label = AsyncMock(side_effect=[[issue], [], []])
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:revise"])
+        # revise returns issue, ci-fix/impl-revise/review/impl-review return empty (U5: 5 calls total)
+        client.get_issues_with_label = AsyncMock(side_effect=[[issue], [], [], [], []])
 
         pr = MagicMock()
         pr.number = 10
@@ -606,10 +606,12 @@ class TestDetectCIResults:
         assert result[0].extra["ci_status"] == "success"
 
     async def test_ci_result_not_re_detected(self) -> None:
-        """BUG #4: 同じ CI 結果が2回目のポーリングで再検知されない."""
+        """BUG #4: review フェーズの CI 成功は2回目のポーリングで再検知されない (U5)."""
         client = _make_client()
-        issue = _make_issue(number=1, labels=["ai-agent", "phase:implement"])
-        client.get_issues_with_label = AsyncMock(side_effect=[[issue], [], [], [issue], [], []])
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:review"])
+        # Two rounds of 5 calls each (U5: revise,ci-fix,impl-revise,review,impl-review)
+        # review フェーズの issue は 4 番目の call で返す
+        client.get_issues_with_label = AsyncMock(side_effect=[[], [], [], [issue], [], [], [], [], [issue], []])
 
         pr = MagicMock()
         pr.number = 10
@@ -680,11 +682,11 @@ class TestPollRepo:
         client = _make_client()
         issue = _make_issue(number=42, labels=["ai-agent"])
         # First call returns the new issue; rest return empty
-        # Detection methods call get_issues_with_label:
-        # new_issues(1) + hearing_replies(1) + hearing_timeouts(1) +
-        # plan_reactions(1) + plan_comments(1) + pr_events(2) +
-        # ci_results(2) + split_events(1) = 10 calls
-        client.get_issues_with_label = AsyncMock(side_effect=[[issue], [], [], [], [], [], [], [], [], []])
+        # Detection methods call get_issues_with_label (U5, since=None):
+        # new_issues(1) + hearing_replies(2) + hearing_timeouts(2) +
+        # plan_reactions(2) + plan_comments(0, skip) + pr_events(4) +
+        # ci_results(5) + split_events(2) = 18 calls
+        client.get_issues_with_label = AsyncMock(side_effect=[[issue]] + [[] for _ in range(17)])
 
         repo = _make_repo()
         am = _make_account_manager(client)
@@ -699,32 +701,13 @@ class TestPollRepo:
         """BUG #1: _poll_repo を2回呼んでも同じ Issue は再検知されない."""
         client = _make_client()
         issue = _make_issue(number=42, labels=["ai-agent"])
-        # 11 calls per poll, 2 polls = 22 calls
-        side_effects = [
-            [issue],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [issue],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-        ]
-        client.get_issues_with_label = AsyncMock(side_effect=side_effects)
+        # First poll (since=None): 18 calls; second poll (since set): 20 calls = 38 total (U5)
+        # new_issues(1) + hearing_replies(2) + hearing_timeouts(2) +
+        # plan_reactions(2) + plan_comments(0/2) + pr_events(4) +
+        # ci_results(5) + split_events(2)
+        first_poll = [[issue]] + [[] for _ in range(17)]  # 18 calls
+        second_poll = [[issue]] + [[] for _ in range(19)]  # 20 calls
+        client.get_issues_with_label = AsyncMock(side_effect=first_poll + second_poll)
 
         repo = _make_repo()
         am = _make_account_manager(client)
@@ -828,17 +811,21 @@ class TestDetectCiResultsDuplicate:
         return GitHubPoller(account_manager=am, repos=[])
 
     async def test_ci_fix_allows_duplicate_detection(self) -> None:
-        """ci-fix フェーズでは同じ CI failure を複数回検知できる."""
+        """revise (旧 ci-fix) フェーズでは同じ CI failure を複数回検知できる (U5)."""
         poller = self._make_poller()
         repo = _make_repo()
         issue = _make_issue(number=99, labels=["ai-agent", "phase:ci-fix"])
         client = AsyncMock()
 
-        # ci-fix ラベルの Issue を返す
+        # revise/ci-fix/impl-revise/review/impl-review の 5 call 分 (U5)
+        # ci-fix は legacy として 2 番目に返す
         client.get_issues_with_label = AsyncMock(
             side_effect=[
-                [issue],  # ci-fix
-                [],  # impl-review
+                [],  # phase:revise (new)
+                [issue],  # phase:ci-fix (legacy)
+                [],  # phase:impl-revise (legacy)
+                [],  # phase:review (new)
+                [],  # phase:impl-review (legacy)
             ]
         )
         client.list_pull_requests = AsyncMock(return_value=[])
@@ -856,10 +843,13 @@ class TestDetectCiResultsDuplicate:
         events1 = await poller._detect_ci_results(client, repo)  # type: ignore[arg-type]
         assert len(events1) == 1
 
-        # 2回目: ci-fix は _seen_events を無視するため再検知される
+        # 2回目: revise は _seen_events を無視するため再検知される
         client.get_issues_with_label = AsyncMock(
             side_effect=[
+                [],
                 [issue],
+                [],
+                [],
                 [],
             ]
         )
@@ -867,16 +857,21 @@ class TestDetectCiResultsDuplicate:
         assert len(events2) == 1
 
     async def test_impl_review_deduplicates(self) -> None:
-        """impl-review フェーズでは同じ CI failure を重複検知しない."""
+        """review (旧 impl-review) フェーズでは同じ CI failure を重複検知しない (U5)."""
         poller = self._make_poller()
         repo = _make_repo()
         issue = _make_issue(number=88, labels=["ai-agent", "phase:impl-review"])
         client = AsyncMock()
 
+        # revise/ci-fix/impl-revise/review/impl-review の 5 call 分 (U5)
+        # impl-review は legacy として 5 番目に返す
         client.get_issues_with_label = AsyncMock(
             side_effect=[
-                [],  # ci-fix
-                [issue],  # impl-review
+                [],  # phase:revise
+                [],  # phase:ci-fix
+                [],  # phase:impl-revise
+                [],  # phase:review
+                [issue],  # phase:impl-review (legacy)
             ]
         )
         client.list_pull_requests = AsyncMock(return_value=[])
@@ -894,9 +889,12 @@ class TestDetectCiResultsDuplicate:
         events1 = await poller._detect_ci_results(client, repo)  # type: ignore[arg-type]
         assert len(events1) == 1
 
-        # 2回目: impl-review は _seen_events で重複排除される
+        # 2回目: review は _seen_events で重複排除される
         client.get_issues_with_label = AsyncMock(
             side_effect=[
+                [],
+                [],
+                [],
                 [],
                 [issue],
             ]
@@ -1121,9 +1119,19 @@ class TestDetectPrEventsInlineOnlyReview:
         review_comments: list[dict[str, object]],
     ) -> tuple[AsyncMock, MagicMock, GitHubPoller]:
         client = _make_client()
-        impl_issue = _make_issue(number=131, labels=["ai-agent", "phase:impl-review"])
-        # design-review(0件) → impl-review(1件) の順で呼ばれる
-        client.get_issues_with_label = AsyncMock(side_effect=[[], [impl_issue]])
+        impl_issue = _make_issue(number=131, labels=["ai-agent", "phase:review"])
+        # _detect_pr_events は _get_issues_with_phase_label を2回呼ぶ:
+        #   1. ("approve", ["design-review"]) → phase:approve (0件) + phase:design-review (0件)
+        #   2. ("review", ["impl-review"]) → phase:review (1件) + phase:impl-review (0件)
+        # _get_issues_with_phase_label は新フェーズ名 + レガシーフェーズ名の順で呼ぶので4回
+        client.get_issues_with_label = AsyncMock(
+            side_effect=[
+                [],  # phase:approve (design)
+                [],  # phase:design-review (legacy)
+                [impl_issue],  # phase:review (impl)
+                [],  # phase:impl-review (legacy)
+            ]
+        )
         pr = MagicMock()
         pr.number = 132
         pr.title = "修正: #131 テスト"

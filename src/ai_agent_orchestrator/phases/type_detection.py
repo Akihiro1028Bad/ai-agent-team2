@@ -86,11 +86,12 @@ class TypeDetectionExecutor(PhaseExecutor):
 
         # タイプ別次フェーズへ遷移
         next_phase_map: dict[str, str] = {
-            "bug": "analysis",
-            "feature-m": "hearing",
-            "feature-l": "hearing",
+            # U5 (#83): 情報が明確な bug は PLAN へ直行、feature はヒアリング (CLARIFY) へ
+            "bug": "plan",
+            "feature-m": "clarify",
+            "feature-l": "clarify",
         }
-        next_phase = next_phase_map.get(issue_type, "hearing")
+        next_phase = next_phase_map.get(issue_type, "clarify")
         await client.replace_phase_label(request.repo, request.issue_number, f"phase:{next_phase}")
         await self._sm.transition(self._issue_key(request), next_phase)
 

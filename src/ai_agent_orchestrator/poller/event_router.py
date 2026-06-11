@@ -267,7 +267,7 @@ class EventRouter:
                 break
 
         # フェーズをラベルから推定
-        current_phase = Phase.PLAN_REVIEW  # デフォルト(plan_reaction の呼び出し元)
+        current_phase = Phase.APPROVE  # デフォルト(plan_reaction の呼び出し元)
         for lbl in labels:
             if lbl.startswith("phase:"):
                 phase_str = lbl.replace("phase:", "")
@@ -307,13 +307,13 @@ class EventRouter:
         self._sm.register_issue(
             issue_number=event.issue.number,
             repo=repo_key,
-            initial_phase=Phase.TYPE_DETECTION,
+            initial_phase=Phase.INTAKE,
         )
         await self._tq.enqueue(
             TaskRequest(
                 issue_number=event.issue.number,
                 repo=event.repo,
-                phase=Phase.TYPE_DETECTION.value,
+                phase=Phase.INTAKE.value,
                 priority=Priority.NORMAL,
             )
         )
@@ -333,22 +333,22 @@ class EventRouter:
             logger.warning("Issue #%d is not registered, skipping hearing reply", issue_number)
             return
 
-        if current_phase == Phase.HEARING_WAIT:
+        if current_phase == Phase.CLARIFY_WAIT:
             # 回答待ち → hearing に遷移して再実行
-            await self._sm.transition(issue_key, Phase.HEARING)
+            await self._sm.transition(issue_key, Phase.CLARIFY)
             # ラベル更新
             try:
                 client = await self._get_client(event.repo)
                 if client:
-                    await client.replace_phase_label(event.repo, issue_number, "phase:hearing")
+                    await client.replace_phase_label(event.repo, issue_number, "phase:clarify")
             except Exception:
                 logger.warning("Failed to update phase label to hearing for issue #%d", issue_number)
-        elif current_phase == Phase.HEARING:
+        elif current_phase == Phase.CLARIFY:
             # AI 実行中にユーザーが回答 → 遷移せずキューイングのみ
             pass
         elif current_phase == Phase.SUSPENDED:
             # SUSPENDED → HEARING に復帰
-            await self._sm.transition(issue_key, Phase.HEARING)
+            await self._sm.transition(issue_key, Phase.CLARIFY)
             logger.info("Issue #%d resumed from SUSPENDED to HEARING", issue_number)
         else:
             # HEARING/HEARING_WAIT/SUSPENDED 以外のフェーズなら無視
@@ -360,7 +360,7 @@ class EventRouter:
             TaskRequest(
                 issue_number=issue_number,
                 repo=event.repo,
-                phase=Phase.HEARING.value,
+                phase=Phase.CLARIFY.value,
                 priority=Priority.HIGH,
                 extra={"comment": event.comment.body},
             )
@@ -393,7 +393,7 @@ class EventRouter:
         if issue_type != "bug":
             logger.warning("Issue #%d is type %s, plan reaction only applies to bugs", event.issue.number, issue_type)
             return
-        next_phase = Phase.FIX
+        next_phase = Phase.IMPLEMENT
 
         # 既に遷移先フェーズにいる場合はスキップ (再起動後の重複検出対策)
         current_phase = self._sm.get_phase(issue_key)
@@ -492,7 +492,7 @@ class EventRouter:
         if issue_type != "bug":
             logger.warning("Issue #%d is type %s, plan comment only applies to bugs", event.issue.number, issue_type)
             return
-        next_phase = Phase.ANALYSIS
+        next_phase = Phase.PLAN
 
         if current_phase == next_phase:
             logger.info(
@@ -501,7 +501,7 @@ class EventRouter:
                 next_phase.value,
             )
             return
-        if current_phase != Phase.PLAN_REVIEW:
+        if current_phase != Phase.APPROVE:
             logger.info(
                 "Issue #%d is in %s (not plan-review), ignoring plan comment",
                 event.issue.number,
@@ -532,7 +532,7 @@ class EventRouter:
             raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         current_phase = self._sm.get_phase(issue_key)
-        if current_phase != Phase.DESIGN_REVIEW:
+        if current_phase != Phase.APPROVE:
             logger.info(
                 "Issue #%d is in %s, not DESIGN_REVIEW, skipping design_pr_approved",
                 event.issue.number,
@@ -565,7 +565,7 @@ class EventRouter:
             raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         current_phase = self._sm.get_phase(issue_key)
-        if current_phase != Phase.DESIGN_REVIEW:
+        if current_phase != Phase.APPROVE:
             logger.info(
                 "Issue #%d is in %s, not DESIGN_REVIEW, skipping design_pr_commented",
                 event.issue.number,
@@ -573,12 +573,12 @@ class EventRouter:
             )
             return
         feedback = (event.extra or {}).get("comments", "")
-        await self._sm.transition(issue_key, Phase.DESIGN)
+        await self._sm.transition(issue_key, Phase.PLAN)
         await self._tq.enqueue(
             TaskRequest(
                 issue_number=event.issue.number,
                 repo=event.repo,
-                phase=Phase.DESIGN.value,
+                phase=Phase.PLAN.value,
                 priority=Priority.CRITICAL,
                 extra={"feedback": feedback},
             )
@@ -595,13 +595,13 @@ class EventRouter:
             raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         current_phase = self._sm.get_phase(issue_key)
-        if current_phase not in (Phase.IMPL_REVIEW, Phase.DONE):
+        if current_phase not in (Phase.REVIEW, Phase.DONE):
             logger.info(
                 "Issue #%d: PR merged while in %s, transitioning to impl-review first",
                 event.issue.number,
                 current_phase,
             )
-            await self._sm.transition(issue_key, Phase.IMPL_REVIEW)
+            await self._sm.transition(issue_key, Phase.REVIEW)
         await self._sm.transition(issue_key, Phase.DONE)
         await self._tq.enqueue(
             TaskRequest(
@@ -639,7 +639,7 @@ class EventRouter:
             )
             return
 
-        if current_phase == Phase.IMPL_REVISE:
+        if current_phase == Phase.REVISE:
             # 既に IMPL_REVISE 中: スキップするが、全コメント収集により
             # 先発タスクが全コメントを包含済みのため問題なし
             logger.info(
@@ -708,12 +708,12 @@ class EventRouter:
             return
 
         # フェーズ遷移・エンキュー（先に確定させる）
-        await self._sm.transition(issue_key, Phase.IMPL_REVISE)
+        await self._sm.transition(issue_key, Phase.REVISE)
         accepted = await self._tq.enqueue(
             TaskRequest(
                 issue_number=event.issue.number,
                 repo=event.repo,
-                phase=Phase.IMPL_REVISE.value,
+                phase=Phase.REVISE.value,
                 priority=Priority.CRITICAL,
                 extra={
                     "comments": comments_text,
@@ -840,7 +840,7 @@ class EventRouter:
 
         if ci_status == "failure":
             current_phase = self._sm.get_phase(issue_key)
-            if current_phase not in (Phase.IMPLEMENT, Phase.IMPL_REVIEW, Phase.CI_FIX):
+            if current_phase not in (Phase.IMPLEMENT, Phase.REVIEW, Phase.REVISE):
                 logger.info(
                     "Issue #%d is in %s, not IMPLEMENT/IMPL_REVIEW/CI_FIX, skipping ci_result failure",
                     event.issue.number,
@@ -849,14 +849,16 @@ class EventRouter:
                 return
             retry_count = await self._sm.get_ci_retry_count(issue_key)
             if retry_count < 3:
-                await self._sm.transition(issue_key, Phase.CI_FIX)
+                await self._sm.transition(issue_key, Phase.REVISE)
                 await self._tq.enqueue(
                     TaskRequest(
                         issue_number=event.issue.number,
                         repo=event.repo,
-                        phase=Phase.CI_FIX.value,
+                        phase=Phase.REVISE.value,
                         priority=Priority.HIGH,
                         extra={
+                            # U5 (#83): REVISE 内で CI 修正フローへ振り分けるトリガー
+                            "trigger": "ci",
                             "ci_logs": (event.extra or {}).get("ci_logs", ""),
                             "retry_count": retry_count + 1,
                         },
@@ -872,15 +874,15 @@ class EventRouter:
                     logger.warning("Failed to update phase label to suspended for issue #%d", event.issue.number)
         elif ci_status == "success":
             current = self._sm.get_phase(issue_key)
-            if current != Phase.IMPL_REVIEW:
-                await self._sm.transition(issue_key, Phase.IMPL_REVIEW)
+            if current != Phase.REVIEW:
+                await self._sm.transition(issue_key, Phase.REVIEW)
                 # フェーズ遷移が実際に発生した場合のみ @claude /review を投稿（冪等性保証）
                 await self._post_impl_review_comment(event)
             # ラベルを impl-review に更新 (ci-fix → impl-review)
             try:
                 client = await self._get_client(event.repo)
                 if client:
-                    await client.replace_phase_label(event.repo, event.issue.number, "phase:impl-review")
+                    await client.replace_phase_label(event.repo, event.issue.number, "phase:review")
             except Exception:
                 logger.warning("Failed to update phase label to impl-review for issue #%d", event.issue.number)
             # IMPL_REVIEW はポーリングで PR approve/comment を待つため、エンキュー不要
@@ -921,25 +923,29 @@ class EventRouter:
             )
 
     async def _handle_split_approved(self, event: PollEvent) -> None:
-        """分割承認 (Feature-L): SPLIT_EXECUTE へ遷移してエンキュー."""
+        """分割承認 (Feature-L): SPLIT フェーズ内で実行ステップをエンキュー.
+
+        U5 (#83): 提案→承認→実行は SPLIT フェーズ内で完結するため遷移はなく、
+        extra["step"]="execute" で実行ステップへ進める。
+        """
         if event.issue is None:
             raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         current_phase = self._sm.get_phase(issue_key)
-        if current_phase != Phase.SPLIT_PROPOSAL:
+        if current_phase != Phase.SPLIT:
             logger.info(
-                "Issue #%d is in %s, not SPLIT_PROPOSAL, skipping split_approved",
+                "Issue #%d is in %s, not SPLIT, skipping split_approved",
                 event.issue.number,
                 current_phase,
             )
             return
-        await self._sm.transition(issue_key, Phase.SPLIT_EXECUTE)
         await self._tq.enqueue(
             TaskRequest(
                 issue_number=event.issue.number,
                 repo=event.repo,
-                phase=Phase.SPLIT_EXECUTE.value,
+                phase=Phase.SPLIT.value,
                 priority=Priority.NORMAL,
+                extra={"step": "execute"},
             )
         )
 
@@ -948,12 +954,12 @@ class EventRouter:
         if event.issue is None:
             raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
-        await self._sm.transition(issue_key, Phase.HEARING)
+        await self._sm.transition(issue_key, Phase.CLARIFY)
         await self._tq.enqueue(
             TaskRequest(
                 issue_number=event.issue.number,
                 repo=event.repo,
-                phase=Phase.HEARING.value,
+                phase=Phase.CLARIFY.value,
                 priority=Priority.NORMAL,
                 extra={
                     "modification_request": (event.comment.body if event.comment else ""),

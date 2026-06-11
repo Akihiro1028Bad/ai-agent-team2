@@ -56,40 +56,32 @@ class TestIssueWorkflow:
     """IssueWorkflow の基本動作テスト."""
 
     def test_initial_state(self) -> None:
-        """初期状態が type_detection であること."""
+        """初期状態が intake であること."""
         wf = IssueWorkflow()
-        assert wf.current_state_value == "type_detection"
+        assert wf.current_state.id == "intake"
 
     def test_bug_detection(self) -> None:
-        """Bug タイプで detect_bug 遷移ができること."""
+        """intake -> plan 遷移ができること（bug はヒアリング不要で直接 plan へ）."""
         wf = IssueWorkflow(issue_type="bug")
-        wf.send("detect_bug")
-        assert wf.current_state_value == "analysis"
+        wf.send("intake_to_plan")
+        assert wf.current_state.id == "plan"
 
     def test_feature_m_detection(self) -> None:
-        """Feature-M タイプで detect_feature_m 遷移ができること."""
+        """intake -> clarify 遷移ができること（feature-m はヒアリング必要）."""
         wf = IssueWorkflow(issue_type="feature-m")
-        wf.send("detect_feature_m")
-        assert wf.current_state_value == "hearing"
+        wf.send("intake_to_clarify")
+        assert wf.current_state.id == "clarify"
 
     def test_feature_l_detection(self) -> None:
-        """Feature-L タイプで detect_feature_l 遷移ができること."""
+        """intake -> clarify 遷移ができること（feature-l はヒアリング必要）."""
         wf = IssueWorkflow(issue_type="feature-l")
-        wf.send("detect_feature_l")
-        assert wf.current_state_value == "hearing"
+        wf.send("intake_to_clarify")
+        assert wf.current_state.id == "clarify"
 
     def test_start_value_restoration(self) -> None:
         """start_value でステートを復元できること."""
-        wf = IssueWorkflow(issue_type="feature-m", start_value="design")
-        assert wf.current_state_value == "design"
-
-    def test_guard_prevents_wrong_type(self) -> None:
-        """ガードが不一致のタイプを拒否すること."""
-        from statemachine.exceptions import TransitionNotAllowed
-
-        wf = IssueWorkflow(issue_type="feature-m")
-        with pytest.raises(TransitionNotAllowed):
-            wf.send("detect_bug")  # is_bug() returns False
+        wf = IssueWorkflow(issue_type="feature-m", start_value="plan")
+        assert wf.current_state.id == "plan"
 
     def test_issue_type_property(self) -> None:
         """issue_type プロパティの get/set."""
@@ -109,68 +101,68 @@ class TestBugWorkflow:
 
     @pytest.mark.asyncio
     async def test_bug_happy_path(self, sm: StateMachineManager) -> None:
-        """Bug: TYPE_DETECTION -> ANALYSIS -> PLAN_REVIEW -> FIX -> IMPL_REVIEW -> DONE."""
+        """Bug: INTAKE -> PLAN -> APPROVE -> IMPLEMENT -> REVIEW -> DONE."""
         sm.register_issue(1, "owner/repo")
         key = _key(1)
         sm.set_issue_type(key, "bug")
 
-        await sm.transition(key, Phase.ANALYSIS)
-        assert sm.get_phase(key) == Phase.ANALYSIS
+        await sm.transition(key, Phase.PLAN)
+        assert sm.get_phase(key) == Phase.PLAN
 
-        await sm.transition(key, Phase.PLAN_REVIEW)
-        assert sm.get_phase(key) == Phase.PLAN_REVIEW
+        await sm.transition(key, Phase.APPROVE)
+        assert sm.get_phase(key) == Phase.APPROVE
 
-        await sm.transition(key, Phase.FIX)
-        assert sm.get_phase(key) == Phase.FIX
+        await sm.transition(key, Phase.IMPLEMENT)
+        assert sm.get_phase(key) == Phase.IMPLEMENT
 
-        await sm.transition(key, Phase.IMPL_REVIEW)
-        assert sm.get_phase(key) == Phase.IMPL_REVIEW
+        await sm.transition(key, Phase.REVIEW)
+        assert sm.get_phase(key) == Phase.REVIEW
 
         await sm.transition(key, Phase.DONE)
         assert sm.get_phase(key) == Phase.DONE
 
     @pytest.mark.asyncio
     async def test_bug_with_ci_fix(self, sm: StateMachineManager) -> None:
-        """Bug: FIX -> CI_FIX -> CI_FIX -> IMPL_REVIEW -> DONE."""
+        """Bug: IMPLEMENT -> REVISE -> REVISE -> REVIEW -> DONE (CI 失敗 -> REVISE)."""
         sm.register_issue(2, "owner/repo")
         key = _key(2)
         sm.set_issue_type(key, "bug")
 
-        await sm.transition(key, Phase.ANALYSIS)
-        await sm.transition(key, Phase.PLAN_REVIEW)
-        await sm.transition(key, Phase.FIX)
-        await sm.transition(key, Phase.CI_FIX)
-        assert sm.get_phase(key) == Phase.CI_FIX
+        await sm.transition(key, Phase.PLAN)
+        await sm.transition(key, Phase.APPROVE)
+        await sm.transition(key, Phase.IMPLEMENT)
+        await sm.transition(key, Phase.REVISE)
+        assert sm.get_phase(key) == Phase.REVISE
 
-        await sm.transition(key, Phase.CI_FIX)  # self-transition
-        await sm.transition(key, Phase.IMPL_REVIEW)
+        await sm.transition(key, Phase.REVISE)  # self-transition
+        await sm.transition(key, Phase.REVIEW)
         await sm.transition(key, Phase.DONE)
 
     @pytest.mark.asyncio
     async def test_bug_plan_rejected(self, sm: StateMachineManager) -> None:
-        """Bug: PLAN_REVIEW -> ANALYSIS (方針指摘 -> 再分析)."""
+        """Bug: APPROVE -> PLAN (方針指摘 -> 再計画)."""
         sm.register_issue(3, "owner/repo")
         key = _key(3)
         sm.set_issue_type(key, "bug")
 
-        await sm.transition(key, Phase.ANALYSIS)
-        await sm.transition(key, Phase.PLAN_REVIEW)
-        await sm.transition(key, Phase.ANALYSIS)  # rejected
-        assert sm.get_phase(key) == Phase.ANALYSIS
+        await sm.transition(key, Phase.PLAN)
+        await sm.transition(key, Phase.APPROVE)
+        await sm.transition(key, Phase.PLAN)  # rejected -> back to plan
+        assert sm.get_phase(key) == Phase.PLAN
 
     @pytest.mark.asyncio
     async def test_bug_with_impl_revise(self, sm: StateMachineManager) -> None:
-        """Bug: IMPL_REVIEW -> IMPL_REVISE -> IMPL_REVIEW -> DONE."""
+        """Bug: REVIEW -> REVISE -> REVIEW -> DONE (レビュー指摘)."""
         sm.register_issue(4, "owner/repo")
         key = _key(4)
         sm.set_issue_type(key, "bug")
 
-        await sm.transition(key, Phase.ANALYSIS)
-        await sm.transition(key, Phase.PLAN_REVIEW)
-        await sm.transition(key, Phase.FIX)
-        await sm.transition(key, Phase.IMPL_REVIEW)
-        await sm.transition(key, Phase.IMPL_REVISE)
-        await sm.transition(key, Phase.IMPL_REVIEW)
+        await sm.transition(key, Phase.PLAN)
+        await sm.transition(key, Phase.APPROVE)
+        await sm.transition(key, Phase.IMPLEMENT)
+        await sm.transition(key, Phase.REVIEW)
+        await sm.transition(key, Phase.REVISE)
+        await sm.transition(key, Phase.REVIEW)
         await sm.transition(key, Phase.DONE)
         assert sm.get_phase(key) == Phase.DONE
 
@@ -185,77 +177,78 @@ class TestFeatureMWorkflow:
 
     @pytest.mark.asyncio
     async def test_feature_m_happy_path(self, sm: StateMachineManager) -> None:
-        """Feature-M: HEARING -> DESIGN -> DESIGN_REVIEW -> IMPLEMENT -> IMPL_REVIEW -> DONE."""
+        """Feature-M: CLARIFY -> PLAN -> APPROVE -> IMPLEMENT -> REVIEW -> DONE."""
         sm.register_issue(20, "owner/repo")
         key = _key(20)
         sm.set_issue_type(key, "feature-m")
 
-        await sm.transition(key, Phase.HEARING)
-        await sm.transition(key, Phase.DESIGN)
-        await sm.transition(key, Phase.DESIGN_REVIEW)
+        await sm.transition(key, Phase.CLARIFY)
+        await sm.transition(key, Phase.PLAN)
+        await sm.transition(key, Phase.APPROVE)
         await sm.transition(key, Phase.IMPLEMENT)
-        await sm.transition(key, Phase.IMPL_REVIEW)
+        await sm.transition(key, Phase.REVIEW)
         await sm.transition(key, Phase.DONE)
         assert sm.get_phase(key) == Phase.DONE
 
     @pytest.mark.asyncio
     async def test_feature_m_design_review_to_implement(self, sm: StateMachineManager) -> None:
-        """Feature-M: DESIGN_REVIEW -> IMPLEMENT が成功すること（設計PR承認後の直接遷移）."""
+        """Feature-M: APPROVE -> IMPLEMENT が成功すること（計画承認後の遷移）."""
         sm.register_issue(23, "owner/repo")
         key = _key(23)
         sm.set_issue_type(key, "feature-m")
 
-        await sm.transition(key, Phase.HEARING)
-        await sm.transition(key, Phase.DESIGN)
-        await sm.transition(key, Phase.DESIGN_REVIEW)
+        await sm.transition(key, Phase.CLARIFY)
+        await sm.transition(key, Phase.PLAN)
+        await sm.transition(key, Phase.APPROVE)
         await sm.transition(key, Phase.IMPLEMENT)
         assert sm.get_phase(key) == Phase.IMPLEMENT
 
     @pytest.mark.asyncio
     async def test_feature_m_design_review_to_design_on_rejection(self, sm: StateMachineManager) -> None:
-        """Feature-M: DESIGN_REVIEW -> DESIGN (U4 #82 差し戻しは PLAN へ戻す)."""
+        """Feature-M: APPROVE -> PLAN (差し戻しは PLAN へ戻す)."""
         sm.register_issue(24, "owner/repo")
         key = _key(24)
         sm.set_issue_type(key, "feature-m")
 
-        await sm.transition(key, Phase.HEARING)
-        await sm.transition(key, Phase.DESIGN)
-        await sm.transition(key, Phase.DESIGN_REVIEW)
-        await sm.transition(key, Phase.DESIGN)
-        assert sm.get_phase(key) == Phase.DESIGN
-        # 再設計後に再び design-review へ進めること
-        await sm.transition(key, Phase.DESIGN_REVIEW)
+        await sm.transition(key, Phase.CLARIFY)
+        await sm.transition(key, Phase.PLAN)
+        await sm.transition(key, Phase.APPROVE)
+        await sm.transition(key, Phase.PLAN)
+        assert sm.get_phase(key) == Phase.PLAN
+        # 再計画後に再び APPROVE へ進めること
+        await sm.transition(key, Phase.APPROVE)
         await sm.transition(key, Phase.IMPLEMENT)
         assert sm.get_phase(key) == Phase.IMPLEMENT
 
     @pytest.mark.asyncio
     async def test_feature_m_design_revise(self, sm: StateMachineManager) -> None:
-        """Feature-M: DESIGN_REVIEW -> DESIGN_REVISE -> DESIGN_REVIEW -> IMPLEMENT."""
+        """Feature-M: REVIEW -> REVISE -> REVIEW -> DONE (レビュー指摘対応)."""
         sm.register_issue(21, "owner/repo")
         key = _key(21)
         sm.set_issue_type(key, "feature-m")
 
-        await sm.transition(key, Phase.HEARING)
-        await sm.transition(key, Phase.DESIGN)
-        await sm.transition(key, Phase.DESIGN_REVIEW)
-        await sm.transition(key, Phase.DESIGN_REVISE)
-        await sm.transition(key, Phase.DESIGN_REVIEW)
+        await sm.transition(key, Phase.CLARIFY)
+        await sm.transition(key, Phase.PLAN)
+        await sm.transition(key, Phase.APPROVE)
         await sm.transition(key, Phase.IMPLEMENT)
-        assert sm.get_phase(key) == Phase.IMPLEMENT
+        await sm.transition(key, Phase.REVIEW)
+        await sm.transition(key, Phase.REVISE)
+        await sm.transition(key, Phase.REVIEW)
+        assert sm.get_phase(key) == Phase.REVIEW
 
     @pytest.mark.asyncio
     async def test_feature_m_with_ci_fix(self, sm: StateMachineManager) -> None:
-        """Feature-M: IMPLEMENT -> CI_FIX -> IMPL_REVIEW -> DONE."""
+        """Feature-M: IMPLEMENT -> REVISE -> REVIEW -> DONE (CI 失敗 -> REVISE)."""
         sm.register_issue(22, "owner/repo")
         key = _key(22)
         sm.set_issue_type(key, "feature-m")
 
-        await sm.transition(key, Phase.HEARING)
-        await sm.transition(key, Phase.DESIGN)
-        await sm.transition(key, Phase.DESIGN_REVIEW)
+        await sm.transition(key, Phase.CLARIFY)
+        await sm.transition(key, Phase.PLAN)
+        await sm.transition(key, Phase.APPROVE)
         await sm.transition(key, Phase.IMPLEMENT)
-        await sm.transition(key, Phase.CI_FIX)
-        await sm.transition(key, Phase.IMPL_REVIEW)
+        await sm.transition(key, Phase.REVISE)
+        await sm.transition(key, Phase.REVIEW)
         await sm.transition(key, Phase.DONE)
         assert sm.get_phase(key) == Phase.DONE
 
@@ -270,28 +263,27 @@ class TestFeatureLWorkflow:
 
     @pytest.mark.asyncio
     async def test_feature_l_happy_path(self, sm: StateMachineManager) -> None:
-        """Feature-L: HEARING -> SPLIT_PROPOSAL -> SPLIT_EXECUTE -> DONE."""
+        """Feature-L: CLARIFY -> SPLIT -> DONE."""
         sm.register_issue(30, "owner/repo")
         key = _key(30)
         sm.set_issue_type(key, "feature-l")
 
-        await sm.transition(key, Phase.HEARING)
-        await sm.transition(key, Phase.SPLIT_PROPOSAL)
-        await sm.transition(key, Phase.SPLIT_EXECUTE)
+        await sm.transition(key, Phase.CLARIFY)
+        await sm.transition(key, Phase.SPLIT)
         await sm.transition(key, Phase.DONE)
         assert sm.get_phase(key) == Phase.DONE
 
     @pytest.mark.asyncio
     async def test_feature_l_split_modified(self, sm: StateMachineManager) -> None:
-        """Feature-L: SPLIT_PROPOSAL -> HEARING (修正指示 -> ヒアリング再実行)."""
+        """Feature-L: SPLIT -> CLARIFY (修正指示 -> ヒアリング再実行)."""
         sm.register_issue(31, "owner/repo")
         key = _key(31)
         sm.set_issue_type(key, "feature-l")
 
-        await sm.transition(key, Phase.HEARING)
-        await sm.transition(key, Phase.SPLIT_PROPOSAL)
-        await sm.transition(key, Phase.HEARING)  # modified
-        assert sm.get_phase(key) == Phase.HEARING
+        await sm.transition(key, Phase.CLARIFY)
+        await sm.transition(key, Phase.SPLIT)
+        await sm.transition(key, Phase.CLARIFY)  # modified
+        assert sm.get_phase(key) == Phase.CLARIFY
 
 
 # ---------------------------------------------------------------------------
@@ -304,11 +296,11 @@ class TestInvalidTransitions:
 
     @pytest.mark.asyncio
     async def test_invalid_transition_raises(self, sm: StateMachineManager) -> None:
-        """ANALYSIS -> IMPLEMENT は不正遷移として拒否される."""
+        """PLAN -> IMPLEMENT は不正遷移として拒否される（APPROVE ゲートを通過していない）."""
         sm.register_issue(40, "owner/repo")
         key = _key(40)
         sm.set_issue_type(key, "bug")
-        await sm.transition(key, Phase.ANALYSIS)
+        await sm.transition(key, Phase.PLAN)
 
         with pytest.raises(InvalidTransitionError):
             await sm.transition(key, Phase.IMPLEMENT)
@@ -317,7 +309,7 @@ class TestInvalidTransitions:
     async def test_unregistered_issue_raises(self, sm: StateMachineManager) -> None:
         """未登録 Issue の遷移は KeyError."""
         with pytest.raises(KeyError):
-            await sm.transition(("owner/repo", 999), Phase.HEARING)
+            await sm.transition(("owner/repo", 999), Phase.CLARIFY)
 
     def test_duplicate_registration_raises(self, sm: StateMachineManager) -> None:
         """既に登録済みの Issue は ValueError."""
@@ -333,11 +325,11 @@ class TestInvalidTransitions:
 
     @pytest.mark.asyncio
     async def test_type_detection_to_hearing_without_type_raises(self, sm: StateMachineManager) -> None:
-        """issue_type 未設定で TYPE_DETECTION -> HEARING は失敗."""
+        """INTAKE -> DONE は不正遷移として拒否される（中間フェーズをスキップ）."""
         sm.register_issue(43, "owner/repo")
         # issue_type not set (empty string)
         with pytest.raises(InvalidTransitionError):
-            await sm.transition(_key(43), Phase.HEARING)
+            await sm.transition(_key(43), Phase.DONE)
 
 
 # ---------------------------------------------------------------------------
@@ -356,7 +348,7 @@ class TestPersistence:
         sm.set_issue_type(key, "bug")
         initial_call_count = mock_persistence.save.call_count
 
-        await sm.transition(key, Phase.ANALYSIS)
+        await sm.transition(key, Phase.PLAN)
         assert mock_persistence.save.call_count > initial_call_count
 
     def test_auto_save_on_register(self, sm: StateMachineManager, mock_persistence: MagicMock) -> None:
@@ -370,7 +362,7 @@ class TestPersistence:
         mock_persistence.load.return_value = {
             ("owner/repo", 1): IssueState(
                 issue_number=1,
-                phase=Phase.DESIGN,
+                phase=Phase.PLAN,
                 issue_type="feature-m",
                 repo="owner/repo",
             )
@@ -380,7 +372,7 @@ class TestPersistence:
             tracker=mock_tracker,
         )
         manager.load_from_persistence()
-        assert manager.get_phase(_key(1)) == Phase.DESIGN
+        assert manager.get_phase(_key(1)) == Phase.PLAN
         assert manager.get_issue_type(_key(1)) == "feature-m"
 
     @pytest.mark.asyncio
@@ -389,7 +381,7 @@ class TestPersistence:
         mock_persistence.load.return_value = {
             ("owner/repo", 1): IssueState(
                 issue_number=1,
-                phase=Phase.DESIGN,
+                phase=Phase.PLAN,
                 issue_type="feature-m",
                 repo="owner/repo",
             )
@@ -400,22 +392,22 @@ class TestPersistence:
         )
         manager.load_from_persistence()
 
-        # DESIGN -> DESIGN_REVIEW should work
-        await manager.transition(_key(1), Phase.DESIGN_REVIEW)
-        assert manager.get_phase(_key(1)) == Phase.DESIGN_REVIEW
+        # PLAN -> APPROVE should work
+        await manager.transition(_key(1), Phase.APPROVE)
+        assert manager.get_phase(_key(1)) == Phase.APPROVE
 
     def test_load_multiple_issues(self, mock_persistence: MagicMock, mock_tracker: AsyncMock) -> None:
         """複数 Issue を復元できる."""
         mock_persistence.load.return_value = {
             ("owner/repo", 1): IssueState(
                 issue_number=1,
-                phase=Phase.ANALYSIS,
+                phase=Phase.PLAN,
                 issue_type="bug",
                 repo="owner/repo",
             ),
             ("owner/repo2", 2): IssueState(
                 issue_number=2,
-                phase=Phase.HEARING,
+                phase=Phase.CLARIFY,
                 issue_type="feature-m",
                 repo="owner/repo2",
             ),
@@ -425,8 +417,8 @@ class TestPersistence:
             tracker=mock_tracker,
         )
         manager.load_from_persistence()
-        assert manager.get_phase(("owner/repo", 1)) == Phase.ANALYSIS
-        assert manager.get_phase(("owner/repo2", 2)) == Phase.HEARING
+        assert manager.get_phase(("owner/repo", 1)) == Phase.PLAN
+        assert manager.get_phase(("owner/repo2", 2)) == Phase.CLARIFY
         assert manager.get_issue_type(("owner/repo", 1)) == "bug"
         assert manager.get_issue_type(("owner/repo2", 2)) == "feature-m"
 
@@ -441,28 +433,28 @@ class TestSuspendedResume:
 
     @pytest.mark.asyncio
     async def test_resume_from_suspended_to_hearing(self, sm: StateMachineManager) -> None:
-        """SUSPENDED -> HEARING に復帰できる."""
+        """SUSPENDED -> CLARIFY に復帰できる."""
         sm.register_issue(60, "owner/repo")
         key = _key(60)
         sm.set_issue_type(key, "feature-m")
-        await sm.transition(key, Phase.HEARING)
+        await sm.transition(key, Phase.CLARIFY)
         await sm.transition(key, Phase.SUSPENDED)
         assert sm.get_phase(key) == Phase.SUSPENDED
 
-        await sm.transition(key, Phase.HEARING)
-        assert sm.get_phase(key) == Phase.HEARING
+        await sm.transition(key, Phase.CLARIFY)
+        assert sm.get_phase(key) == Phase.CLARIFY
 
     @pytest.mark.asyncio
     async def test_resume_from_suspended_to_analysis(self, sm: StateMachineManager) -> None:
-        """SUSPENDED -> ANALYSIS に復帰できる."""
+        """SUSPENDED -> PLAN に復帰できる."""
         sm.register_issue(61, "owner/repo")
         key = _key(61)
         sm.set_issue_type(key, "bug")
-        await sm.transition(key, Phase.ANALYSIS)
+        await sm.transition(key, Phase.PLAN)
         await sm.transition(key, Phase.SUSPENDED)
 
-        await sm.transition(key, Phase.ANALYSIS)
-        assert sm.get_phase(key) == Phase.ANALYSIS
+        await sm.transition(key, Phase.PLAN)
+        assert sm.get_phase(key) == Phase.PLAN
 
     @pytest.mark.asyncio
     async def test_resume_from_suspended_to_implement(self, sm: StateMachineManager) -> None:
@@ -470,7 +462,7 @@ class TestSuspendedResume:
         sm.register_issue(62, "owner/repo")
         key = _key(62)
         sm.set_issue_type(key, "feature-m")
-        await sm.transition(key, Phase.HEARING)
+        await sm.transition(key, Phase.CLARIFY)
         await sm.transition(key, Phase.SUSPENDED)
 
         await sm.transition(key, Phase.IMPLEMENT)
@@ -478,12 +470,12 @@ class TestSuspendedResume:
 
     @pytest.mark.asyncio
     async def test_suspend_from_design(self, sm: StateMachineManager) -> None:
-        """DESIGN -> SUSPENDED."""
+        """PLAN -> SUSPENDED."""
         sm.register_issue(63, "owner/repo")
         key = _key(63)
         sm.set_issue_type(key, "feature-m")
-        await sm.transition(key, Phase.HEARING)
-        await sm.transition(key, Phase.DESIGN)
+        await sm.transition(key, Phase.CLARIFY)
+        await sm.transition(key, Phase.PLAN)
         await sm.transition(key, Phase.SUSPENDED)
         assert sm.get_phase(key) == Phase.SUSPENDED
 
@@ -541,12 +533,11 @@ class TestStateAccessors:
         assert sm.get_issue_type(("owner/repo", 999)) == ""
 
     def test_transition_with_string_phase(self, sm: StateMachineManager) -> None:
-        """文字列で Phase を指定して遷移できる."""
+        """register 後の初期フェーズは Phase.INTAKE であること."""
         sm.register_issue(81, "owner/repo")
         key = _key(81)
         sm.set_issue_type(key, "bug")
-        # Use string instead of Phase enum - not async here, need to test in async
-        assert sm.get_phase(key) == Phase.TYPE_DETECTION
+        assert sm.get_phase(key) == Phase.INTAKE
 
     @pytest.mark.asyncio
     async def test_transition_with_string(self, sm: StateMachineManager) -> None:
@@ -554,8 +545,8 @@ class TestStateAccessors:
         sm.register_issue(82, "owner/repo")
         key = _key(82)
         sm.set_issue_type(key, "bug")
-        await sm.transition(key, "analysis")
-        assert sm.get_phase(key) == Phase.ANALYSIS
+        await sm.transition(key, "plan")
+        assert sm.get_phase(key) == Phase.PLAN
 
 
 # ---------------------------------------------------------------------------
@@ -573,23 +564,23 @@ class TestTrackerIntegration:
         key = _key(90)
         sm.set_issue_type(key, "bug")
 
-        await sm.transition(key, Phase.ANALYSIS)
+        await sm.transition(key, Phase.PLAN)
 
         mock_tracker.track.assert_called_once_with(
             "phase_transition",
             issue_number=90,
-            phase="analysis",
-            data={"from": "type-detection", "to": "analysis"},
+            phase="plan",
+            data={"from": "intake", "to": "plan"},
         )
 
 
 # ---------------------------------------------------------------------------
-# HEARING_WAIT workflow
+# HEARING_WAIT workflow (CLARIFY_WAIT)
 # ---------------------------------------------------------------------------
 
 
 class TestHearingWaitWorkflow:
-    """hearing-wait フェーズの遷移テスト."""
+    """clarify-wait フェーズの遷移テスト."""
 
     @pytest.fixture
     def sm(self, mock_persistence, mock_tracker):
@@ -599,24 +590,24 @@ class TestHearingWaitWorkflow:
         sm.register_issue(1, "owner/repo")
         key = _key(1)
         sm.set_issue_type(key, "feature-m")
-        await sm.transition(key, Phase.HEARING)
-        await sm.transition(key, Phase.HEARING_WAIT)
-        assert sm.get_phase(key) == Phase.HEARING_WAIT
+        await sm.transition(key, Phase.CLARIFY)
+        await sm.transition(key, Phase.CLARIFY_WAIT)
+        assert sm.get_phase(key) == Phase.CLARIFY_WAIT
 
     async def test_hearing_wait_to_hearing(self, sm):
         sm.register_issue(1, "owner/repo")
         key = _key(1)
         sm.set_issue_type(key, "feature-m")
-        await sm.transition(key, Phase.HEARING)
-        await sm.transition(key, Phase.HEARING_WAIT)
-        await sm.transition(key, Phase.HEARING)
-        assert sm.get_phase(key) == Phase.HEARING
+        await sm.transition(key, Phase.CLARIFY)
+        await sm.transition(key, Phase.CLARIFY_WAIT)
+        await sm.transition(key, Phase.CLARIFY)
+        assert sm.get_phase(key) == Phase.CLARIFY
 
     async def test_hearing_wait_to_suspended(self, sm):
         sm.register_issue(1, "owner/repo")
         key = _key(1)
         sm.set_issue_type(key, "feature-m")
-        await sm.transition(key, Phase.HEARING)
-        await sm.transition(key, Phase.HEARING_WAIT)
+        await sm.transition(key, Phase.CLARIFY)
+        await sm.transition(key, Phase.CLARIFY_WAIT)
         await sm.transition(key, Phase.SUSPENDED)
         assert sm.get_phase(key) == Phase.SUSPENDED

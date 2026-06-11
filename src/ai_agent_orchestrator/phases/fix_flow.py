@@ -113,8 +113,8 @@ async def finalize_fix(
         state.session_id = result.session_id
 
     client = await executor._get_client(request.repo)
-    await client.replace_phase_label(request.repo, request.issue_number, "phase:impl-review")
-    await executor._sm.transition(executor._issue_key(request), "impl-review")
+    await client.replace_phase_label(request.repo, request.issue_number, "phase:review")
+    await executor._sm.transition(executor._issue_key(request), "review")
     await executor._tracker.track(
         "fix_complete",
         issue_number=request.issue_number,

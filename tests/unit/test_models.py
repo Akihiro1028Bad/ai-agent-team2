@@ -29,29 +29,23 @@ from ai_agent_orchestrator.models import (
 
 
 def test_phase_has_18_values() -> None:
-    assert len(Phase) == 18
+    assert len(Phase) == 12
 
 
 def test_phase_values() -> None:
     expected = {
-        "type-detection",
-        "hearing",
-        "hearing-wait",
-        "analysis",
-        "plan-review",
-        "design",
-        "design-review",
-        "design-revise",
-        "split-proposal",
-        "split-execute",
-        "blocked",
+        "intake",
+        "clarify",
+        "clarify-wait",
+        "plan",
+        "approve",
         "implement",
-        "ci-fix",
-        "impl-review",
-        "impl-revise",
+        "review",
+        "revise",
+        "split",
+        "blocked",
         "done",
         "suspended",
-        "fix",
     }
     assert {p.value for p in Phase} == expected
 
@@ -155,9 +149,9 @@ def test_task_request_sorting() -> None:
 
 
 def test_issue_state_creation_minimal() -> None:
-    state = IssueState(issue_number=10, phase=Phase.HEARING)
+    state = IssueState(issue_number=10, phase=Phase.CLARIFY)
     assert state.issue_number == 10
-    assert state.phase == Phase.HEARING
+    assert state.phase == Phase.CLARIFY
     assert state.issue_type == ""
     assert state.repo == ""
     assert state.session_id is None
@@ -171,7 +165,7 @@ def test_issue_state_creation_minimal() -> None:
 def test_issue_state_with_issue_type() -> None:
     state = IssueState(
         issue_number=20,
-        phase=Phase.ANALYSIS,
+        phase=Phase.PLAN,
         issue_type="bug",
         repo="owner/repo",
     )
@@ -180,9 +174,9 @@ def test_issue_state_with_issue_type() -> None:
 
 
 def test_issue_state_is_mutable() -> None:
-    state = IssueState(issue_number=1, phase=Phase.HEARING)
-    state.phase = Phase.DESIGN
-    assert state.phase == Phase.DESIGN
+    state = IssueState(issue_number=1, phase=Phase.CLARIFY)
+    state.phase = Phase.PLAN
+    assert state.phase == Phase.PLAN
 
 
 # ---------------------------------------------------------------------------
@@ -191,17 +185,17 @@ def test_issue_state_is_mutable() -> None:
 
 
 def test_valid_transitions_type_detection() -> None:
-    """TYPE_DETECTION から HEARING と ANALYSIS への遷移が許可される."""
-    assert Phase.HEARING in VALID_TRANSITIONS[Phase.TYPE_DETECTION]
-    assert Phase.ANALYSIS in VALID_TRANSITIONS[Phase.TYPE_DETECTION]
-    assert Phase.IMPLEMENT not in VALID_TRANSITIONS[Phase.TYPE_DETECTION]
+    """INTAKE から CLARIFY と PLAN への遷移が許可される."""
+    assert Phase.CLARIFY in VALID_TRANSITIONS[Phase.INTAKE]
+    assert Phase.PLAN in VALID_TRANSITIONS[Phase.INTAKE]
+    assert Phase.IMPLEMENT not in VALID_TRANSITIONS[Phase.INTAKE]
 
 
 def test_valid_transitions_implement() -> None:
-    """IMPLEMENT から CI_FIX, IMPL_REVIEW, SUSPENDED への遷移が許可される."""
+    """IMPLEMENT から REVIEW, REVISE, SUSPENDED への遷移が許可される."""
     allowed = VALID_TRANSITIONS[Phase.IMPLEMENT]
-    assert Phase.CI_FIX in allowed
-    assert Phase.IMPL_REVIEW in allowed
+    assert Phase.REVIEW in allowed
+    assert Phase.REVISE in allowed
     assert Phase.SUSPENDED in allowed
     assert Phase.DONE not in allowed  # IMPLEMENT -> DONE は不正
 
@@ -216,15 +210,15 @@ def test_valid_transitions_suspended_allows_all() -> None:
 def test_valid_transitions_all_active_phases_can_suspend() -> None:
     """全ての実行フェーズから SUSPENDED への遷移が可能."""
     for phase, targets in VALID_TRANSITIONS.items():
-        if phase not in (Phase.DONE, Phase.BLOCKED, Phase.PLAN_REVIEW):
+        if phase not in (Phase.DONE, Phase.BLOCKED):
             assert Phase.SUSPENDED in targets, f"{phase} cannot transition to SUSPENDED"
 
 
 def test_valid_transitions_blocked() -> None:
     """BLOCKED からはワークフロー開始フェーズのみ許可."""
     allowed = VALID_TRANSITIONS[Phase.BLOCKED]
-    assert Phase.HEARING in allowed
-    assert Phase.ANALYSIS in allowed
+    assert Phase.CLARIFY in allowed
+    assert Phase.PLAN in allowed
     assert Phase.IMPLEMENT in allowed
     assert Phase.SUSPENDED not in allowed
 

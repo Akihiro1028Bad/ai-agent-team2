@@ -53,8 +53,8 @@ class ReviseExecutorBase(PhaseExecutor):
     """
 
     # --- サブクラスで上書きする属性 ---
-    phase_name: ClassVar[str] = "impl-revise"
-    next_phase: ClassVar[str] = "impl-review"
+    phase_name: ClassVar[str] = "revise"
+    next_phase: ClassVar[str] = "review"
     target_description: ClassVar[str] = "コード"
     commit_summary: ClassVar[str] = "実装レビュー指摘に対応"
     commit_type: ClassVar[str] = "fix"

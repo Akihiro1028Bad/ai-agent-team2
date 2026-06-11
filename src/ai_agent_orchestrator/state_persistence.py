@@ -9,7 +9,7 @@ import shutil
 from dataclasses import asdict, fields
 from pathlib import Path
 
-from ai_agent_orchestrator.models import IssueKey, IssueState, Phase
+from ai_agent_orchestrator.models import PHASE_MIGRATION, IssueKey, IssueState, Phase
 
 logger = logging.getLogger(__name__)
 
@@ -72,18 +72,30 @@ class StatePersistence:
         states: dict[IssueKey, IssueState] = {}
         for k, v in data.items():
             try:
-                # Phase enum の復元。未知の値は SUSPENDED にフォールバック
-                # (例: 廃止された "planning" / "plan-validation" フェーズ)
+                # Phase enum の復元 (U5 #83)。
+                # 1. 現行の enum 値ならそのまま
+                # 2. 旧 18 フェーズ名なら PHASE_MIGRATION で新フェーズへ読み替え
+                # 3. それ以外 (太古の "planning" 等) は SUSPENDED にフォールバック
                 raw_phase = v.get("phase", "")
                 try:
                     v["phase"] = Phase(raw_phase)
                 except ValueError:
-                    logger.warning(
-                        "未知のフェーズ値 '%s' を SUSPENDED にフォールバック (key=%s)",
-                        raw_phase,
-                        k,
-                    )
-                    v["phase"] = Phase.SUSPENDED
+                    migrated = PHASE_MIGRATION.get(raw_phase)
+                    if migrated is not None:
+                        logger.info(
+                            "旧フェーズ値 '%s' を '%s' へマイグレーション (key=%s)",
+                            raw_phase,
+                            migrated.value,
+                            k,
+                        )
+                        v["phase"] = migrated
+                    else:
+                        logger.warning(
+                            "未知のフェーズ値 '%s' を SUSPENDED にフォールバック (key=%s)",
+                            raw_phase,
+                            k,
+                        )
+                        v["phase"] = Phase.SUSPENDED
                 # 新フォーマット "owner/repo:42" と旧フォーマット "42" の両方をサポート
                 if ":" in k and "/" in k.rsplit(":", 1)[0]:
                     # 新フォーマット: "owner/repo:42"

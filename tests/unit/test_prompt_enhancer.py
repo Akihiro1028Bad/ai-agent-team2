@@ -41,7 +41,8 @@ class TestEnhancePrompt:
         assert "コーディング規約" in result
 
     def test_impl_revise_includes_test_and_coding(self) -> None:
-        result = enhance_prompt(self.BASE, "impl-revise")
+        # U5 統合後: impl-revise → revise
+        result = enhance_prompt(self.BASE, "revise")
         assert "テスト要件" in result
         assert "コーディング規約" in result
         assert "セキュリティ要件" not in result
@@ -69,8 +70,9 @@ class TestEnhancePrompt:
         assert "コーディング規約" in result
 
     def test_design_revise_includes_test_strategy(self) -> None:
-        result = enhance_prompt(self.BASE, "design-revise")
-        assert "テスト戦略" in result
+        # U5 統合後: design-revise → revise
+        result = enhance_prompt(self.BASE, "revise")
+        assert "テスト要件" in result  # revise は _TEST_REQUIREMENTS を含む
         assert "コーディング規約" in result
 
     # --- ブラウザ検証セクション ---
@@ -88,7 +90,8 @@ class TestEnhancePrompt:
         assert "ブラウザ検証" not in result
 
     def test_impl_revise_includes_browser_verification(self) -> None:
-        result = enhance_prompt(self.BASE, "impl-revise")
+        # U5 統合後: impl-revise → revise
+        result = enhance_prompt(self.BASE, "revise")
         assert "ブラウザ検証" in result
 
     def test_browser_verification_mentions_evidence(self) -> None:

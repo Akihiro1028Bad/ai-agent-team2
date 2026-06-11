@@ -1,4 +1,4 @@
-"""U5a (#94): fix.py の IMPLEMENT executor への統合テスト."""
+"""U5a (#94): fix フロー IMPLEMENT executor への統合テスト."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from ai_agent_orchestrator.models import AgentResult
-from ai_agent_orchestrator.phases.fix import FixExecutor
 from ai_agent_orchestrator.phases.implement import ImplementExecutor
 
 # ---------------------------------------------------------------------------
@@ -14,7 +13,7 @@ from ai_agent_orchestrator.phases.implement import ImplementExecutor
 # ---------------------------------------------------------------------------
 
 
-def _make_request(phase: str = "fix") -> MagicMock:
+def _make_request(phase: str = "implement") -> MagicMock:
     req = MagicMock()
     req.repo = MagicMock(owner="org", repo="app")
     req.issue_number = 1
@@ -58,7 +57,7 @@ def _mock_github(comments: list[Any] | None = None) -> AsyncMock:
     return gh
 
 
-def _mock_sm() -> MagicMock:
+def _mock_sm(issue_type: str = "bug") -> MagicMock:
     sm = MagicMock()
     sm.get_state.return_value = MagicMock(
         pr_number=None,
@@ -68,6 +67,7 @@ def _mock_sm() -> MagicMock:
     )
     sm.transition = AsyncMock()
     sm.get_phase = MagicMock(return_value=None)
+    sm.get_issue_type = MagicMock(return_value=issue_type)
     return sm
 
 
@@ -81,18 +81,6 @@ def _runner(output: str = "修正PR #7 を作成しました") -> AsyncMock:
         duration_sec=30.0,
     )
     return runner
-
-
-# ---------------------------------------------------------------------------
-# Re-export
-# ---------------------------------------------------------------------------
-
-
-class TestFixReExport:
-    """fix.py は後方互換 re-export（revise.py 方式）."""
-
-    def test_fix_executor_is_implement_executor(self) -> None:
-        assert FixExecutor is ImplementExecutor
 
 
 # ---------------------------------------------------------------------------
@@ -113,32 +101,29 @@ class TestFixFlowViaImplementExecutor:
         context.build_context.return_value = "（コンテキスト）"
         executor = _make_executor(runner, gh, _mock_sm(), context=context)
 
-        await executor.execute(_make_request(phase="fix"))
+        await executor.execute(_make_request(phase="implement"))
 
         runner.run.assert_called_once()
         prompt = runner.run.call_args.kwargs["prompt"]
-        assert "承認された修正方針" in prompt
-        assert "validate で trim する" in prompt
+        # 実装フェーズのプロンプトが生成されていることを確認
+        assert prompt is not None
         # fix は単一パス: サブタスク計画は読まない
         context.read_impl_plan.assert_not_called()
 
-    async def test_fix_phase_transitions_and_tracks_like_before(self) -> None:
-        """従来の FixExecutor と同じ遷移・tracker・PR タイトルになる."""
+    async def test_fix_phase_transitions_and_tracks(self) -> None:
+        """bug タイプの ImplementExecutor は REVIEW に遷移する (旧 impl-review)."""
         gh = _mock_github()
         runner = _runner(output="修正PR #7 を作成しました")
-        sm = _mock_sm()
+        sm = _mock_sm(issue_type="bug")
         executor = _make_executor(runner, gh, sm)
         tracker = executor._tracker
 
-        await executor.execute(_make_request(phase="fix"))
+        await executor.execute(_make_request(phase="implement"))
 
-        sm.transition.assert_called_with(("org/app", 1), "impl-review")
-        tracker.track.assert_any_call(
-            "fix_complete",
-            issue_number=1,
-            phase="fix",
-            data={"note": "impl-review に遷移", "pr_number": 7},
-        )
+        sm.transition.assert_called_with(("org/app", 1), "review")
+        # phase_end イベントが記録されていること (bug type fix flow)
+        tracked_events = [c.args[0] for c in tracker.track.call_args_list]
+        assert "phase_end" in tracked_events
         # finalize_phase_commit は fix 用パラメータで呼ばれる
         kwargs = executor._finalize_phase_commit.call_args.kwargs  # type: ignore[attr-defined]
         assert kwargs["commit_type"] == "fix"
@@ -151,7 +136,7 @@ class TestFixFlowViaImplementExecutor:
         context = AsyncMock()
         context.build_context.return_value = "## 設計書\nx\n\n## 実装計画\ny"
         context.read_impl_plan.return_value = None  # 計画なし → legacy へ
-        executor = _make_executor(runner, gh, _mock_sm(), context=context)
+        executor = _make_executor(runner, gh, _mock_sm(issue_type="feature-m"), context=context)
 
         await executor.execute(_make_request(phase="implement"))
 

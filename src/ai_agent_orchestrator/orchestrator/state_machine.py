@@ -67,71 +67,55 @@ _ATTR_TO_PHASE: dict[str, Phase] = {phase.value.replace("-", "_"): phase for pha
 # ---------------------------------------------------------------------------
 
 TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
-    # TYPE_DETECTION branches
-    (Phase.TYPE_DETECTION, Phase.ANALYSIS): "detect_bug",
-    (Phase.TYPE_DETECTION, Phase.SUSPENDED): "type_detection_to_suspended",
-    # NOTE: (TYPE_DETECTION, HEARING) is resolved dynamically by _resolve_transition
-    # Bug workflow
-    (Phase.ANALYSIS, Phase.PLAN_REVIEW): "analysis_to_plan_review",
-    (Phase.ANALYSIS, Phase.SUSPENDED): "analysis_to_suspended",
-    (Phase.PLAN_REVIEW, Phase.FIX): "plan_review_to_fix",
-    (Phase.PLAN_REVIEW, Phase.ANALYSIS): "plan_review_to_analysis",
-    (Phase.FIX, Phase.CI_FIX): "fix_to_ci_fix",
-    (Phase.FIX, Phase.IMPL_REVIEW): "fix_to_impl_review",
-    (Phase.FIX, Phase.SUSPENDED): "fix_to_suspended",
-    # HEARING branches
-    (Phase.HEARING, Phase.DESIGN): "hearing_to_design",
-    (Phase.HEARING, Phase.SPLIT_PROPOSAL): "hearing_to_split_proposal",
-    (Phase.HEARING, Phase.ANALYSIS): "hearing_to_analysis",
-    (Phase.HEARING, Phase.SUSPENDED): "hearing_to_suspended",
-    (Phase.HEARING, Phase.HEARING_WAIT): "hearing_to_hearing_wait",
-    (Phase.HEARING_WAIT, Phase.HEARING): "hearing_wait_to_hearing",
-    (Phase.HEARING_WAIT, Phase.SUSPENDED): "hearing_wait_to_suspended",
-    # Feature-M workflow
-    (Phase.DESIGN, Phase.DESIGN_REVIEW): "design_to_design_review",
-    (Phase.DESIGN, Phase.SUSPENDED): "design_to_suspended",
-    (Phase.DESIGN_REVIEW, Phase.IMPLEMENT): "design_review_to_implement",
-    # U4 (#82): APPROVE ゲートの差し戻しは design (PLAN) へ戻す
-    (Phase.DESIGN_REVIEW, Phase.DESIGN): "design_review_to_design",
-    (Phase.DESIGN_REVIEW, Phase.DESIGN_REVISE): "design_review_to_design_revise",
-    (Phase.DESIGN_REVIEW, Phase.SUSPENDED): "design_review_to_suspended",
-    (Phase.DESIGN_REVISE, Phase.DESIGN_REVIEW): "design_revise_to_design_review",
-    (Phase.DESIGN_REVISE, Phase.SUSPENDED): "design_revise_to_suspended",
-    # Feature-L workflow
-    (Phase.SPLIT_PROPOSAL, Phase.SPLIT_EXECUTE): "split_proposal_to_split_execute",
-    (Phase.SPLIT_PROPOSAL, Phase.HEARING): "split_proposal_to_hearing",
-    (Phase.SPLIT_PROPOSAL, Phase.SUSPENDED): "split_proposal_to_suspended",
-    (Phase.SPLIT_EXECUTE, Phase.DONE): "split_execute_to_done",
-    (Phase.SPLIT_EXECUTE, Phase.BLOCKED): "split_execute_to_blocked",
-    (Phase.SPLIT_EXECUTE, Phase.SUSPENDED): "split_execute_to_suspended",
-    # Common: implement / review
-    (Phase.IMPLEMENT, Phase.CI_FIX): "implement_to_ci_fix",
-    (Phase.IMPLEMENT, Phase.IMPL_REVIEW): "implement_to_impl_review",
+    # INTAKE: 情報十分なら PLAN へ直行、曖昧なら CLARIFY
+    (Phase.INTAKE, Phase.CLARIFY): "intake_to_clarify",
+    (Phase.INTAKE, Phase.PLAN): "intake_to_plan",
+    (Phase.INTAKE, Phase.SUSPENDED): "intake_to_suspended",
+    # CLARIFY
+    (Phase.CLARIFY, Phase.PLAN): "clarify_to_plan",
+    (Phase.CLARIFY, Phase.SPLIT): "clarify_to_split",
+    (Phase.CLARIFY, Phase.CLARIFY_WAIT): "clarify_to_clarify_wait",
+    (Phase.CLARIFY, Phase.SUSPENDED): "clarify_to_suspended",
+    (Phase.CLARIFY_WAIT, Phase.CLARIFY): "clarify_wait_to_clarify",
+    (Phase.CLARIFY_WAIT, Phase.SUSPENDED): "clarify_wait_to_suspended",
+    # SPLIT (提案→承認→実行はフェーズ内で完結)
+    (Phase.SPLIT, Phase.DONE): "split_to_done",
+    (Phase.SPLIT, Phase.CLARIFY): "split_to_clarify",
+    (Phase.SPLIT, Phase.BLOCKED): "split_to_blocked",
+    (Phase.SPLIT, Phase.SUSPENDED): "split_to_suspended",
+    # PLAN -> APPROVE ゲート
+    (Phase.PLAN, Phase.APPROVE): "plan_to_approve",
+    (Phase.PLAN, Phase.SUSPENDED): "plan_to_suspended",
+    # APPROVE: 承認 -> IMPLEMENT / 差し戻し -> PLAN
+    (Phase.APPROVE, Phase.IMPLEMENT): "approve_to_implement",
+    (Phase.APPROVE, Phase.PLAN): "approve_to_plan",
+    (Phase.APPROVE, Phase.SUSPENDED): "approve_to_suspended",
+    # IMPLEMENT: 完了 -> REVIEW / CI失敗 -> REVISE
+    (Phase.IMPLEMENT, Phase.REVIEW): "implement_to_review",
+    (Phase.IMPLEMENT, Phase.REVISE): "implement_to_revise",
     (Phase.IMPLEMENT, Phase.SUSPENDED): "implement_to_suspended",
-    (Phase.CI_FIX, Phase.IMPL_REVIEW): "ci_fix_to_impl_review",
-    (Phase.CI_FIX, Phase.CI_FIX): "ci_fix_to_ci_fix",
-    (Phase.CI_FIX, Phase.SUSPENDED): "ci_fix_to_suspended",
-    (Phase.IMPL_REVIEW, Phase.DONE): "impl_review_to_done",
-    (Phase.IMPL_REVIEW, Phase.IMPL_REVISE): "impl_review_to_impl_revise",
-    (Phase.IMPL_REVIEW, Phase.CI_FIX): "impl_review_to_ci_fix",
-    (Phase.IMPL_REVIEW, Phase.SUSPENDED): "impl_review_to_suspended",
-    (Phase.IMPL_REVISE, Phase.IMPL_REVIEW): "impl_revise_to_impl_review",
-    (Phase.IMPL_REVISE, Phase.SUSPENDED): "impl_revise_to_suspended",
+    # REVIEW: マージ -> DONE / 指摘・CI失敗 -> REVISE
+    (Phase.REVIEW, Phase.DONE): "review_to_done",
+    (Phase.REVIEW, Phase.REVISE): "review_to_revise",
+    (Phase.REVIEW, Phase.SUSPENDED): "review_to_suspended",
+    # REVISE: 対応後 REVIEW へ。連続 CI 失敗等の自己ループを許可
+    (Phase.REVISE, Phase.REVIEW): "revise_to_review",
+    (Phase.REVISE, Phase.REVISE): "revise_to_revise",
+    (Phase.REVISE, Phase.SUSPENDED): "revise_to_suspended",
     # BLOCKED
-    (Phase.BLOCKED, Phase.HEARING): "blocked_to_hearing",
-    (Phase.BLOCKED, Phase.ANALYSIS): "blocked_to_analysis",
+    (Phase.BLOCKED, Phase.CLARIFY): "blocked_to_clarify",
+    (Phase.BLOCKED, Phase.PLAN): "blocked_to_plan",
     (Phase.BLOCKED, Phase.IMPLEMENT): "blocked_to_implement",
     # SUSPENDED -> resume
-    (Phase.SUSPENDED, Phase.TYPE_DETECTION): "resume_to_type_detection",
-    (Phase.SUSPENDED, Phase.HEARING): "resume_to_hearing",
-    (Phase.SUSPENDED, Phase.ANALYSIS): "resume_to_analysis",
-    (Phase.SUSPENDED, Phase.DESIGN): "resume_to_design",
+    (Phase.SUSPENDED, Phase.INTAKE): "resume_to_intake",
+    (Phase.SUSPENDED, Phase.CLARIFY): "resume_to_clarify",
+    (Phase.SUSPENDED, Phase.CLARIFY_WAIT): "resume_to_clarify_wait",
+    (Phase.SUSPENDED, Phase.SPLIT): "resume_to_split",
+    (Phase.SUSPENDED, Phase.PLAN): "resume_to_plan",
+    (Phase.SUSPENDED, Phase.APPROVE): "resume_to_approve",
     (Phase.SUSPENDED, Phase.IMPLEMENT): "resume_to_implement",
-    (Phase.SUSPENDED, Phase.FIX): "resume_to_fix",
-    (Phase.SUSPENDED, Phase.PLAN_REVIEW): "resume_to_plan_review",
-    (Phase.SUSPENDED, Phase.CI_FIX): "resume_to_ci_fix",
-    (Phase.SUSPENDED, Phase.IMPL_REVIEW): "resume_to_impl_review",
-    (Phase.SUSPENDED, Phase.IMPL_REVISE): "resume_to_impl_revise",
+    (Phase.SUSPENDED, Phase.REVIEW): "resume_to_review",
+    (Phase.SUSPENDED, Phase.REVISE): "resume_to_revise",
 }
 
 
@@ -141,114 +125,85 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
 
 
 class IssueWorkflow(StateMachine):
-    """python-statemachine ベースの Issue ワークフロー.
+    """python-statemachine ベースの Issue ワークフロー (U5 #83: 統一パイプライン).
 
-    18 の State を定義し、タイプ別のガード関数で遷移を制御する。
+    9 フェーズ + 補助状態 (clarify-wait / blocked / suspended) の 12 State。
+    タイプ別の分岐はフェーズではなくパラメータで表現するため、ガード関数は
+    持たない (遷移先はルーター/executor が明示的に指定する)。
     """
 
-    # --- States (17) ---
-    type_detection = State("Type detection", initial=True)
-    analysis = State("Analysis")
-    fix = State("Fix")
-    plan_review = State("Plan review")
-    hearing = State("Hearing")
-    design = State("Design")
-    design_review = State("Design review")
-    design_revise = State("Design revise")
-    split_proposal = State("Split proposal")
-    split_execute = State("Split execute")
-    blocked = State("Blocked")
+    # --- States (12) ---
+    intake = State("Intake", initial=True)
+    clarify = State("Clarify")
+    clarify_wait = State("Clarify wait")
+    split = State("Split")
+    plan = State("Plan")
+    approve = State("Approve")
     implement = State("Implement")
-    ci_fix = State("CI fix")
-    impl_review = State("Impl review")
-    impl_revise = State("Impl revise")
+    review = State("Review")
+    revise = State("Revise")
+    blocked = State("Blocked")
     done = State("Done", final=True)
     suspended = State("Suspended")
 
-    # --- TYPE_DETECTION branches ---
-    detect_bug = type_detection.to(analysis, cond="is_bug")
-    detect_feature_m = type_detection.to(hearing, cond="is_feature_m")
-    detect_feature_l = type_detection.to(hearing, cond="is_feature_l")
-    type_detection_to_suspended = type_detection.to(suspended)
+    # --- INTAKE ---
+    intake_to_clarify = intake.to(clarify)
+    intake_to_plan = intake.to(plan)
+    intake_to_suspended = intake.to(suspended)
 
-    # --- Bug workflow ---
-    analysis_to_plan_review = analysis.to(plan_review)
-    analysis_to_suspended = analysis.to(suspended)
+    # --- CLARIFY ---
+    clarify_to_plan = clarify.to(plan)
+    clarify_to_split = clarify.to(split)
+    clarify_to_clarify_wait = clarify.to(clarify_wait)
+    clarify_to_suspended = clarify.to(suspended)
+    clarify_wait_to_clarify = clarify_wait.to(clarify)
+    clarify_wait_to_suspended = clarify_wait.to(suspended)
 
-    plan_review_to_fix = plan_review.to(fix, cond="is_bug")
-    plan_review_to_analysis = plan_review.to(analysis, cond="is_bug")
+    # --- SPLIT ---
+    split_to_done = split.to(done)
+    split_to_clarify = split.to(clarify)
+    split_to_blocked = split.to(blocked)
+    split_to_suspended = split.to(suspended)
 
-    fix_to_ci_fix = fix.to(ci_fix)
-    fix_to_impl_review = fix.to(impl_review)
-    fix_to_suspended = fix.to(suspended)
+    # --- PLAN -> APPROVE ---
+    plan_to_approve = plan.to(approve)
+    plan_to_suspended = plan.to(suspended)
 
-    # --- HEARING (Feature-M/L common entry) ---
-    hearing_to_design = hearing.to(design, cond="is_feature_m")
-    hearing_to_split_proposal = hearing.to(split_proposal, cond="is_feature_l")
-    hearing_to_analysis = hearing.to(analysis, cond="is_bug")
-    hearing_to_suspended = hearing.to(suspended)
+    # --- APPROVE (ゲート) ---
+    approve_to_implement = approve.to(implement)
+    approve_to_plan = approve.to(plan)
+    approve_to_suspended = approve.to(suspended)
 
-    # --- HEARING_WAIT (waiting for user reply) ---
-    hearing_wait = State("Hearing wait")
-    hearing_to_hearing_wait = hearing.to(hearing_wait)
-    hearing_wait_to_hearing = hearing_wait.to(hearing)
-    hearing_wait_to_suspended = hearing_wait.to(suspended)
-
-    # --- Feature-M workflow ---
-    design_to_design_review = design.to(design_review)
-    design_to_suspended = design.to(suspended)
-
-    design_review_to_implement = design_review.to(implement)
-    # U4 (#82): 差し戻しは design (PLAN) へ戻して再設計させる
-    design_review_to_design = design_review.to(design)
-    design_review_to_design_revise = design_review.to(design_revise)
-    design_review_to_suspended = design_review.to(suspended)
-
-    design_revise_to_design_review = design_revise.to(design_review)
-    design_revise_to_suspended = design_revise.to(suspended)
-
-    # --- Feature-L workflow ---
-    split_proposal_to_split_execute = split_proposal.to(split_execute)
-    split_proposal_to_hearing = split_proposal.to(hearing)
-    split_proposal_to_suspended = split_proposal.to(suspended)
-
-    split_execute_to_done = split_execute.to(done)
-    split_execute_to_blocked = split_execute.to(blocked)
-    split_execute_to_suspended = split_execute.to(suspended)
-
-    # --- Common: implement / review ---
-    implement_to_ci_fix = implement.to(ci_fix)
-    implement_to_impl_review = implement.to(impl_review)
+    # --- IMPLEMENT ---
+    implement_to_review = implement.to(review)
+    implement_to_revise = implement.to(revise)
     implement_to_suspended = implement.to(suspended)
 
-    ci_fix_to_impl_review = ci_fix.to(impl_review)
-    ci_fix_to_ci_fix = ci_fix.to(ci_fix)
-    ci_fix_to_suspended = ci_fix.to(suspended)
+    # --- REVIEW (ゲート) ---
+    review_to_done = review.to(done)
+    review_to_revise = review.to(revise)
+    review_to_suspended = review.to(suspended)
 
-    impl_review_to_done = impl_review.to(done)
-    impl_review_to_impl_revise = impl_review.to(impl_revise)
-    impl_review_to_ci_fix = impl_review.to(ci_fix)
-    impl_review_to_suspended = impl_review.to(suspended)
-
-    impl_revise_to_impl_review = impl_revise.to(impl_review)
-    impl_revise_to_suspended = impl_revise.to(suspended)
+    # --- REVISE ---
+    revise_to_review = revise.to(review)
+    revise_to_revise = revise.to(revise)
+    revise_to_suspended = revise.to(suspended)
 
     # --- BLOCKED ---
-    blocked_to_hearing = blocked.to(hearing)
-    blocked_to_analysis = blocked.to(analysis)
+    blocked_to_clarify = blocked.to(clarify)
+    blocked_to_plan = blocked.to(plan)
     blocked_to_implement = blocked.to(implement)
 
     # --- SUSPENDED -> resume ---
-    resume_to_type_detection = suspended.to(type_detection)
-    resume_to_hearing = suspended.to(hearing)
-    resume_to_analysis = suspended.to(analysis)
-    resume_to_design = suspended.to(design)
+    resume_to_intake = suspended.to(intake)
+    resume_to_clarify = suspended.to(clarify)
+    resume_to_clarify_wait = suspended.to(clarify_wait)
+    resume_to_split = suspended.to(split)
+    resume_to_plan = suspended.to(plan)
+    resume_to_approve = suspended.to(approve)
     resume_to_implement = suspended.to(implement)
-    resume_to_fix = suspended.to(fix)
-    resume_to_plan_review = suspended.to(plan_review)
-    resume_to_ci_fix = suspended.to(ci_fix)
-    resume_to_impl_review = suspended.to(impl_review)
-    resume_to_impl_revise = suspended.to(impl_revise)
+    resume_to_review = suspended.to(review)
+    resume_to_revise = suspended.to(revise)
 
     def __init__(
         self,
@@ -258,7 +213,8 @@ class IssueWorkflow(StateMachine):
         """初期化.
 
         Args:
-            issue_type: Issue タイプ ("bug", "feature-m", "feature-l")
+            issue_type: Issue タイプ ("bug", "feature-m", "feature-l")。
+                フェーズ分岐には使わず、plan_depth 等のパラメータ導出に使う。
             start_value: 復元時の初期ステート値 (State の value = attribute name)
         """
         self._issue_type = issue_type
@@ -273,18 +229,6 @@ class IssueWorkflow(StateMachine):
     def issue_type(self, value: str) -> None:
         """Issue タイプを設定."""
         self._issue_type = value
-
-    def is_bug(self) -> bool:
-        """Bug タイプの場合に True を返すガード."""
-        return self._issue_type == "bug"
-
-    def is_feature_m(self) -> bool:
-        """Feature-M タイプの場合に True を返すガード."""
-        return self._issue_type == "feature-m"
-
-    def is_feature_l(self) -> bool:
-        """Feature-L タイプの場合に True を返すガード."""
-        return self._issue_type == "feature-l"
 
 
 # ---------------------------------------------------------------------------
@@ -323,14 +267,14 @@ class StateMachineManager:
         self,
         issue_number: int,
         repo: str,
-        initial_phase: Phase = Phase.TYPE_DETECTION,
+        initial_phase: Phase = Phase.INTAKE,
     ) -> None:
         """新規 Issue をステートマシンに登録する.
 
         Args:
             issue_number: Issue 番号。
             repo: "owner/repo" 形式のリポジトリキー。
-            initial_phase: 初期フェーズ (デフォルト: TYPE_DETECTION)。
+            initial_phase: 初期フェーズ (デフォルト: INTAKE)。
 
         Raises:
             ValueError: 既に登録済みの Issue を指定した場合。
@@ -447,25 +391,11 @@ class StateMachineManager:
         current: Phase,
         target: Phase,
     ) -> str:
-        """issue_type を考慮して正しい遷移名を解決する.
+        """(current, target) に対応する遷移名を解決する.
 
-        TRANSITION_MAP のキー衝突を回避するため、
-        (TYPE_DETECTION, HEARING) のように同一キーで複数の遷移名が必要な場合は
-        issue_type に基づいて動的に解決する。
+        統一パイプライン (U5 #83) では遷移先をルーター/executor が明示的に
+        指定するため、issue_type による動的解決は不要になった。
         """
-        # TYPE_DETECTION -> HEARING: issue_type で遷移名を切り替え
-        if current == Phase.TYPE_DETECTION and target == Phase.HEARING:
-            issue_type = wf.issue_type
-            type_map: dict[str, str] = {
-                "feature-m": "detect_feature_m",
-                "feature-l": "detect_feature_l",
-            }
-            name = type_map.get(issue_type)
-            if name is None:
-                msg = f"No transition from TYPE_DETECTION to HEARING for issue_type={issue_type!r}"
-                raise InvalidTransitionError(msg)
-            return name
-
         transition_name = TRANSITION_MAP.get((current, target))
         if transition_name is None:
             msg = f"No transition defined from {current} to {target}"

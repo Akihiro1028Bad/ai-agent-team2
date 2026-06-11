@@ -333,6 +333,40 @@ class GitHubPoller:
         )
         return new
 
+    async def _get_issues_with_phase_label(
+        self,
+        client: GitHubClient,
+        repo: RepositoryConfig,
+        phase: str,
+        legacy_phases: Sequence[str] = (),
+        state: str = "open",
+    ) -> list[Issue]:
+        """新フェーズラベルで Issue を検索し、旧ラベルも併読して統合する.
+
+        U5 (#83) のフェーズ名刷新に伴う移行措置。稼働中 Issue は旧ラベル
+        (phase:plan-review 等) のまま残っているため、新ラベルに加えて旧ラベル
+        でも検索し、取りこぼしを防ぐ。各フェーズ処理が replace_phase_label で
+        新ラベルへ自然に張り替えるため、移行完了後に legacy 指定は撤去できる。
+
+        Args:
+            client: GitHub クライアント.
+            repo: リポジトリ設定.
+            phase: 新フェーズ名 (例: "approve").
+            legacy_phases: 併読する旧フェーズ名 (例: ["plan-review"]).
+            state: Issue の state フィルタ.
+
+        Returns:
+            重複排除済みの Issue リスト.
+        """
+        issues = list(await client.get_issues_with_label(repo, f"{repo.label},phase:{phase}", state=state))
+        seen = {i.number for i in issues}
+        for legacy in legacy_phases:
+            for issue in await client.get_issues_with_label(repo, f"{repo.label},phase:{legacy}", state=state):
+                if issue.number not in seen:
+                    seen.add(issue.number)
+                    issues.append(issue)
+        return issues
+
     async def _detect_hearing_replies(
         self,
         client: GitHubClient,
@@ -344,7 +378,7 @@ class GitHubPoller:
         条件: phase:hearing ラベル付き Issue に since 以降の人間コメント
         (bot コメントは除外).
         """
-        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing-wait")
+        issues = await self._get_issues_with_phase_label(client, repo, "clarify-wait", ["hearing-wait"])
         replies: list[IssueComment] = []
         repo_key = f"{repo.owner}/{repo.repo}"
         logger.debug("hearing-reply detection [%s]: %d hearing-wait issue(s)", repo_key, len(issues))
@@ -379,7 +413,7 @@ class GitHubPoller:
         条件: phase:hearing ラベル付き Issue で
               最後のコメントから hearing_timeout_hours 以上経過.
         """
-        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:hearing-wait")
+        issues = await self._get_issues_with_phase_label(client, repo, "clarify-wait", ["hearing-wait"])
         threshold = datetime.now(UTC) - timedelta(hours=self._hearing_timeout_hours)
         timed_out: list[Issue] = []
         repo_key = f"{repo.owner}/{repo.repo}"
@@ -405,7 +439,7 @@ class GitHubPoller:
         PAT 経由で投稿された場合 user.type が "User" になるため、
         コメント内容も併せてチェックする。
         """
-        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:plan-review")
+        issues = await self._get_issues_with_phase_label(client, repo, "approve", ["plan-review"])
         approved_issues: list[Issue] = []
         repo_key = f"{repo.owner}/{repo.repo}"
         approvers = resolve_approvers(repo.owner, getattr(repo, "approvers", None))
@@ -465,7 +499,7 @@ class GitHubPoller:
         if since is None:
             logger.debug("plan-comment detection [%s]: skip (first-run, since=None)", repo_key)
             return []
-        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:plan-review")
+        issues = await self._get_issues_with_phase_label(client, repo, "approve", ["plan-review"])
         feedback: list[tuple[Issue, IssueComment]] = []
         for issue in issues:
             since_str = since.isoformat()
@@ -498,7 +532,7 @@ class GitHubPoller:
         repo_key = f"{repo.owner}/{repo.repo}"
 
         # --- 設計PR: レビュー (LGTM/approve) で承認検知 ---
-        design_issues = await client.get_issues_with_label(repo, f"{repo.label},phase:design-review")
+        design_issues = await self._get_issues_with_phase_label(client, repo, "approve", ["design-review"])
         for issue in design_issues:
             pr_reviews = await self._get_pr_reviews(client, repo, issue)
             for review_info in pr_reviews:
@@ -525,7 +559,7 @@ class GitHubPoller:
                     )
 
         # --- 実装PR: マージで完了検知、レビューコメントで修正検知 ---
-        impl_issues = await client.get_issues_with_label(repo, f"{repo.label},phase:impl-review", state="all")
+        impl_issues = await self._get_issues_with_phase_label(client, repo, "review", ["impl-review"], state="all")
         for issue in impl_issues:
             # マージ検知 (最優先)
             merged = await self._check_pr_merged(client, repo, issue)
@@ -596,8 +630,8 @@ class GitHubPoller:
         """
         events: list[PollEvent] = []
         repo_key = f"{repo.owner}/{repo.repo}"
-        for label_suffix in ("ci-fix", "impl-review"):
-            issues = await client.get_issues_with_label(repo, f"{repo.label},phase:{label_suffix}")
+        for label_suffix, legacy in (("revise", ["ci-fix", "impl-revise"]), ("review", ["impl-review"])):
+            issues = await self._get_issues_with_phase_label(client, repo, label_suffix, legacy)
             logger.debug("ci-result detection [%s] (phase:%s): %d issue(s)", repo_key, label_suffix, len(issues))
             for issue in issues:
                 ci_status = await self._check_ci_status(client, repo, issue)
@@ -605,9 +639,9 @@ class GitHubPoller:
                 if ci_status is None:
                     continue
                 # BUG #4: Deduplicate CI result events
-                # ci-fix フェーズはリトライのため同じ CI failure を複数回検知する必要がある
+                # revise (旧 ci-fix) フェーズはリトライのため同じ CI failure を複数回検知する必要がある
                 event_key = f"ci_result:{repo_key}:{issue.number}:{ci_status}"
-                if label_suffix != "ci-fix" and event_key in self._seen_events:
+                if label_suffix != "revise" and event_key in self._seen_events:
                     continue
                 self._seen_events.add(event_key)
                 if ci_status == "failure":
@@ -647,7 +681,7 @@ class GitHubPoller:
         events: list[PollEvent] = []
         repo_key = f"{repo.owner}/{repo.repo}"
         approvers = resolve_approvers(repo.owner, getattr(repo, "approvers", None))
-        issues = await client.get_issues_with_label(repo, f"{repo.label},phase:split-proposal")
+        issues = await self._get_issues_with_phase_label(client, repo, "split", ["split-proposal"])
         logger.debug("split-event detection [%s]: %d split-proposal issue(s)", repo_key, len(issues))
         for issue in issues:
             comments = await client.list_comments(repo, issue.number)

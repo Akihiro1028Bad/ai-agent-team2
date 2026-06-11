@@ -6,8 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from ai_agent_orchestrator.models import AgentResult
-from ai_agent_orchestrator.phases.design_revise import DesignReviseExecutor
-from ai_agent_orchestrator.phases.impl_revise import ImplReviseExecutor
+from ai_agent_orchestrator.phases.revise import ReviseExecutor
 from ai_agent_orchestrator.phases.revise_common import ReviseExecutorBase
 
 # ---------------------------------------------------------------------------
@@ -16,7 +15,7 @@ from ai_agent_orchestrator.phases.revise_common import ReviseExecutorBase
 
 
 def _make_request(
-    phase: str = "impl-revise",
+    phase: str = "revise",
     extra: dict[str, Any] | None = None,
 ) -> MagicMock:
     req = MagicMock()
@@ -29,12 +28,11 @@ def _make_request(
 
 
 def _make_executor(
-    cls: type[ReviseExecutorBase],
     github: AsyncMock,
     sm: MagicMock,
     runner: AsyncMock | None = None,
-) -> ReviseExecutorBase:
-    executor = cls(
+) -> ReviseExecutor:
+    executor = ReviseExecutor(
         runner or AsyncMock(),
         github,
         AsyncMock(),  # notifier
@@ -60,6 +58,8 @@ def _mock_sm(
         design_pr_number=design_pr_number,
         session_id="prev-session",
         branch_head_sha=None,
+        answered_review_comment_ids=[],
+        answered_review_ids=[],
     )
     sm.transition = AsyncMock()
     return sm
@@ -156,7 +156,7 @@ class TestReplyDispatch:
     async def test_replies_with_generated_text_per_comment(self) -> None:
         gh = _mock_github()
         sm = _mock_sm()
-        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        executor = _make_executor(gh, sm)
         request = _make_request(extra={"comments": "c", "review_comment_ids": [100, 101]})
 
         await executor.process_result(request, _agent_result(REPLIES_OUTPUT))
@@ -172,7 +172,7 @@ class TestReplyDispatch:
         """JSON に該当 ID の返信が無いコメントにはサマリで返信する。"""
         gh = _mock_github()
         sm = _mock_sm()
-        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        executor = _make_executor(gh, sm)
         request = _make_request(extra={"comments": "c", "review_comment_ids": [100, 999]})
 
         await executor.process_result(request, _agent_result(REPLIES_OUTPUT))
@@ -186,7 +186,7 @@ class TestReplyDispatch:
         """comment ID が無い（トップレベルレビュー）場合は PR コメントで応答する。"""
         gh = _mock_github()
         sm = _mock_sm(pr_number=42)
-        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        executor = _make_executor(gh, sm)
         output = """```json
 {"replies": [], "summary": "ご質問のキャッシュ戦略について: LRU を採用しています。"}
 ```"""
@@ -205,7 +205,7 @@ class TestReplyDispatch:
         """質問のみ → allow_no_changes=True で finalize（コミット 0 件の受け入れ条件）。"""
         gh = _mock_github()
         sm = _mock_sm()
-        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        executor = _make_executor(gh, sm)
         request = _make_request(extra={"comments": "Q", "review_comment_ids": [100]})
 
         await executor.process_result(request, _agent_result(REPLIES_OUTPUT))
@@ -215,69 +215,45 @@ class TestReplyDispatch:
 
 
 # ---------------------------------------------------------------------------
-# サブクラスの遷移・統合
+# ReviseExecutor の遷移・統合
 # ---------------------------------------------------------------------------
 
 
 class TestSubclassIntegration:
-    """design_revise / impl_revise が共通基底で動く。"""
+    """ReviseExecutor が共通基底で動く (旧 design_revise / impl_revise 統合済み)."""
 
-    async def test_impl_revise_transitions_to_impl_review(self) -> None:
+    async def test_revise_executor_transitions_to_review(self) -> None:
+        """ReviseExecutor は REVIEW に遷移する (旧 impl-review / design-review を統合)."""
         gh = _mock_github()
         sm = _mock_sm()
-        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        executor = _make_executor(gh, sm)
         request = _make_request(extra={"comments": "c", "review_comment_ids": []})
 
         await executor.process_result(request, _agent_result("done"))
 
-        sm.transition.assert_called_with(("org/app", 1), "impl-review")
-        gh.replace_phase_label.assert_called_with(request.repo, 1, "phase:impl-review")
+        sm.transition.assert_called_with(("org/app", 1), "review")
+        gh.replace_phase_label.assert_called_with(request.repo, 1, "phase:review")
 
-    async def test_design_revise_transitions_to_design_review(self) -> None:
-        gh = _mock_github()
-        sm = _mock_sm()
-        executor = _make_executor(DesignReviseExecutor, gh, sm)
-        request = _make_request(phase="design-revise", extra={"comments": {"comments": "指摘"}})
+    async def test_revise_is_revise_base_subclass(self) -> None:
+        assert issubclass(ReviseExecutor, ReviseExecutorBase)
 
-        await executor.process_result(request, _agent_result("done"))
-
-        sm.transition.assert_called_with(("org/app", 1), "design-review")
-        gh.replace_phase_label.assert_called_with(request.repo, 1, "phase:design-review")
-
-    async def test_both_are_revise_base_subclasses(self) -> None:
-        assert issubclass(ImplReviseExecutor, ReviseExecutorBase)
-        assert issubclass(DesignReviseExecutor, ReviseExecutorBase)
-
-    async def test_impl_replies_use_impl_pr_not_design_pr(self) -> None:
-        """impl_revise は pr_number(42) を使い design_pr_number(55) を参照しない。"""
+    async def test_revise_replies_use_impl_pr(self) -> None:
+        """ReviseExecutor は pr_number(42) を使う。"""
         gh = _mock_github()
         sm = _mock_sm(pr_number=42, design_pr_number=55)
-        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        executor = _make_executor(gh, sm)
         request = _make_request(extra={"comments": "c", "review_comment_ids": [100]})
 
         await executor.process_result(request, _agent_result(REPLIES_OUTPUT))
 
         assert gh.reply_to_review_comment.call_args.args[1] == 42
 
-    async def test_design_top_level_response_uses_design_pr(self) -> None:
-        """design_revise のトップレベル応答は design_pr_number(55) 宛て。"""
-        gh = _mock_github()
-        sm = _mock_sm(pr_number=None, design_pr_number=55)
-        executor = _make_executor(DesignReviseExecutor, gh, sm)
-        output = '```json\n{"replies": [], "summary": "設計の意図を回答しました。"}\n```'
-        request = _make_request(phase="design-revise", extra={"comments": "質問"})
-
-        await executor.process_result(request, _agent_result(output))
-
-        gh.create_comment.assert_called_once()
-        assert gh.create_comment.call_args.args[1] == 55
-
     async def test_resume_session_is_used(self) -> None:
         gh = _mock_github()
         sm = _mock_sm()
         runner = AsyncMock()
         runner.run.return_value = _agent_result("ok")
-        executor = _make_executor(ImplReviseExecutor, gh, sm, runner=runner)
+        executor = _make_executor(gh, sm, runner=runner)
         request = _make_request()
 
         await executor.run_agent(request, "p")
@@ -296,7 +272,7 @@ class TestRevisePrompt:
     async def test_prompt_contains_question_instruction_and_ids(self) -> None:
         gh = _mock_github()
         sm = _mock_sm()
-        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        executor = _make_executor(gh, sm)
         comments = [
             {"id": 100, "user": {"login": "alice"}, "path": "a.py", "line": 3, "body": "デバウンスは？"},
         ]
@@ -323,7 +299,7 @@ class TestAnsweredPersistence:
         state = sm.get_state.return_value
         state.answered_review_comment_ids = []
         sm.persist = MagicMock()
-        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        executor = _make_executor(gh, sm)
         request = _make_request(extra={"comments": "c", "review_comment_ids": [100, 101]})
 
         await executor.process_result(request, _agent_result(REPLIES_OUTPUT))
@@ -338,7 +314,7 @@ class TestAnsweredPersistence:
         state = sm.get_state.return_value
         state.answered_review_comment_ids = [100]
         sm.persist = MagicMock()
-        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        executor = _make_executor(gh, sm)
         request = _make_request(extra={"comments": "c", "review_comment_ids": [100, 101]})
 
         await executor.process_result(request, _agent_result(REPLIES_OUTPUT))
@@ -354,7 +330,7 @@ class TestAnsweredPersistence:
         state = sm.get_state.return_value
         state.answered_review_comment_ids = []
         sm.persist = MagicMock()
-        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        executor = _make_executor(gh, sm)
         request = _make_request(extra={"comments": "c", "review_comment_ids": [100, 101]})
 
         await executor.process_result(request, _agent_result(REPLIES_OUTPUT))
@@ -371,7 +347,7 @@ class TestTopLevelAnsweredPersistence:
         state = sm.get_state.return_value
         state.answered_review_ids = []
         sm.persist = MagicMock()
-        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        executor = _make_executor(gh, sm)
         output = """```json
 {"replies": [], "summary": "本文質問への回答です。"}
 ```"""
@@ -390,7 +366,7 @@ class TestTopLevelAnsweredPersistence:
         state = sm.get_state.return_value
         state.answered_review_ids = []
         sm.persist = MagicMock()
-        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        executor = _make_executor(gh, sm)
         output = """```json
 {"replies": [], "summary": "s"}
 ```"""

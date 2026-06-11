@@ -61,8 +61,8 @@ class TestStateMachineCrossRepo:
         key_a: IssueKey = ("org/repo-a", 42)
         key_b: IssueKey = ("org/repo-b", 42)
 
-        assert sm.get_phase(key_a) == Phase.TYPE_DETECTION
-        assert sm.get_phase(key_b) == Phase.TYPE_DETECTION
+        assert sm.get_phase(key_a) == Phase.INTAKE
+        assert sm.get_phase(key_b) == Phase.INTAKE
 
     @pytest.mark.asyncio
     async def test_independent_transitions(self, sm: StateMachineManager) -> None:
@@ -76,11 +76,11 @@ class TestStateMachineCrossRepo:
         sm.set_issue_type(key_a, "bug")
         sm.set_issue_type(key_b, "feature-m")
 
-        await sm.transition(key_a, Phase.ANALYSIS)
-        await sm.transition(key_b, Phase.HEARING)
+        await sm.transition(key_a, Phase.PLAN)
+        await sm.transition(key_b, Phase.CLARIFY)
 
-        assert sm.get_phase(key_a) == Phase.ANALYSIS
-        assert sm.get_phase(key_b) == Phase.HEARING
+        assert sm.get_phase(key_a) == Phase.PLAN
+        assert sm.get_phase(key_b) == Phase.CLARIFY
 
     def test_independent_issue_types(self, sm: StateMachineManager) -> None:
         """repo-A#42 と repo-B#42 が独立に issue_type を持つ."""

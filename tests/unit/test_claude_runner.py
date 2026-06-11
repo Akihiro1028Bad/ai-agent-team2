@@ -361,18 +361,14 @@ async def test_interrupt_ignores_unknown_session(runner: ClaudeAgentRunner) -> N
 
 
 def test_phase_config_has_all_phases() -> None:
-    """PHASE_CONFIG に全 10 フェーズが定義されている."""
+    """PHASE_CONFIG に全フェーズが定義されている (U5 統合後)."""
     expected_phases = {
-        "type-detection",
-        "hearing",
-        "analysis",
-        "design",
-        "design-revise",
-        "split-proposal",
+        "intake",
+        "clarify",
+        "plan",
+        "split",
         "implement",
-        "fix",
-        "ci-fix",
-        "impl-revise",
+        "revise",
     }
     assert set(PHASE_CONFIG.keys()) == expected_phases
 
@@ -514,8 +510,8 @@ async def test_run_unknown_phase_uses_defaults(
 
 
 def test_impl_phases_set() -> None:
-    """_IMPL_PHASES が正しい実装フェーズを含む."""
-    assert {"implement", "fix", "ci-fix", "impl-revise"} == _IMPL_PHASES
+    """_IMPL_PHASES が正しい実装フェーズを含む (U5 統合後)."""
+    assert {"implement", "revise"} == _IMPL_PHASES
 
 
 # ---------------------------------------------------------------------------
