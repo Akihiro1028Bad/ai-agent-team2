@@ -173,9 +173,9 @@ class ImplementExecutor(PhaseExecutor):
                 phase=str(request.phase),
             )
 
-            # U5 (#83): fix フェーズは IMPLEMENT に統合済み。bug タイプは
-            # 軽量な fix フロー (方針コメント準拠の修正) を通す
-            if self._sm.get_issue_type(self._issue_key(request)) == "bug":
+            # U5 (#83): fix フェーズは IMPLEMENT に統合済み。light プラン
+            # (旧 bug) は軽量な fix フロー (方針コメント準拠の修正) を通す
+            if self._sm.get_workflow_params(self._issue_key(request)).plan_depth == "light":
                 result = await self._execute_fix(request)
                 await self._tracker.track(
                     "phase_end",

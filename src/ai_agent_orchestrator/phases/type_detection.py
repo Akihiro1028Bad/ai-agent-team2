@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from ai_agent_orchestrator.models import derive_workflow_params
 from ai_agent_orchestrator.phases.base import PhaseExecutor
 
 if TYPE_CHECKING:
@@ -87,14 +88,11 @@ class TypeDetectionExecutor(PhaseExecutor):
             f"異なる場合はコメントでお知らせください。",
         )
 
-        # タイプ別次フェーズへ遷移
-        next_phase_map: dict[str, str] = {
-            # U5 (#83): 情報が明確な bug は PLAN へ直行、feature はヒアリング (CLARIFY) へ
-            "bug": "plan",
-            "feature-m": "clarify",
-            "feature-l": "clarify",
-        }
-        next_phase = next_phase_map.get(issue_type, "clarify")
+        # U5c (#95): INTAKE が判定したタイプからパラメータを導出し次フェーズを決定。
+        # light プラン (旧 bug) は要件が明確なため CLARIFY を飛ばして PLAN 直行、
+        # full プラン (旧 feature) はヒアリング (CLARIFY) へ。
+        params = derive_workflow_params(issue_type)
+        next_phase = "plan" if params.plan_depth == "light" else "clarify"
         await client.replace_phase_label(request.repo, request.issue_number, f"phase:{next_phase}")
         await self._sm.transition(self._issue_key(request), next_phase)
 

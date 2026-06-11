@@ -48,6 +48,47 @@ def _key(issue_number: int, repo: str = "owner/repo") -> IssueKey:
 
 
 # ---------------------------------------------------------------------------
+# get_workflow_params: issue_type からのパラメータ導出 (U5c #95)
+# ---------------------------------------------------------------------------
+
+
+class TestGetWorkflowParams:
+    """set_issue_type 後に get_workflow_params が正しいパラメータを返す."""
+
+    @pytest.mark.parametrize(
+        ("issue_type", "plan_depth", "needs_split", "approval_style"),
+        [
+            ("bug", "light", False, "reaction"),
+            ("feature-m", "full", False, "pr"),
+            ("feature-l", "full", True, "pr"),
+        ],
+    )
+    def test_params_follow_issue_type(
+        self,
+        sm: StateMachineManager,
+        issue_type: str,
+        plan_depth: str,
+        needs_split: bool,
+        approval_style: str,
+    ) -> None:
+        sm.register_issue(1, "owner/repo")
+        key = _key(1)
+        sm.set_issue_type(key, issue_type)
+
+        params = sm.get_workflow_params(key)
+        assert params.plan_depth == plan_depth
+        assert params.needs_split == needs_split
+        assert params.approval_style == approval_style
+
+    def test_unregistered_issue_falls_back_to_full(self, sm: StateMachineManager) -> None:
+        """未登録 Issue は安全側 (full / 分割なし / PR) を返す."""
+        params = sm.get_workflow_params(_key(999))
+        assert params.plan_depth == "full"
+        assert params.needs_split is False
+        assert params.approval_style == "pr"
+
+
+# ---------------------------------------------------------------------------
 # IssueWorkflow direct tests
 # ---------------------------------------------------------------------------
 

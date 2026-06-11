@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from githubkit.versions.latest.models import (
@@ -54,6 +54,59 @@ class IssueType(StrEnum):
     BUG = "bug"
     FEATURE_M = "feature-m"
     FEATURE_L = "feature-l"
+
+
+# ---------------------------------------------------------------------------
+# 1.5 ワークフローパラメータ (U5c #95)
+# ---------------------------------------------------------------------------
+
+PlanDepth = Literal["light", "full"]
+"""PLAN フェーズの深さ。light = 旧 bug 相当、full = 旧 feature 相当。"""
+
+ApprovalStyle = Literal["reaction", "pr"]
+"""承認ゲートの方式。reaction = Issue への 👍 承認、pr = PR approve。"""
+
+
+@dataclass(frozen=True)
+class WorkflowParams:
+    """タイプ別差分を表す統一パラメータ集合 (U5c #95).
+
+    INTAKE が Issue の規模・性質から決定し、以降は全タイプが同一コードパスを
+    流れる。下流フェーズはタイプ文字列ではなく本パラメータで振る舞いを切り替える。
+
+    Attributes:
+        plan_depth: PLAN の深さ ("light" / "full")。
+        needs_split: SPLIT フェーズを通過するか (旧 feature-l)。
+        approval_style: 承認ゲートの方式 ("reaction" / "pr")。
+    """
+
+    plan_depth: PlanDepth
+    needs_split: bool
+    approval_style: ApprovalStyle
+
+
+def derive_workflow_params(issue_type: str) -> WorkflowParams:
+    """issue_type からワークフローパラメータを導出する (U5c #95).
+
+    INTAKE が付与したタイプ分類を、下流が消費するパラメータ集合へ変換する
+    単一の真実点。タイプ別の `== "bug"` 分岐を全て本関数経由に集約することで
+    「全タイプが同一コードパス・パラメータ差のみ」を実現する。
+
+    未判定 ("") / 未知タイプは安全側 (full / 分割なし / PR 承認) にフォールバック
+    し、例外は投げない。
+
+    Args:
+        issue_type: "bug" | "feature-m" | "feature-l" | その他。
+
+    Returns:
+        導出された WorkflowParams。
+    """
+    if issue_type == IssueType.BUG:
+        return WorkflowParams(plan_depth="light", needs_split=False, approval_style="reaction")
+    if issue_type == IssueType.FEATURE_L:
+        return WorkflowParams(plan_depth="full", needs_split=True, approval_style="pr")
+    # feature-m / 未判定 / 未知タイプ → full・分割なし・PR 承認
+    return WorkflowParams(plan_depth="full", needs_split=False, approval_style="pr")
 
 
 class Phase(str, Enum):  # noqa: UP042

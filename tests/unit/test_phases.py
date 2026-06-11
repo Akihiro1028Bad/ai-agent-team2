@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_agent_orchestrator.models import AgentResult
+from ai_agent_orchestrator.models import AgentResult, derive_workflow_params
 from ai_agent_orchestrator.phases.base import NoChangesError
 
 # ---------------------------------------------------------------------------
@@ -100,6 +100,7 @@ def mock_sm() -> MagicMock:
         impl_iteration=0,
     )
     sm.get_issue_type.return_value = "feature-m"
+    sm.get_workflow_params = MagicMock(side_effect=lambda key: derive_workflow_params(sm.get_issue_type(key)))
     sm.transition = AsyncMock()
     sm.increment_ci_retry = AsyncMock()
     return sm
@@ -333,7 +334,12 @@ class TestHearingExecutor:
         mock_context: AsyncMock,
         mock_sm: AsyncMock,
     ) -> None:
-        """NEEDS_SPLIT 出力時に split-proposal へ遷移する。"""
+        """NEEDS_SPLIT 出力時に SPLIT へ遷移する (U5c #95 動的エスカレーション)。
+
+        mock_sm の既定 issue_type は feature-m (needs_split=False) だが、CLARIFY 中に
+        エージェントが NEEDS_SPLIT を返したら INTAKE 判定を上書きして SPLIT へ昇格する。
+        """
+        mock_sm.get_issue_type.return_value = "feature-m"  # needs_split=False
         mock_runner.run.return_value = AgentResult(
             session_id="s1",
             output="NEEDS_SPLIT",

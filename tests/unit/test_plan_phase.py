@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_agent_orchestrator.models import AgentResult
+from ai_agent_orchestrator.models import AgentResult, derive_workflow_params
 
 # ---------------------------------------------------------------------------
 # Fixtures (test_phases.py と同等の最小構成)
@@ -74,6 +74,7 @@ def mock_sm() -> MagicMock:
         plan_json=None,
     )
     sm.get_issue_type.return_value = "bug"
+    sm.get_workflow_params = MagicMock(side_effect=lambda key: derive_workflow_params(sm.get_issue_type(key)))
     sm.transition = AsyncMock()
     sm.increment_ci_retry = AsyncMock()
     return sm

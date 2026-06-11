@@ -395,18 +395,25 @@ class EventRouter:
             logger.warning("Failed to update phase label to suspended for issue #%d", event.issue.number)
 
     async def _handle_plan_reaction(self, event: PollEvent) -> None:
-        """方針承認 (thumbsup リアクション): Bug のみ FIX へ遷移.
+        """方針承認 (thumbsup リアクション): reaction-style プランのみ IMPLEMENT へ遷移.
 
-        Bug 以外のタイプは警告ログを出力して早期リターンする。
+        approval_style が reaction でないプラン (旧 feature) は警告ログを出力して
+        早期リターンする (U5c #95)。
         """
         if event.issue is None:
             raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         # 未登録の場合は自動登録(再起動後のリカバリ)
         await self._ensure_registered(event)
-        issue_type = self._sm.get_issue_type(issue_key)
-        if issue_type != "bug":
-            logger.warning("Issue #%d is type %s, plan reaction only applies to bugs", event.issue.number, issue_type)
+        # U5c (#95): リアクション (👍) 承認は reaction-style プラン (旧 bug) 専用。
+        # pr-style プラン (旧 feature) は PR approve 経由で承認する。
+        params = self._sm.get_workflow_params(issue_key)
+        if params.approval_style != "reaction":
+            logger.warning(
+                "Issue #%d uses %s approval, plan reaction only applies to reaction-style plans",
+                event.issue.number,
+                params.approval_style,
+            )
             return
         next_phase = Phase.IMPLEMENT
 
@@ -498,9 +505,10 @@ class EventRouter:
             )
 
     async def _handle_plan_comment(self, event: PollEvent) -> None:
-        """方針指摘コメント: Bug のみ PLAN (再計画) へ遷移.
+        """方針指摘コメント: reaction-style プランのみ PLAN (再計画) へ遷移.
 
-        Bug 以外のタイプは警告ログを出力して早期リターンする。
+        approval_style が reaction でないプラン (旧 feature) は警告ログを出力して
+        早期リターンする (U5c #95)。
         既に PLAN にいる場合は遷移をスキップする (重複防止)。
         """
         if event.issue is None:
@@ -513,9 +521,14 @@ class EventRouter:
             logger.warning("Issue #%d is not registered, skipping plan comment", event.issue.number)
             return
 
-        issue_type = self._sm.get_issue_type(issue_key)
-        if issue_type != "bug":
-            logger.warning("Issue #%d is type %s, plan comment only applies to bugs", event.issue.number, issue_type)
+        # U5c (#95): プランコメント承認は reaction-style プラン (旧 bug) 専用。
+        params = self._sm.get_workflow_params(issue_key)
+        if params.approval_style != "reaction":
+            logger.warning(
+                "Issue #%d uses %s approval, plan comment only applies to reaction-style plans",
+                event.issue.number,
+                params.approval_style,
+            )
             return
         next_phase = Phase.PLAN
 

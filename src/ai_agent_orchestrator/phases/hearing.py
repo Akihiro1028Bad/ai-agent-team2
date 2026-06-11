@@ -83,20 +83,18 @@ class HearingExecutor(PhaseExecutor):
         if state:
             state.session_id = result.session_id
 
-        issue_type = self._sm.get_issue_type(self._issue_key(request))
+        params = self._sm.get_workflow_params(self._issue_key(request))
         client = await self._get_client(request.repo)
 
         if "READY" in result.output:
-            # タイプ別の次フェーズへ遷移
-            next_phase_map: dict[str, str] = {
-                "bug": "plan",
-                "feature-m": "plan",
-                "feature-l": "split",
-            }
-            next_phase = next_phase_map.get(issue_type, "plan")
+            # U5c (#95): needs_split (旧 feature-l) のみ SPLIT、他は PLAN へ
+            next_phase = "split" if params.needs_split else "plan"
             await client.replace_phase_label(request.repo, request.issue_number, f"phase:{next_phase}")
             await self._sm.transition(self._issue_key(request), next_phase)
         elif "NEEDS_SPLIT" in result.output:
+            # U5c (#95): CLARIFY 中の動的エスカレーション。INTAKE が needs_split=False
+            # と判定していても、ヒアリングで規模が大きいと判明した場合は SPLIT へ
+            # 昇格させる (params.needs_split を意図的に上書きする実行時シグナル)。
             await client.replace_phase_label(request.repo, request.issue_number, "phase:split")
             await self._sm.transition(self._issue_key(request), "split")
         else:

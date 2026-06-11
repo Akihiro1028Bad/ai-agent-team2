@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from ai_agent_orchestrator.models import Phase
+from ai_agent_orchestrator.models import Phase, WorkflowParams, derive_workflow_params
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.agents.claude_runner import ClaudeAgentRunner
@@ -235,6 +235,15 @@ class StateMachineProtocol:
     def get_issue_type(self, issue_key: IssueKey) -> str:
         """Get the issue type."""
         return ""  # pragma: no cover
+
+    def get_workflow_params(self, issue_key: IssueKey) -> WorkflowParams:
+        """Get derived workflow parameters (U5c #95).
+
+        具象 (StateMachineManager) は専用実装で override する。本デフォルトは
+        get_issue_type へ委譲する DRY なフォールバックで、準拠実装に対しては
+        常に正しいパラメータを返す。
+        """
+        return derive_workflow_params(self.get_issue_type(issue_key))  # pragma: no cover
 
     def set_issue_type(self, issue_key: IssueKey, issue_type: str) -> None:
         """Set the issue type."""
