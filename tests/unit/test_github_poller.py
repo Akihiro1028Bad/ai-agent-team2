@@ -1088,3 +1088,15 @@ class TestDetectPrEventsInlineOnlyReview:
 
         impl_events = [e for e in events if e.type == EventType.IMPL_PR_COMMENTED]
         assert len(impl_events) == 1
+
+    async def test_review_id_in_extra_is_int_even_when_source_is_str(self) -> None:
+        """_get_pr_reviews は id を str で返すため、extra では int に正規化される (#103)."""
+        reviews = [{"id": "4466060437", "state": "COMMENTED", "body": "本文の質問", "submitted_at": ""}]
+        client, repo, poller = self._setup(reviews, [])
+
+        events = await poller._detect_pr_events(client, repo, None)
+
+        impl_events = [e for e in events if e.type == EventType.IMPL_PR_COMMENTED]
+        assert len(impl_events) == 1
+        assert impl_events[0].extra["review_id"] == 4466060437
+        assert isinstance(impl_events[0].extra["review_id"], int)

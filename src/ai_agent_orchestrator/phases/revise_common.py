@@ -269,7 +269,9 @@ class ReviseExecutorBase(PhaseExecutor):
         comments_text, _ = self._normalize_comments(extra)
         pr_number = self._resolve_pr_number(request)
 
-        # 回答済み ID を除外 (#103: router を経由しない呼び出しでも防御)
+        # 回答済み ID を除外 (#103: router を経由しない呼び出しでも防御)。
+        # getattr + isinstance は旧 state 形式・部分 mock への意図的な防御
+        # （Protocol 宣言済みのため型検査は効く）
         state = self._sm.get_state(self._issue_key(request))
         answered_ids_ref = getattr(state, "answered_review_comment_ids", None) if state else None
         answered = set(answered_ids_ref) if isinstance(answered_ids_ref, list) else set()
@@ -325,7 +327,17 @@ class ReviseExecutorBase(PhaseExecutor):
                 answered_ids_ref[:] = sorted(set(answered_ids_ref))  # 防御的な重複排除
                 self._sm.persist()
         elif comments_text or summary:
-            # トップレベルレビュー（comment ID なし）: PR コメントで応答
+            # トップレベルレビュー（comment ID なし）: PR コメントで応答。
+            # router 非経由の呼び出しでも応答済み review_id には再応答しない（二層防御）
+            review_id = extra.get("review_id")
+            answered_rids_pre = getattr(state, "answered_review_ids", None) if state else None
+            if isinstance(review_id, int) and isinstance(answered_rids_pre, list) and review_id in answered_rids_pre:
+                logger.info(
+                    "Issue #%d: top-level review %d already answered, skipping response",
+                    request.issue_number,
+                    review_id,
+                )
+                return
             try:
                 await client.create_comment(request.repo, pr_number, fallback)
             except Exception:
@@ -336,8 +348,7 @@ class ReviseExecutorBase(PhaseExecutor):
                 )
             else:
                 # 応答した review id を永続化（再起動を跨いだ本文応答の重複防止 #103）
-                review_id = extra.get("review_id")
-                answered_rids_ref = getattr(state, "answered_review_ids", None) if state else None
+                answered_rids_ref = answered_rids_pre
                 if isinstance(review_id, int) and isinstance(answered_rids_ref, list):
                     answered_rids_ref.append(review_id)
                     answered_rids_ref[:] = sorted(set(answered_rids_ref))
