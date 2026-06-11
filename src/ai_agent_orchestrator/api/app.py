@@ -1,0 +1,204 @@
+"""FastAPI アプリケーションファクトリと読み取りエンドポイント定義.
+
+orchestrator 本体には触れず、ワークスペース配下のファイル (state.json /
+events.jsonl) のみを読み取って Web UI に JSON を返す (#84)。diff のみ GitHub API を
+参照し、認証は orchestrator と同一の AccountManager (CredentialResolver) を共有する。
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
+
+from fastapi import FastAPI, HTTPException, Query
+
+from ai_agent_orchestrator.api.middleware import AuthMiddleware
+from ai_agent_orchestrator.api.readers import (
+    aggregate_costs,
+    detail_from_state,
+    load_states,
+    merge_activity,
+    read_issue_events,
+    read_issue_summaries,
+)
+from ai_agent_orchestrator.api.schemas import (
+    CostsResponse,
+    DiffFile,
+    DiffResponse,
+    EventRecord,
+    IssueDetailResponse,
+    IssueSummaryResponse,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from ai_agent_orchestrator.config.settings import AppSettings
+    from ai_agent_orchestrator.models import IssueState
+
+logger = logging.getLogger(__name__)
+
+
+class _DiffClient(Protocol):
+    """diff 取得に必要な最小インターフェース (GitHubClient 互換)."""
+
+    async def get_pull_request_files(self, owner: str, repo: str, pr_number: int) -> list[dict[str, object]]: ...
+
+
+def _build_default_factory(
+    settings: AppSettings,
+) -> Callable[[str, str], Awaitable[_DiffClient]]:
+    """AccountManager ベースのデフォルト github_client_factory を構築する.
+
+    orchestrator と同一の CredentialResolver / AccountManager を使い、
+    新しい秘密の受け渡し経路を作らない (仕様 §設計判断2)。
+
+    Args:
+        settings: アプリケーション設定。
+
+    Returns:
+        (owner, repo) を受け取り認証済みクライアントを返す async callable。
+    """
+    from ai_agent_orchestrator.credential import CredentialResolver
+    from ai_agent_orchestrator.github.client import AccountManager
+
+    manager = AccountManager(
+        accounts=settings.accounts,
+        resolver=CredentialResolver(),
+        repo_configs=settings.repositories,
+    )
+
+    async def factory(owner: str, repo: str) -> _DiffClient:
+        return await manager.get_client_for_repo(owner, repo)
+
+    return factory
+
+
+def _resolve_issue(
+    states: dict[tuple[str, int], IssueState],
+    issue_number: int,
+    repo: str | None,
+) -> tuple[str, IssueState]:
+    """Issue 番号 (+ 任意の repo) から一意の (repo, IssueState) を解決する.
+
+    Args:
+        states: load_states() の結果。
+        issue_number: Issue 番号。
+        repo: "owner/repo" 形式の絞り込み (任意)。
+
+    Returns:
+        (repo, IssueState) のタプル。
+
+    Raises:
+        HTTPException: 不在なら 404、複数一致かつ repo 未指定なら 400。
+    """
+    matches = [
+        (state_repo, state)
+        for (state_repo, number), state in states.items()
+        if number == issue_number and (repo is None or state_repo == repo)
+    ]
+    if not matches:
+        raise HTTPException(status_code=404, detail=f"Issue #{issue_number} not found")
+    if len(matches) > 1:
+        repos = ", ".join(sorted(m[0] for m in matches))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Issue #{issue_number} is ambiguous across repos: {repos}. Specify ?repo=owner/repo",
+        )
+    return matches[0]
+
+
+def create_app(settings: AppSettings) -> FastAPI:
+    """AppSettings から読み取り API の FastAPI アプリを生成する.
+
+    Args:
+        settings: アプリケーション設定。workspace_dir からファイルを読み取る。
+
+    Returns:
+        構成済みの FastAPI アプリ。app.state.workspace / github_client_factory を持つ。
+    """
+    workspace = Path(settings.workspace_dir).expanduser()
+
+    app = FastAPI(title="AI Agent Orchestrator API", version="0.1.0")
+    app.add_middleware(AuthMiddleware)
+
+    app.state.workspace = workspace
+    app.state.github_client_factory = _build_default_factory(settings)
+
+    @app.get("/api/issues", response_model=list[IssueSummaryResponse])
+    async def list_issues() -> list[IssueSummaryResponse]:
+        """全 Issue の概要を updated_at 降順で返す."""
+        return read_issue_summaries(workspace)
+
+    @app.get("/api/issues/{issue_number}", response_model=IssueDetailResponse)
+    async def get_issue(
+        issue_number: int,
+        repo: str | None = Query(default=None),
+    ) -> IssueDetailResponse:
+        """Issue の詳細を返す. 複数一致かつ repo 未指定は 400、不在は 404."""
+        states = load_states(workspace)
+        state_repo, state = _resolve_issue(states, issue_number, repo)
+        return detail_from_state(workspace, state, state_repo)
+
+    @app.get("/api/issues/{issue_number}/events", response_model=list[EventRecord])
+    async def get_issue_events(
+        issue_number: int,
+        limit: int = Query(default=200, ge=1, le=1000),
+    ) -> list[EventRecord]:
+        """Issue の events.jsonl を新しい順で返す (既定 200 件)."""
+        return read_issue_events(workspace, issue_number, limit=limit)
+
+    @app.get("/api/activity", response_model=list[EventRecord])
+    async def get_activity(
+        limit: int = Query(default=100, ge=1, le=1000),
+    ) -> list[EventRecord]:
+        """全 Issue のイベントをマージし ts 降順で返す (既定 100 件)."""
+        return merge_activity(workspace, limit=limit)
+
+    @app.get("/api/costs", response_model=CostsResponse)
+    async def get_costs() -> CostsResponse:
+        """phase_completed の cost_usd を総額・Issue 別・フェーズ別に集計する."""
+        return aggregate_costs(workspace)
+
+    @app.get("/api/issues/{issue_number}/diff", response_model=DiffResponse)
+    async def get_issue_diff(
+        issue_number: int,
+        repo: str | None = Query(default=None),
+    ) -> DiffResponse:
+        """Issue に紐づく PR の差分 (files + patch) を返す. pr_number 無しは 404."""
+        states = load_states(workspace)
+        state_repo, state = _resolve_issue(states, issue_number, repo)
+        if state.pr_number is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Issue #{issue_number} has no associated pull request",
+            )
+        owner, _, name = state_repo.partition("/")
+        factory: Callable[[str, str], Awaitable[_DiffClient]] = app.state.github_client_factory
+        # GitHub 呼び出し失敗を素の 500 で返さない: config 未登録は 404、
+        # API 障害 (認証・レート制限・ネットワーク等) は 502 に整形する。
+        from ai_agent_orchestrator.github.client import ConfigError
+
+        try:
+            client = await factory(owner, name)
+            raw_files = await client.get_pull_request_files(owner, name, state.pr_number)
+        except ConfigError as e:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository {state_repo} is not configured in config.yaml",
+            ) from e
+        except HTTPException:
+            raise
+        except Exception as e:
+            # detail に内部例外の文字列を含めない (内部 URL 等の情報漏えい防止)。
+            # 詳細はサーバーログ側にのみ出す。
+            logger.warning("PR 差分の取得に失敗: repo=%s pr=%s", state_repo, state.pr_number, exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to fetch pull request diff from GitHub",
+            ) from e
+        files = [DiffFile.model_validate(f) for f in raw_files]
+        return DiffResponse(pr_number=state.pr_number, files=files)
+
+    return app

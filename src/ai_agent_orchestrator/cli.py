@@ -6,6 +6,7 @@ import typer
 
 from ai_agent_orchestrator.commands import (
     account_app,
+    api_command,
     health_command,
     logs_command,
     setup_command,
@@ -32,6 +33,7 @@ app.command("stop")(stop_command)
 app.command("status")(status_command)
 app.command("health")(health_command)
 app.command("logs")(logs_command)
+app.command("api")(api_command)
 
 
 @app.callback()

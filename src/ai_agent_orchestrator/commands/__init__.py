@@ -1,6 +1,7 @@
 """CLI サブコマンドパッケージ."""
 
 from ai_agent_orchestrator.commands.account import account_app
+from ai_agent_orchestrator.commands.api import api_command
 from ai_agent_orchestrator.commands.run import (
     health_command,
     logs_command,
@@ -12,6 +13,7 @@ from ai_agent_orchestrator.commands.setup import setup_command, unregister_comma
 
 __all__ = [
     "account_app",
+    "api_command",
     "health_command",
     "logs_command",
     "setup_command",

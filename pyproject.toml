@@ -15,6 +15,8 @@ dependencies = [
     "python-statemachine>=2.5",
     "keyring>=25",
     "pyyaml>=6",
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
 ]
 
 [project.scripts]
