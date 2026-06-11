@@ -243,7 +243,10 @@ class PlanExecutor(PhaseExecutor):
         """設計 PR 作成結果を処理 -> design-review 遷移 (旧 DesignExecutor)。"""
         _, parsed = extract_plan_json(result.output)
         record = self._store_plan_record(request, "full", parsed)
-        # plan JSON を worktree に書き出してから phase commit に乗せる
+        # plan JSON を worktree に書き出してから phase commit に乗せる。
+        # この record は初回エージェント出力の JSON ブロック由来であり、後続の
+        # _revalidate_design が設計書を再生成しても plan.json の subtasks は
+        # 更新されない (設計書本文と乖離し得る点に留意)。
         await self._write_plan_json_file(request, record)
 
         await self._finalize_phase_commit(

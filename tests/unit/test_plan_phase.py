@@ -192,6 +192,15 @@ class TestExtractPlanJson:
         assert parsed is None
         assert text == output
 
+    def test_uppercase_json_fence_is_matched(self) -> None:
+        """フェンス言語ラベルが大文字 (```JSON) でも抽出できる."""
+        from ai_agent_orchestrator.phases.plan_artifact import extract_plan_json
+
+        output = '方針\n```JSON\n{"ui_impact": true}\n```\n'
+        _, parsed = extract_plan_json(output)
+        assert parsed is not None
+        assert parsed["ui_impact"] is True
+
 
 class TestBuildPlanRecord:
     """build_plan_record のテスト."""
@@ -247,6 +256,24 @@ class TestBuildPlanRecord:
         record = build_plan_record("light", {"test_cases": [{"name": "t1"}, "t2", 3]})
         assert all(isinstance(t, str) for t in record["test_cases"])
         assert "t2" in record["test_cases"]
+
+    def test_test_cases_string_is_wrapped_in_list(self) -> None:
+        """test_cases が文字列1件のとき 1 要素リストに救済される."""
+        from ai_agent_orchestrator.phases.plan_artifact import build_plan_record
+
+        record = build_plan_record("light", {"test_cases": "唯一のケース"})
+        assert record["test_cases"] == ["唯一のケース"]
+
+    def test_non_string_summary_and_architecture_fall_back_to_empty(self) -> None:
+        """summary / architecture が非文字列のとき repr 化せず空文字になる."""
+        from ai_agent_orchestrator.phases.plan_artifact import build_plan_record
+
+        record = build_plan_record(
+            "full",
+            {"summary": {"a": 1}, "architecture": ["x"], "subtasks": []},
+        )
+        assert record["summary"] == ""
+        assert record["architecture"] == ""
 
     def test_subtasks_elements_are_normalized(self) -> None:
         """subtasks 要素が想定外の型でも {id, title} スキーマに正規化される."""
@@ -329,6 +356,32 @@ class TestPlanExecutorLight:
         assert "```json" not in body
         assert "修正方針: null check" in body
         mock_sm.transition.assert_called_with(("org/app", 1), "plan-review")
+
+    async def test_light_does_not_write_plan_json_file(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """light は plan.json ファイルを書き出さない (state のみ) という責務契約."""
+        mock_workspace.create_worktree.return_value = str(tmp_path)
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output='方針\n```json\n{"ui_impact": false}\n```\n',
+            tool_uses=[],
+            cost_usd=0.5,
+            duration_sec=20.0,
+        )
+        executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
+        await executor.execute(_make_request(phase="analysis"))
+
+        # full と異なり light はディスクへ plan.json を書かない
+        assert not (tmp_path / "docs" / "designs" / "issue-1.plan.json").exists()
+        # state には保存される
+        assert mock_sm.get_state.return_value.plan_json is not None
 
     async def test_stores_plan_json_in_state(
         self,
@@ -480,6 +533,40 @@ class TestPlanExecutorFull:
         record = json.loads(plan_file.read_text(encoding="utf-8"))
         assert record["ui_impact"] is True
         assert record["plan_depth"] == "full"
+
+    async def test_full_write_failure_does_not_block_flow(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: MagicMock,
+        worktree: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """plan.json 書き込みが失敗しても警告に留めフローが継続する."""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="設計PR #5 を作成しました",
+            tool_uses=[],
+            cost_usd=1.0,
+            duration_sec=60.0,
+        )
+
+        # Path.write_text を失敗させる
+        import ai_agent_orchestrator.phases.plan as plan_mod
+
+        def _boom(*_args: object, **_kwargs: object) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(plan_mod.Path, "write_text", _boom)
+
+        executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
+        await executor.execute(_make_request(phase="design"))
+
+        # 書き込み失敗でも design-review へ遷移し、state には保存される
+        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+        assert mock_sm.get_state.return_value.plan_json is not None
 
     async def test_full_stores_plan_json_in_state(
         self,

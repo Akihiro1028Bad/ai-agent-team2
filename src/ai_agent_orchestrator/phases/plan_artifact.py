@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 
 PLAN_SCHEMA_VERSION = 1
 
-# 閉じ ``` 直前の改行は省略され得る (LLM 出力ゆらぎ) ため任意にする
-_JSON_BLOCK_PATTERN = re.compile(r"```json\s*\n(.*?)\n?```", re.DOTALL)
+# 閉じ ``` 直前の改行は省略され得る (LLM 出力ゆらぎ) ため任意にする。
+# フェンス言語ラベルの大文字小文字 (```JSON 等) も許容する
+_JSON_BLOCK_PATTERN = re.compile(r"```json\s*\n(.*?)\n?```", re.DOTALL | re.IGNORECASE)
 
 
 def extract_plan_json(output: str) -> tuple[str, dict[str, Any] | None]:
@@ -73,23 +74,53 @@ def build_plan_record(plan_depth: str, parsed: dict[str, Any] | None) -> dict[st
             logger.warning("plan JSON ui_impact has invalid type %s, falling back to None", type(ui_impact).__name__)
         ui_impact = None
 
-    raw_test_cases = src.get("test_cases")
-    # 消費側 (#91 / Web UI) が list[str] を期待するため要素も文字列に正規化する
-    test_cases = [str(t) for t in raw_test_cases] if isinstance(raw_test_cases, list) else []
-
     record: dict[str, Any] = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "plan_depth": plan_depth,
         "ui_impact": ui_impact,
-        "summary": str(src.get("summary", "")),
-        "test_cases": test_cases,
+        "summary": _coerce_text(src.get("summary")),
+        "test_cases": _coerce_test_cases(src.get("test_cases")),
     }
     if plan_depth == "full":
         raw_subtasks = src.get("subtasks")
-        record["architecture"] = str(src.get("architecture", ""))
+        record["architecture"] = _coerce_text(src.get("architecture"))
         # 消費側が {id, title} を期待するため要素を正規化する (test_cases と同方針)
         record["subtasks"] = [_normalize_subtask(s) for s in raw_subtasks] if isinstance(raw_subtasks, list) else []
     return record
+
+
+def _coerce_text(value: object) -> str:
+    """表示用テキストフィールドを安全な文字列に正規化する。
+
+    LLM が dict/list を返した場合に Python repr が混入するのを防ぎ、
+    非文字列は空文字へフォールバックする。
+
+    Args:
+        value: 元の値。
+
+    Returns:
+        文字列。非文字列なら空文字。
+    """
+    return value if isinstance(value, str) else ""
+
+
+def _coerce_test_cases(value: object) -> list[str]:
+    """test_cases を list[str] に正規化する。
+
+    LLM が文字列 1 件を返した場合は 1 要素リストに救済し、list の
+    各要素は文字列化する。それ以外の型は空リストにフォールバックする。
+
+    Args:
+        value: 元の値。
+
+    Returns:
+        文字列のリスト。
+    """
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(t) for t in value]
+    return []
 
 
 def _normalize_subtask(item: object) -> dict[str, Any]:
