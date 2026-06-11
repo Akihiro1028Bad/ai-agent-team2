@@ -259,11 +259,22 @@ class EventRouter:
         repo_key = f"{event.repo.owner}/{event.repo.repo}"
         labels = [str(lbl.name) if hasattr(lbl, "name") else str(lbl) for lbl in (event.issue.labels or [])]
 
-        # タイプをラベルから推定
+        # タイプをラベルから推定。不正な type:* ラベル (collaborator が誤付与/
+        # 細工した値) で set_issue_type が ValueError を出し error 通知スパムに
+        # なるのを防ぐため、許可値以外はデフォルトへフォールバックする
         issue_type = "bug"  # デフォルト
+        valid_types = {"bug", "feature-m", "feature-l"}
         for lbl in labels:
             if lbl.startswith("type:"):
-                issue_type = lbl.replace("type:", "")
+                candidate = lbl.replace("type:", "")
+                if candidate in valid_types:
+                    issue_type = candidate
+                else:
+                    logger.warning(
+                        "Issue #%d: invalid type label '%s', defaulting to 'bug'",
+                        event.issue.number,
+                        lbl,
+                    )
                 break
 
         # フェーズをラベルから推定

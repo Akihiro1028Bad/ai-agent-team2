@@ -1028,3 +1028,46 @@ class TestReviewReplyDedupPersistence:
         await router.route(event)
 
         assert tq.enqueue.call_args.args[0].extra["review_id"] == 888
+
+
+# ---------------------------------------------------------------------------
+# Tests: _ensure_registered (再起動リカバリの自動登録)
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureRegisteredTypeValidation:
+    """不正な type:* ラベルのフォールバック (セキュリティレビュー Medium 対応)."""
+
+    async def test_invalid_type_label_falls_back_to_bug(
+        self,
+        router: EventRouter,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """許可外の type ラベルは ValueError を出さず bug にフォールバックする."""
+        mock_sm.get_phase = MagicMock(side_effect=KeyError(1))  # 未登録
+        event = _make_event(EventType.PLAN_REACTION_ADDED)
+        lbl_type = MagicMock()
+        lbl_type.name = "type:arbitrary-value"
+        lbl_phase = MagicMock()
+        lbl_phase.name = "phase:approve"
+        event.issue.labels = [lbl_type, lbl_phase]
+
+        # ValueError が伝播しないこと
+        await router._ensure_registered(event)
+        mock_sm.set_issue_type.assert_called_once()
+        assert mock_sm.set_issue_type.call_args.args[1] == "bug"
+
+    async def test_valid_type_label_is_used(
+        self,
+        router: EventRouter,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """許可された type ラベルはそのまま使われる."""
+        mock_sm.get_phase = MagicMock(side_effect=KeyError(1))
+        event = _make_event(EventType.PLAN_REACTION_ADDED)
+        lbl = MagicMock()
+        lbl.name = "type:feature-m"
+        event.issue.labels = [lbl]
+
+        await router._ensure_registered(event)
+        assert mock_sm.set_issue_type.call_args.args[1] == "feature-m"
