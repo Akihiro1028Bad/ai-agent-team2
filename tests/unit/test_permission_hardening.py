@@ -64,6 +64,19 @@ class TestToolPolicyFor:
             assert f"Bash({cmd}:*)" in policy
         assert "Bash(git commit:*)" in policy
 
+    @pytest.mark.parametrize("phase", ["plan", "implement", "revise"])
+    def test_impl_phases_deny_uv_run_interpreter_escape(self, phase: str) -> None:
+        """uv run 経由のインタプリタ脱出 (env 読み出し・keyring 直叩き) も deny する.
+
+        uv run pytest / mypy / ruff は許可のまま (deny は uv run python のみ)。
+        """
+        policy = tool_policy_for(phase)
+        assert "Bash(uv run python:*)" in policy
+        assert "Bash(uv run python3:*)" in policy
+        # 検証系コマンドまで巻き込んでいないこと
+        assert "Bash(uv:*)" not in policy
+        assert "Bash(uv run pytest:*)" not in policy
+
     @pytest.mark.parametrize("phase", ["intake", "clarify", "split", "plan", "implement", "revise"])
     def test_policy_is_immutable_per_call(self, phase: str) -> None:
         """呼び出しごとに独立したリストを返す (共有ミューテーション防止)."""

@@ -134,3 +134,8 @@ class TestTrustBoundary:
     def test_unenhanced_phase_has_no_trust_boundary(self) -> None:
         result = enhance_prompt(self.BASE, "hearing")
         assert "信頼境界" not in result
+
+    def test_plan_key_includes_trust_boundary(self) -> None:
+        """将来 "plan" キーで呼ばれても信頼境界が脱落しない (#101 M-2)."""
+        result = enhance_prompt(self.BASE, "plan")
+        assert "信頼境界" in result

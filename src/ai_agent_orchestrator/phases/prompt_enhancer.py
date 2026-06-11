@@ -102,6 +102,9 @@ _PHASE_SECTIONS: dict[str, list[str]] = {
     "ci-fix": [_TRUST_BOUNDARY, _CODING_STANDARDS],
     "revise": [_TRUST_BOUNDARY, _TEST_REQUIREMENTS, _CODING_STANDARDS, _BROWSER_VERIFICATION],
     "design": [_TRUST_BOUNDARY, _DESIGN_TEST_STRATEGY, _DESIGN_SECURITY, _CODING_STANDARDS, _TEST_REQUIREMENTS],
+    # "plan" は現状 PlanExecutor が legacy キー "design" で呼ぶため未到達だが、
+    # 将来呼び出しを "plan" に直した際に信頼境界が脱落しないよう同内容を用意 (#101)
+    "plan": [_TRUST_BOUNDARY, _DESIGN_TEST_STRATEGY, _DESIGN_SECURITY, _CODING_STANDARDS, _TEST_REQUIREMENTS],
 }
 
 # 強化対象外のフェーズ (hearing, type-detection 等) はマッピングに含めない

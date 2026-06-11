@@ -140,13 +140,16 @@ _BASH_DENY_SPECIFIERS = [
     # 環境変数の一括読み出し
     "Bash(printenv:*)",
     "Bash(env:*)",
-    # インタプリタ直接実行 (one-liner での env 読み出し→外部送信を抑止。
-    # リポ規約の `uv run python` / `uv run pytest` は uv 経由のため許可)
+    # インタプリタ直接実行 (one-liner での env 読み出し→外部送信を抑止)
     "Bash(python:*)",
     "Bash(python3:*)",
     "Bash(node:*)",
     "Bash(ruby:*)",
     "Bash(perl:*)",
+    # uv run 経由のインタプリタ脱出 (keyring 直叩き・env 一括読み出し対策)。
+    # 検証系 (uv run pytest / mypy / ruff) は許可のまま
+    "Bash(uv run python:*)",
+    "Bash(uv run python3:*)",
 ]
 """実装系フェーズで deny する Bash コマンド (ビルド・テストは許可)。"""
 
