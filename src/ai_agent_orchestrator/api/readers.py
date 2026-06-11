@@ -79,6 +79,11 @@ def read_agent_logs(
         return AgentLogPage(records=[], next_offset=offset, total=0)
 
     physical_lines = text.splitlines()
+    # 末尾未終端行 (書き込み途中の可能性) は消費しない。SSE の tail
+    # (stream._read_new_lines) と torn read 方針を揃え、next_offset を
+    # start_agent に渡したときの取りこぼしを防ぐ (#85 review #2)。
+    if text and not text.endswith("\n") and physical_lines:
+        physical_lines = physical_lines[:-1]
     total = len(physical_lines)
 
     records: list[AgentLogRecord] = []

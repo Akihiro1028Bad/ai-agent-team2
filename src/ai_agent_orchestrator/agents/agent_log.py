@@ -47,7 +47,9 @@ class AgentLogWriter:
         """
         sanitized = sanitize_dict(record)
         agent_file = self._log_dir / f"issue-{issue_number}" / "agent.jsonl"
-        line = json.dumps(sanitized, ensure_ascii=False) + "\n"
+        # default=str: 非 JSON シリアライズ値 (将来 SDK の usage が非 dict 等) でも
+        # 例外で record 丸ごと欠落させない。UI コスト集計ソースを取りこぼさない (#85)。
+        line = json.dumps(sanitized, ensure_ascii=False, default=str) + "\n"
 
         def _write() -> None:
             agent_file.parent.mkdir(parents=True, exist_ok=True)

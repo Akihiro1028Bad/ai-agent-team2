@@ -289,3 +289,22 @@ def test_read_agent_logs_skips_broken_but_consumes_index(tmp_path: Path) -> None
     assert [r.text for r in page.records] == ["a", "c"]  # type: ignore[attr-defined]
     assert page.next_offset == 3
     assert page.total == 3
+
+
+def test_read_agent_logs_excludes_unterminated_final_line(tmp_path: Path) -> None:
+    """末尾未終端行 (書き込み途中) は total/next_offset/records から除外する.
+
+    /logs の next_offset を SSE の start_agent に渡す設計上、torn read 方針を
+    tail と揃えないと、完成後の同行を SSE が再読しない取りこぼしが起きうる
+    (#85 review #2)。
+    """
+    issue_dir = tmp_path / "logs" / "issue-1"
+    issue_dir.mkdir(parents=True, exist_ok=True)
+    complete = json.dumps({"ts": "t0", "phase": "p", "type": "text", "text": "done"})
+    # 2 行目は改行で終端されていない (書き込み途中)
+    (issue_dir / "agent.jsonl").write_text(complete + "\n" + '{"type": "text", "text": "par', encoding="utf-8")
+
+    page = read_agent_logs(tmp_path, 1, offset=0, limit=10)
+    assert [r.text for r in page.records] == ["done"]  # type: ignore[attr-defined]
+    assert page.total == 1  # 未終端行は数えない
+    assert page.next_offset == 1  # 未終端行は消費しない

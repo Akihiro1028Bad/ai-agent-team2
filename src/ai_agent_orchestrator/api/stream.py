@@ -95,6 +95,10 @@ def _read_new_lines(path: Path, consumed: int) -> list[str]:
     壊れ行の判定はしない (SSE は生行を流し、UI 側でパースする)。空行は
     スキップするが、返すのは consumed 以降に出現した非空行のみ。
 
+    既知の制約 (#113): 毎 poll でファイル全体を読む (O(ファイルサイズ))。
+    ログ肥大 + 同時接続増で CPU が線形に増えるため、将来は保持オフセットからの
+    seek ベース増分読みへ移行余地あり。localhost 単一利用の現フェーズでは許容。
+
     Args:
         path: 対象ファイル。
         consumed: 既に消費済みの物理行数。

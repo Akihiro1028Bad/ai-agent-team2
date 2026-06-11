@@ -134,3 +134,24 @@ async def test_log_messages_noop_without_issue_number() -> None:
     runner = _make_runner(writer)
     await runner._log_messages(_fake_messages(), issue_number=None, phase="plan")
     assert writer.records == []
+
+
+async def test_write_survives_non_serializable_value(tmp_path: Path) -> None:
+    """非 JSON シリアライズ値を含むレコードでも例外を出さず行を残す (default=str).
+
+    result レコードの usage 等が将来 SDK で非 dict になっても、record 丸ごと
+    欠落させない (#85 review #4)。
+    """
+    writer = AgentLogWriter(log_dir=tmp_path / "logs")
+
+    class _Weird:
+        def __str__(self) -> str:
+            return "weird-usage"
+
+    await writer.write(1, {"type": "result", "usage": _Weird()})
+
+    path = tmp_path / "logs" / "issue-1" / "agent.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["usage"] == "weird-usage"
