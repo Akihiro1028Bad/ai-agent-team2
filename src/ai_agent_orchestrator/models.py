@@ -127,6 +127,7 @@ class ApprovalMethod(StrEnum):
 
     REACTION = "reaction"
     PR_APPROVE = "pr-approve"
+    LGTM = "lgtm"
 
 
 # ---------------------------------------------------------------------------

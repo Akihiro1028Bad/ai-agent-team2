@@ -35,6 +35,8 @@ class RepositoryConfig(BaseModel):
     label: str = "ai-agent"
     base_branch: str = "main"
     slack_channel: str | None = None
+    # 承認者の許可リスト (#102)。空なら owner のみを承認者とする
+    approvers: list[str] = Field(default_factory=list)
 
 
 class ConcurrencyConfig(BaseModel):
