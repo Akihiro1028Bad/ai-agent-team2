@@ -155,12 +155,18 @@ _SENSITIVE_ENV_VARS = (
     "GH_TOKEN",
     "GITHUB_PAT",
     "SLACK_WEBHOOK_URL",
+    # Claude アカウントのフル権限トークン。現運用 (macOS keychain 認証) では
+    # 未設定のため遮断は無害。fail-closed: ヘッドレス運用がこの env に依存する
+    # 場合はエージェントが認証失敗で即顕在化する
+    "CLAUDE_CODE_OAUTH_TOKEN",
 )
 """子プロセスへの継承を遮断する機微環境変数。
 
 ANTHROPIC_API_KEY は CLI 自体の認証に必要なため対象外。
-TODO(#101): エージェントの Bash からも読める状態が残るため、CLI への
-トークン注入手段が整い次第、遮断対象への追加を再評価する。
+TODO(#101): ANTHROPIC_API_KEY はエージェントの Bash からも読める状態が残る
+ため、CLI へのトークン注入手段が整い次第、遮断対象への追加を再評価する。
+TODO(#92): ヘッドレス運用 (WSL2) で CLAUDE_CODE_OAUTH_TOKEN による CLI 認証を
+採る場合は、遮断との両立 (keychain 相当の注入手段) を設計してから外すこと。
 """
 
 

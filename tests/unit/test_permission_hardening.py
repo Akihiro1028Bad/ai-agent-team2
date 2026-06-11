@@ -89,6 +89,10 @@ class TestSanitizedEnvOverrides:
     def test_blanks_slack_webhook(self) -> None:
         assert sanitized_env_overrides()["SLACK_WEBHOOK_URL"] == ""
 
+    def test_blanks_claude_code_oauth_token(self) -> None:
+        """Claude アカウントのフル権限トークンも遮断する (現運用は keychain 認証)."""
+        assert sanitized_env_overrides()["CLAUDE_CODE_OAUTH_TOKEN"] == ""
+
     def test_does_not_touch_anthropic_auth(self) -> None:
         """ANTHROPIC_API_KEY は CLI 自体の認証に必要なため遮断しない."""
         assert "ANTHROPIC_API_KEY" not in sanitized_env_overrides()

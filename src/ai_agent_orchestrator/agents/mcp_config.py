@@ -53,6 +53,11 @@ MEMORY_SERVER: dict[str, Any] = {
     "args": ["-y", "@modelcontextprotocol/server-memory"],
 }
 
+# 既知リスク (#101): fetch は任意 URL への HTTP リクエストを送れるため、
+# Bash の curl/wget deny と非対称な egress チャネルになる。プロンプト
+# インジェクション経由の悪用は信頼境界節 (prompt_enhancer) で抑止し、
+# 秘密情報は env 遮断 (claude_runner.sanitized_env_overrides) で保護する。
+# egress の構造的制限はネットワーク層の別 Issue で扱う。
 FETCH_SERVER: dict[str, Any] = {
     "type": "stdio",
     "command": "npx",
