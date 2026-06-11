@@ -162,18 +162,12 @@ MERMAID_TOOLS: list[str] = [
 # ---------------------------------------------------------------------------
 
 _PHASE_MCP_MAP: dict[str, dict[str, Any]] = {
-    "hearing": {
+    "clarify": {
         "servers": {"fetch": FETCH_SERVER, "context7": CONTEXT7_SERVER},
         "tools": [*FETCH_TOOLS, *CONTEXT7_TOOLS],
     },
-    "analysis": {
-        "servers": {
-            "context7": CONTEXT7_SERVER,
-            "sequential-thinking": SEQUENTIAL_THINKING_SERVER,
-        },
-        "tools": [*CONTEXT7_TOOLS, *SEQUENTIAL_THINKING_TOOLS],
-    },
-    "design": {
+    # PLAN は light (旧 analysis) / full (旧 design) を包含するため design のスーパーセット
+    "plan": {
         "servers": {
             "context7": CONTEXT7_SERVER,
             "sequential-thinking": SEQUENTIAL_THINKING_SERVER,
@@ -201,7 +195,8 @@ _PHASE_MCP_MAP: dict[str, dict[str, Any]] = {
             *CHROME_DEVTOOLS_TOOLS,
         ],
     },
-    "fix": {
+    # REVISE はレビュー対応 (旧 impl-revise) と CI 修正 (旧 ci-fix) を包含
+    "revise": {
         "servers": {
             "context7": CONTEXT7_SERVER,
             "github": None,
@@ -209,31 +204,6 @@ _PHASE_MCP_MAP: dict[str, dict[str, Any]] = {
             "chromedevtools": CHROME_DEVTOOLS_SERVER,
         },
         "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS, *PLAYWRIGHT_TOOLS, *CHROME_DEVTOOLS_TOOLS],
-    },
-    "ci-fix": {
-        "servers": {
-            "context7": CONTEXT7_SERVER,
-            "github": None,
-        },
-        "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS],
-    },
-    "impl-revise": {
-        "servers": {
-            "context7": CONTEXT7_SERVER,
-            "github": None,
-            "playwright": PLAYWRIGHT_SERVER,
-            "chromedevtools": CHROME_DEVTOOLS_SERVER,
-        },
-        "tools": [*CONTEXT7_TOOLS, *GITHUB_TOOLS, *PLAYWRIGHT_TOOLS, *CHROME_DEVTOOLS_TOOLS],
-    },
-    "design-revise": {
-        "servers": {
-            "context7": CONTEXT7_SERVER,
-            "fetch": FETCH_SERVER,
-            "shadcnui": SHADCN_UI_SERVER,
-            "mermaid": MERMAID_SERVER,
-        },
-        "tools": [*CONTEXT7_TOOLS, *FETCH_TOOLS, *SHADCN_UI_TOOLS, *MERMAID_TOOLS],
     },
 }
 

@@ -89,16 +89,16 @@ class HearingExecutor(PhaseExecutor):
         if "READY" in result.output:
             # タイプ別の次フェーズへ遷移
             next_phase_map: dict[str, str] = {
-                "bug": "analysis",
-                "feature-m": "design",
-                "feature-l": "split-proposal",
+                "bug": "plan",
+                "feature-m": "plan",
+                "feature-l": "split",
             }
-            next_phase = next_phase_map.get(issue_type, "design")
+            next_phase = next_phase_map.get(issue_type, "plan")
             await client.replace_phase_label(request.repo, request.issue_number, f"phase:{next_phase}")
             await self._sm.transition(self._issue_key(request), next_phase)
         elif "NEEDS_SPLIT" in result.output:
-            await client.replace_phase_label(request.repo, request.issue_number, "phase:split-proposal")
-            await self._sm.transition(self._issue_key(request), "split-proposal")
+            await client.replace_phase_label(request.repo, request.issue_number, "phase:split")
+            await self._sm.transition(self._issue_key(request), "split")
         else:
             # 質問を Issue コメントとして投稿
             from ai_agent_orchestrator.phases.base import next_action_footer
@@ -111,8 +111,8 @@ class HearingExecutor(PhaseExecutor):
             comment_body += next_action_footer("hearing")
             await client.create_comment(request.repo, request.issue_number, comment_body)
             # hearing-wait へ遷移 (user reply待ち)
-            await client.replace_phase_label(request.repo, request.issue_number, "phase:hearing-wait")
-            await self._sm.transition(self._issue_key(request), "hearing-wait")
+            await client.replace_phase_label(request.repo, request.issue_number, "phase:clarify-wait")
+            await self._sm.transition(self._issue_key(request), "clarify-wait")
             issue = await client.get_issue(request.repo, request.issue_number)
             repo_full_name = self._get_repo_full_name(request)
             await self._notifier.notify(

@@ -15,7 +15,7 @@ from ai_agent_orchestrator.context.engine import (
 )
 from ai_agent_orchestrator.models import AgentResult, Phase, Subtask
 from ai_agent_orchestrator.phases.base import NoChangesError, PhaseExecutor
-from ai_agent_orchestrator.phases.fix_flow import build_fix_prompt, finalize_fix, is_fix_phase
+from ai_agent_orchestrator.phases.fix_flow import build_fix_prompt, finalize_fix
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.models import TaskRequest
@@ -173,7 +173,9 @@ class ImplementExecutor(PhaseExecutor):
                 phase=str(request.phase),
             )
 
-            if is_fix_phase(request):
+            # U5 (#83): fix フェーズは IMPLEMENT に統合済み。bug タイプは
+            # 軽量な fix フロー (方針コメント準拠の修正) を通す
+            if self._sm.get_issue_type(self._issue_key(request)) == "bug":
                 result = await self._execute_fix(request)
                 await self._tracker.track(
                     "phase_end",
@@ -779,8 +781,8 @@ class ImplementExecutor(PhaseExecutor):
             state.impl_iteration = 0  # リセット
 
         client = await self._get_client(request.repo)
-        await client.replace_phase_label(request.repo, request.issue_number, "phase:impl-review")
-        await self._sm.transition(self._issue_key(request), "impl-review")
+        await client.replace_phase_label(request.repo, request.issue_number, "phase:review")
+        await self._sm.transition(self._issue_key(request), "review")
         repo_full_name = self._get_repo_full_name(request)
         pr_url = self._build_pr_url(request, pr_number)
         await self._notifier.notify(

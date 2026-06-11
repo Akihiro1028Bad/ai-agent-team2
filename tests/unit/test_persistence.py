@@ -27,7 +27,7 @@ def sample_states() -> dict[IssueKey, IssueState]:
     return {
         ("myorg/myapp", 42): IssueState(
             issue_number=42,
-            phase=Phase.HEARING,
+            phase=Phase.CLARIFY,
             issue_type="feature-m",
             repo="myorg/myapp",
             created_at="2026-03-24T10:00:00",
@@ -57,7 +57,7 @@ def test_save_load_roundtrip(
 
     assert len(loaded) == 2
     assert loaded[("myorg/myapp", 42)].issue_number == 42
-    assert loaded[("myorg/myapp", 42)].phase == Phase.HEARING
+    assert loaded[("myorg/myapp", 42)].phase == Phase.CLARIFY
     assert loaded[("myorg/myapp", 42)].issue_type == "feature-m"
     assert loaded[("myorg/myapp", 42)].repo == "myorg/myapp"
     assert loaded[("myorg/myapp", 55)].phase == Phase.IMPLEMENT
@@ -76,8 +76,8 @@ def test_plan_json_roundtrip(persistence: StatePersistence) -> None:
         "test_cases": ["t1"],
     }
     states = {
-        ("myorg/myapp", 1): IssueState(issue_number=1, phase=Phase.ANALYSIS, plan_json=record),
-        ("myorg/myapp", 2): IssueState(issue_number=2, phase=Phase.HEARING),
+        ("myorg/myapp", 1): IssueState(issue_number=1, phase=Phase.PLAN, plan_json=record),
+        ("myorg/myapp", 2): IssueState(issue_number=2, phase=Phase.CLARIFY),
     }
     persistence.save(states)
     loaded = persistence.load()
@@ -143,7 +143,7 @@ def test_load_unknown_phase_falls_back_to_suspended(
     data = {
         "org/repo:42": {
             "issue_number": 42,
-            "phase": "hearing",
+            "phase": "hearing",  # 旧フェーズ名 → PHASE_MIGRATION で clarify へ変換
             "issue_type": "bug",
             "repo": "org/repo",
         },
@@ -159,7 +159,7 @@ def test_load_unknown_phase_falls_back_to_suspended(
     loaded = persistence.load()
 
     assert ("org/repo", 42) in loaded
-    assert loaded[("org/repo", 42)].phase == Phase.HEARING
+    assert loaded[("org/repo", 42)].phase == Phase.CLARIFY
     assert ("org/repo", 99) in loaded  # スキップではなく SUSPENDED でロード
     assert loaded[("org/repo", 99)].phase == Phase.SUSPENDED
 
@@ -201,9 +201,9 @@ def test_load_planning_phase_falls_back_to_suspended(
     assert loaded[("org/repo", 10)].phase == Phase.SUSPENDED
     assert ("org/repo", 11) in loaded
     assert loaded[("org/repo", 11)].phase == Phase.SUSPENDED
-    # 有効なフェーズはそのまま
+    # "design" は PHASE_MIGRATION で PLAN へ変換される
     assert ("org/repo", 12) in loaded
-    assert loaded[("org/repo", 12)].phase == Phase.DESIGN
+    assert loaded[("org/repo", 12)].phase == Phase.PLAN
 
 
 def test_load_drops_removed_fields_without_dropping_entry(
@@ -269,7 +269,7 @@ def test_save_creates_parent_directories(tmp_path: Path) -> None:
 
     persistence.save(
         {
-            ("org/repo", 1): IssueState(issue_number=1, phase=Phase.HEARING, repo="org/repo"),
+            ("org/repo", 1): IssueState(issue_number=1, phase=Phase.CLARIFY, repo="org/repo"),
         }
     )
 
@@ -298,7 +298,7 @@ def test_save_overwrites_existing(
 ) -> None:
     """save()が既存ファイルを上書きすること."""
     state1: dict[IssueKey, IssueState] = {
-        ("org/repo", 42): IssueState(issue_number=42, phase=Phase.HEARING, repo="org/repo"),
+        ("org/repo", 42): IssueState(issue_number=42, phase=Phase.CLARIFY, repo="org/repo"),
     }
     state2: dict[IssueKey, IssueState] = {
         ("org/repo", 99): IssueState(issue_number=99, phase=Phase.DONE, repo="org/repo"),

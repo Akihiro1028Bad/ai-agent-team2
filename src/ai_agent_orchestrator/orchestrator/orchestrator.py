@@ -33,10 +33,11 @@ from ai_agent_orchestrator.workspace_manager import WorkspaceManager
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.config.settings import AppSettings
-    from ai_agent_orchestrator.phases.base import PhaseExecutor as PhaseExecutorBase
+    from ai_agent_orchestrator.phases.base import PhaseExecutor as PhaseExecutorBase  # noqa: F401
     from ai_agent_orchestrator.phases.dispatcher import (
         PhaseDispatcher as ConcretePhaseDispatcher,
     )
+    from ai_agent_orchestrator.phases.dispatcher import PhaseExecutorLike
 
 logger = logging.getLogger(__name__)
 
@@ -256,19 +257,13 @@ class _RealPhaseDispatcherAdapter:
         full responsibility for state transitions, so the returned result
         reports ``next_phase=None``.
         """
-        from ai_agent_orchestrator.models import Phase as PhaseEnum
         from ai_agent_orchestrator.models import TaskRequest as ModelsTaskRequest
 
-        # Convert phase string to Phase enum; use as-is if not a valid enum value
-        try:
-            phase_enum = PhaseEnum(phase.replace("_", "-"))
-        except ValueError:
-            phase_enum = PhaseEnum(phase)
-
+        # U5 (#83): TaskRequest は一本化され phase は str (ハイフン区切り)
         request = ModelsTaskRequest(
             issue_number=issue_number,
-            repo=repo,  # type: ignore[arg-type]
-            phase=phase_enum,
+            repo=repo,
+            phase=phase.replace("_", "-"),
             extra=extra or {},
         )
         await self._concrete.execute(request)
@@ -283,23 +278,22 @@ def _build_phase_executors(
     workspace: object,
     context_engine: ContextEngine,
     state_machine: object,
-) -> dict[str, PhaseExecutorBase]:
+) -> dict[str, PhaseExecutorLike]:
     """Create executor instances for every known phase.
 
     Returns:
         Mapping of phase key (underscored) to executor instance.
     """
     from ai_agent_orchestrator.phases import (
-        AnalysisExecutor,
         CiFixExecutor,
-        DesignExecutor,
-        DesignReviseExecutor,
         DoneExecutor,
-        FixExecutor,
         HearingExecutor,
         ImplementExecutor,
-        ImplReviseExecutor,
+        PlanExecutor,
+        ReviseExecutor,
+        RevisePhaseExecutor,
         SplitExecuteExecutor,
+        SplitPhaseExecutor,
         SplitProposalExecutor,
         TypeDetectionExecutor,
     )
@@ -314,19 +308,22 @@ def _build_phase_executors(
         "state_machine": state_machine,
     }
 
+    # U5 (#83): 統一パイプラインの 9 フェーズ。APPROVE / REVIEW / CLARIFY_WAIT は
+    # 人間/ポーリング待ちのゲートで executor を持たない。
     return {
-        "type_detection": TypeDetectionExecutor(**common_kwargs),  # type: ignore[arg-type]
-        "analysis": AnalysisExecutor(**common_kwargs),  # type: ignore[arg-type]
-        "fix": FixExecutor(**common_kwargs),  # type: ignore[arg-type]
-        "hearing": HearingExecutor(**common_kwargs),  # type: ignore[arg-type]
-        "design": DesignExecutor(**common_kwargs),  # type: ignore[arg-type]
-        "design_revise": DesignReviseExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "intake": TypeDetectionExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "clarify": HearingExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "plan": PlanExecutor(**common_kwargs),  # type: ignore[arg-type]
         "implement": ImplementExecutor(**common_kwargs),  # type: ignore[arg-type]
-        "ci_fix": CiFixExecutor(**common_kwargs),  # type: ignore[arg-type]
-        "impl_revise": ImplReviseExecutor(**common_kwargs),  # type: ignore[arg-type]
+        "revise": RevisePhaseExecutor(
+            review_revise=ReviseExecutor(**common_kwargs),  # type: ignore[arg-type]
+            ci_fix=CiFixExecutor(**common_kwargs),  # type: ignore[arg-type]
+        ),
+        "split": SplitPhaseExecutor(
+            proposal=SplitProposalExecutor(**common_kwargs),  # type: ignore[arg-type]
+            execute_step=SplitExecuteExecutor(**common_kwargs),  # type: ignore[arg-type]
+        ),
         "done": DoneExecutor(**common_kwargs),  # type: ignore[arg-type]
-        "split_proposal": SplitProposalExecutor(**common_kwargs),  # type: ignore[arg-type]
-        "split_execute": SplitExecuteExecutor(**common_kwargs),  # type: ignore[arg-type]
     }
 
 
@@ -700,18 +697,14 @@ class Orchestrator:
         タスクキューに投入する。
         """
         # Phases that need active processing (not waiting for human input)
+        # U5 (#83): 12 フェーズに統合済み
         active_phases = {
-            Phase("type-detection"),
-            Phase("hearing"),
-            Phase("analysis"),
-            Phase("design"),
-            Phase("design-revise"),
-            Phase("implement"),
-            Phase("fix"),
-            Phase("ci-fix"),
-            Phase("impl-revise"),
-            Phase("split-proposal"),
-            Phase("split-execute"),
+            Phase.INTAKE,
+            Phase.CLARIFY,
+            Phase.PLAN,
+            Phase.IMPLEMENT,
+            Phase.REVISE,
+            Phase.SPLIT,
         }
 
         for issue_key, state in self._state_machine._states.items():
@@ -861,18 +854,14 @@ class Orchestrator:
             # Auto-enqueue next task if the phase changed to an active phase
             # (Real executors handle transitions internally, so we check current phase)
             current_phase = self._state_machine.get_phase(issue_key)
+            # U5 (#83): 12 フェーズに統合済み
             active_phases = {
-                Phase("type-detection"),
-                Phase("hearing"),
-                Phase("analysis"),
-                Phase("design"),
-                Phase("design-revise"),
-                Phase("implement"),
-                Phase("fix"),
-                Phase("ci-fix"),
-                Phase("impl-revise"),
-                Phase("split-proposal"),
-                Phase("split-execute"),
+                Phase.INTAKE,
+                Phase.CLARIFY,
+                Phase.PLAN,
+                Phase.IMPLEMENT,
+                Phase.REVISE,
+                Phase.SPLIT,
             }
             # Compare with current task's phase (handle both hyphen and underscore)
             try:

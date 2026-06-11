@@ -168,7 +168,7 @@ class TestTypeDetectionExecutor:
 
         mock_sm.set_issue_type.assert_called_with(("org/app", 1), "bug")
         mock_github.add_label.assert_called_once()
-        mock_sm.transition.assert_called_with(("org/app", 1), "analysis")
+        mock_sm.transition.assert_called_with(("org/app", 1), "plan")
 
     async def test_detects_small_feature_as_feature_m(
         self,
@@ -205,7 +205,7 @@ class TestTypeDetectionExecutor:
         await executor.execute(request)
 
         mock_sm.set_issue_type.assert_called_with(("org/app", 1), "feature-m")
-        mock_sm.transition.assert_called_with(("org/app", 1), "hearing")
+        mock_sm.transition.assert_called_with(("org/app", 1), "clarify")
 
     async def test_fallback_detection_on_invalid_json(
         self,
@@ -321,7 +321,7 @@ class TestHearingExecutor:
         request = _make_request(phase="hearing")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(("org/app", 1), "design")
+        mock_sm.transition.assert_called_with(("org/app", 1), "plan")
 
     async def test_transitions_to_split_when_needs_split(
         self,
@@ -355,7 +355,7 @@ class TestHearingExecutor:
         request = _make_request(phase="hearing")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(("org/app", 1), "split-proposal")
+        mock_sm.transition.assert_called_with(("org/app", 1), "split")
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +364,7 @@ class TestHearingExecutor:
 
 
 class TestAnalysisExecutor:
-    """AnalysisExecutor tests."""
+    """PlanExecutor (light/bug) tests — 旧 AnalysisExecutor に相当."""
 
     async def test_posts_plan_and_transitions_to_plan_review(
         self,
@@ -376,7 +376,7 @@ class TestAnalysisExecutor:
         mock_context: AsyncMock,
         mock_sm: AsyncMock,
     ) -> None:
-        """修正方針がコメント投稿され PLAN_REVIEW に遷移する。"""
+        """修正方針がコメント投稿され APPROVE に遷移する (旧 plan-review)。"""
         mock_runner.run.return_value = AgentResult(
             session_id="s1",
             output="修正方針: null check漏れ",
@@ -384,9 +384,10 @@ class TestAnalysisExecutor:
             cost_usd=0.5,
             duration_sec=20.0,
         )
-        from ai_agent_orchestrator.phases.analysis import AnalysisExecutor
+        mock_sm.get_issue_type.return_value = "bug"  # light モード
+        from ai_agent_orchestrator.phases.plan import PlanExecutor
 
-        executor = AnalysisExecutor(
+        executor = PlanExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -395,11 +396,11 @@ class TestAnalysisExecutor:
             mock_context,
             mock_sm,
         )
-        request = _make_request(phase="analysis")
+        request = _make_request(phase="plan")
         await executor.execute(request)
 
         mock_github.create_comment.assert_called_once()
-        mock_sm.transition.assert_called_with(("org/app", 1), "plan-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "approve")
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +409,7 @@ class TestAnalysisExecutor:
 
 
 class TestDesignExecutor:
-    """DesignExecutor tests."""
+    """PlanExecutor (full/feature-m) tests — 旧 DesignExecutor に相当."""
 
     async def test_creates_design_pr_and_transitions(
         self,
@@ -420,7 +421,7 @@ class TestDesignExecutor:
         mock_context: AsyncMock,
         mock_sm: AsyncMock,
     ) -> None:
-        """設計 PR が作成され DESIGN_REVIEW に遷移する。"""
+        """設計 PR が作成され APPROVE に遷移する (旧 DESIGN_REVIEW)。"""
         mock_runner.run.return_value = AgentResult(
             session_id="s1",
             output="設計PR #5 を作成しました",
@@ -428,9 +429,10 @@ class TestDesignExecutor:
             cost_usd=1.0,
             duration_sec=60.0,
         )
-        from ai_agent_orchestrator.phases.design import DesignExecutor
+        mock_sm.get_issue_type.return_value = "feature-m"  # full モード
+        from ai_agent_orchestrator.phases.plan import PlanExecutor
 
-        executor = DesignExecutor(
+        executor = PlanExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -439,10 +441,10 @@ class TestDesignExecutor:
             mock_context,
             mock_sm,
         )
-        request = _make_request(phase="design")
+        request = _make_request(phase="plan")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "approve")
         state = mock_sm.get_state(1)
         assert state.design_pr_number == 5
 
@@ -464,9 +466,10 @@ class TestDesignExecutor:
             cost_usd=1.0,
             duration_sec=60.0,
         )
-        from ai_agent_orchestrator.phases.design import DesignExecutor
+        mock_sm.get_issue_type.return_value = "feature-m"  # full モード
+        from ai_agent_orchestrator.phases.plan import PlanExecutor
 
-        executor = DesignExecutor(
+        executor = PlanExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -475,7 +478,7 @@ class TestDesignExecutor:
             mock_context,
             mock_sm,
         )
-        request = _make_request(phase="design")
+        request = _make_request(phase="plan")
         await executor.execute(request)
 
         # create_comment が呼ばれ、@claude /review を含むコメントが投稿される
@@ -497,7 +500,7 @@ class TestDesignExecutor:
         mock_context: AsyncMock,
         mock_sm: AsyncMock,
     ) -> None:
-        """@claude /review コメント投稿失敗時も DESIGN_REVIEW 遷移が完了する。"""
+        """@claude /review コメント投稿失敗時も APPROVE 遷移が完了する (旧 DESIGN_REVIEW)。"""
         mock_runner.run.return_value = AgentResult(
             session_id="s1",
             output="設計PR #5 を作成しました",
@@ -506,9 +509,10 @@ class TestDesignExecutor:
             duration_sec=60.0,
         )
         mock_github.create_comment.side_effect = Exception("network error")
-        from ai_agent_orchestrator.phases.design import DesignExecutor
+        mock_sm.get_issue_type.return_value = "feature-m"  # full モード
+        from ai_agent_orchestrator.phases.plan import PlanExecutor
 
-        executor = DesignExecutor(
+        executor = PlanExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -517,12 +521,12 @@ class TestDesignExecutor:
             mock_context,
             mock_sm,
         )
-        request = _make_request(phase="design")
+        request = _make_request(phase="plan")
         # 例外が発生してもクラッシュしない
         await executor.execute(request)
 
-        # DESIGN_REVIEW への遷移は完了している
-        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+        # APPROVE への遷移は完了している
+        mock_sm.transition.assert_called_with(("org/app", 1), "approve")
 
     async def test_design_process_result_creates_pr_when_plan_valid(
         self,
@@ -556,9 +560,10 @@ class TestDesignExecutor:
             cost_usd=1.0,
             duration_sec=60.0,
         )
-        from ai_agent_orchestrator.phases.design import DesignExecutor
+        mock_sm.get_issue_type.return_value = "feature-m"  # full モード
+        from ai_agent_orchestrator.phases.plan import PlanExecutor
 
-        executor = DesignExecutor(
+        executor = PlanExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -567,15 +572,15 @@ class TestDesignExecutor:
             mock_context,
             mock_sm,
         )
-        request = _make_request(phase="design")
+        request = _make_request(phase="plan")
         result = mock_runner.run.return_value
         await executor.process_result(request, result)
 
         # 計画が有効なので再生成 (run_agent) は呼ばれない
         mock_runner.run.assert_not_called()
-        # phase:design-review ラベル設定・design-review 遷移・PR 作成
-        mock_github.replace_phase_label.assert_called_with(request.repo, 1, "phase:design-review")
-        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+        # phase:approve ラベル設定・approve 遷移・PR 作成
+        mock_github.replace_phase_label.assert_called_with(request.repo, 1, "phase:approve")
+        mock_sm.transition.assert_called_with(("org/app", 1), "approve")
         state = mock_sm.get_state(1)
         assert state.design_pr_number == 5
         # 警告コメントは投稿されない (@claude /review のみ)
@@ -607,9 +612,10 @@ class TestDesignExecutor:
             cost_usd=1.0,
             duration_sec=60.0,
         )
-        from ai_agent_orchestrator.phases.design import DesignExecutor
+        mock_sm.get_issue_type.return_value = "feature-m"  # full モード
+        from ai_agent_orchestrator.phases.plan import _MAX_DESIGN_REVALIDATE, PlanExecutor
 
-        executor = DesignExecutor(
+        executor = PlanExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -618,19 +624,17 @@ class TestDesignExecutor:
             mock_context,
             mock_sm,
         )
-        request = _make_request(phase="design")
+        request = _make_request(phase="plan")
         result = mock_runner.run.return_value
         await executor.process_result(request, result)
 
         # 再生成のため run_agent (FakeRunner.run) が呼ばれる (上限回数分)
-        from ai_agent_orchestrator.phases.design import _MAX_DESIGN_REVALIDATE
-
         assert mock_runner.run.call_count == _MAX_DESIGN_REVALIDATE
         # 上限到達後は警告コメントが投稿される
         warn_calls = [call for call in mock_github.create_comment.call_args_list if "検証警告" in str(call.args[2])]
         assert len(warn_calls) == 1
-        # design-review へ進む
-        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+        # approve へ進む
+        mock_sm.transition.assert_called_with(("org/app", 1), "approve")
 
     async def test_design_process_result_file_not_found_triggers_regeneration(
         self,
@@ -656,12 +660,13 @@ class TestDesignExecutor:
             cost_usd=1.0,
             duration_sec=60.0,
         )
-        from ai_agent_orchestrator.phases.design import (
+        mock_sm.get_issue_type.return_value = "feature-m"  # full モード
+        from ai_agent_orchestrator.phases.plan import (
             _MAX_DESIGN_REVALIDATE,
-            DesignExecutor,
+            PlanExecutor,
         )
 
-        executor = DesignExecutor(
+        executor = PlanExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -670,7 +675,7 @@ class TestDesignExecutor:
             mock_context,
             mock_sm,
         )
-        request = _make_request(phase="design", issue_number=1)
+        request = _make_request(phase="plan", issue_number=1)
         result = mock_runner.run.return_value
         await executor.process_result(request, result)
 
@@ -681,8 +686,8 @@ class TestDesignExecutor:
         warn_calls = [call for call in mock_github.create_comment.call_args_list if "検証警告" in str(call.args[2])]
         assert len(warn_calls) == 1, f"Expected 1 warning comment, got {len(warn_calls)}"
 
-        # それでも design-review への遷移は完了する
-        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+        # それでも approve への遷移は完了する
+        mock_sm.transition.assert_called_with(("org/app", 1), "approve")
 
 
 # ---------------------------------------------------------------------------
@@ -691,7 +696,7 @@ class TestDesignExecutor:
 
 
 class TestDesignReviseExecutor:
-    """DesignReviseExecutor tests."""
+    """ReviseExecutor tests — 旧 DesignReviseExecutor / ImplReviseExecutor に相当."""
 
     async def test_uses_resume_session(
         self,
@@ -704,12 +709,15 @@ class TestDesignReviseExecutor:
         mock_sm: AsyncMock,
     ) -> None:
         """セッション継続で実行される。"""
-        mock_sm.get_state.return_value = MagicMock(session_id="prev-session")
-        from ai_agent_orchestrator.phases.design_revise import (
-            DesignReviseExecutor,
+        mock_sm.get_state.return_value = MagicMock(
+            session_id="prev-session",
+            pr_number=None,
+            design_pr_number=None,
+            branch_head_sha=None,
         )
+        from ai_agent_orchestrator.phases.revise import ReviseExecutor
 
-        executor = DesignReviseExecutor(
+        executor = ReviseExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -718,7 +726,7 @@ class TestDesignReviseExecutor:
             mock_context,
             mock_sm,
         )
-        request = _make_request(phase="design-revise", extra={"comments": "要修正"})
+        request = _make_request(phase="revise", extra={"comments": "要修正"})
         await executor.execute(request)
 
         mock_runner.run.assert_called_once()
@@ -769,7 +777,7 @@ class TestImplementExecutor:
         request = _make_request(phase="implement")
         await executor.execute(request)
 
-        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "review")
         state = mock_sm.get_state(1)
         assert state.pr_number == 42
 
@@ -780,7 +788,7 @@ class TestImplementExecutor:
 
 
 class TestFixExecutor:
-    """FixExecutor tests."""
+    """ImplementExecutor (bug type / fix flow) tests — 旧 FixExecutor に相当."""
 
     async def test_transitions_to_impl_review(
         self,
@@ -792,7 +800,7 @@ class TestFixExecutor:
         mock_context: AsyncMock,
         mock_sm: AsyncMock,
     ) -> None:
-        """FixExecutor は修正完了後 IMPL_REVIEW に遷移する。"""
+        """bug タイプの ImplementExecutor は修正完了後 REVIEW に遷移する。"""
         mock_runner.run.return_value = AgentResult(
             session_id="s1",
             output="修正PR #7 を作成しました",
@@ -800,9 +808,10 @@ class TestFixExecutor:
             cost_usd=2.0,
             duration_sec=60.0,
         )
-        from ai_agent_orchestrator.phases.fix import FixExecutor
+        mock_sm.get_issue_type.return_value = "bug"  # fix フローを通す
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
 
-        executor = FixExecutor(
+        executor = ImplementExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -811,18 +820,14 @@ class TestFixExecutor:
             mock_context,
             mock_sm,
         )
-        request = _make_request(phase="fix")
+        request = _make_request(phase="implement")
         await executor.execute(request)
 
-        # transition to impl-review should be called
-        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
-        # tracker should record fix_complete with pr_number
-        mock_tracker.track.assert_any_call(
-            "fix_complete",
-            issue_number=1,
-            phase="fix",
-            data={"note": "impl-review に遷移", "pr_number": 7},
-        )
+        # transition to review should be called (旧 impl-review)
+        mock_sm.transition.assert_called_with(("org/app", 1), "review")
+        # tracker should record phase_end (bug type fix flow)
+        tracked_events = [c.args[0] for c in mock_tracker.track.call_args_list]
+        assert "phase_end" in tracked_events
         # PR number should be recorded
         state = mock_sm.get_state(1)
         assert state.pr_number == 7
@@ -1014,7 +1019,7 @@ class TestCiFixExecutor:
 
 
 class TestImplReviseExecutor:
-    """ImplReviseExecutor tests."""
+    """ReviseExecutor tests — 旧 ImplReviseExecutor に相当."""
 
     async def test_uses_resume_session_and_transitions(
         self,
@@ -1026,18 +1031,18 @@ class TestImplReviseExecutor:
         mock_context: AsyncMock,
         mock_sm: AsyncMock,
     ) -> None:
-        """セッション継続で実行され IMPL_REVIEW に遷移する。"""
+        """セッション継続で実行され REVIEW に遷移する (旧 IMPL_REVIEW)。"""
         mock_sm.get_state.return_value = MagicMock(
             session_id="prev-impl-session",
             pr_number=10,
             design_pr_number=10,
             branch_head_sha=None,
+            answered_review_comment_ids=[],
+            answered_review_ids=[],
         )
-        from ai_agent_orchestrator.phases.impl_revise import (
-            ImplReviseExecutor,
-        )
+        from ai_agent_orchestrator.phases.revise import ReviseExecutor
 
-        executor = ImplReviseExecutor(
+        executor = ReviseExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -1046,13 +1051,13 @@ class TestImplReviseExecutor:
             mock_context,
             mock_sm,
         )
-        request = _make_request(phase="impl-revise", extra={"comments": "変数名修正"})
+        request = _make_request(phase="revise", extra={"comments": "変数名修正"})
         await executor.execute(request)
 
         mock_runner.run.assert_called_once()
         call_kwargs = mock_runner.run.call_args.kwargs
         assert call_kwargs["resume_session_id"] == "prev-impl-session"
-        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "review")
 
     async def test_process_result_sends_completion_reply_to_each_comment(
         self,
@@ -1070,10 +1075,12 @@ class TestImplReviseExecutor:
             pr_number=10,
             design_pr_number=10,
             branch_head_sha=None,
+            answered_review_comment_ids=[],
+            answered_review_ids=[],
         )
-        from ai_agent_orchestrator.phases.impl_revise import ImplReviseExecutor
+        from ai_agent_orchestrator.phases.revise import ReviseExecutor
 
-        executor = ImplReviseExecutor(
+        executor = ReviseExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -1083,7 +1090,7 @@ class TestImplReviseExecutor:
             mock_sm,
         )
         request = _make_request(
-            phase="impl-revise",
+            phase="revise",
             extra={"comments": "変数名修正", "review_comment_ids": [101, 102]},
         )
         await executor.execute(request)
@@ -1114,10 +1121,12 @@ class TestImplReviseExecutor:
             pr_number=10,
             design_pr_number=10,
             branch_head_sha=None,
+            answered_review_comment_ids=[],
+            answered_review_ids=[],
         )
-        from ai_agent_orchestrator.phases.impl_revise import ImplReviseExecutor
+        from ai_agent_orchestrator.phases.revise import ReviseExecutor
 
-        executor = ImplReviseExecutor(
+        executor = ReviseExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -1127,14 +1136,14 @@ class TestImplReviseExecutor:
             mock_sm,
         )
         request = _make_request(
-            phase="impl-revise",
+            phase="revise",
             extra={"comments": "変数名修正", "review_comment_ids": []},
         )
         await executor.execute(request)
 
         mock_github.reply_to_review_comment.assert_not_called()
-        # IMPL_REVIEW 遷移は継続する
-        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
+        # REVIEW 遷移は継続する (旧 impl-review)
+        mock_sm.transition.assert_called_with(("org/app", 1), "review")
 
     async def test_process_result_completion_reply_failure_does_not_block_transition(
         self,
@@ -1146,17 +1155,19 @@ class TestImplReviseExecutor:
         mock_context: AsyncMock,
         mock_sm: AsyncMock,
     ) -> None:
-        """完了通知の失敗時も IMPL_REVIEW 遷移・Slack 通知は継続する。"""
+        """完了通知の失敗時も REVIEW 遷移・Slack 通知は継続する (旧 IMPL_REVIEW)。"""
         mock_sm.get_state.return_value = MagicMock(
             session_id="prev-impl-session",
             pr_number=10,
             design_pr_number=10,
             branch_head_sha=None,
+            answered_review_comment_ids=[],
+            answered_review_ids=[],
         )
         mock_github.reply_to_review_comment.side_effect = Exception("network error")
-        from ai_agent_orchestrator.phases.impl_revise import ImplReviseExecutor
+        from ai_agent_orchestrator.phases.revise import ReviseExecutor
 
-        executor = ImplReviseExecutor(
+        executor = ReviseExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -1166,14 +1177,14 @@ class TestImplReviseExecutor:
             mock_sm,
         )
         request = _make_request(
-            phase="impl-revise",
+            phase="revise",
             extra={"comments": "変数名修正", "review_comment_ids": [101]},
         )
         # 例外が発生してもクラッシュしない
         await executor.execute(request)
 
-        # IMPL_REVIEW 遷移は完了している
-        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
+        # REVIEW 遷移は完了している
+        mock_sm.transition.assert_called_with(("org/app", 1), "review")
         # Slack 通知も送られている
         mock_notifier.notify.assert_called_once()
 
@@ -1194,9 +1205,9 @@ class TestImplReviseExecutor:
             design_pr_number=10,
             branch_head_sha=None,
         )
-        from ai_agent_orchestrator.phases.impl_revise import ImplReviseExecutor
+        from ai_agent_orchestrator.phases.revise import ReviseExecutor
 
-        executor = ImplReviseExecutor(
+        executor = ReviseExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -1206,7 +1217,7 @@ class TestImplReviseExecutor:
             mock_sm,
         )
         request = _make_request(
-            phase="impl-revise",
+            phase="revise",
             extra={
                 "comments": "指摘A\n指摘B",
                 "review_comment_ids": [101, 102, 103],
@@ -1522,10 +1533,11 @@ class TestEnsurePrCreated:
         existing_pr = MagicMock()
         existing_pr.number = 99
         mock_github.list_pull_requests.return_value = [existing_pr]
+        mock_sm.get_issue_type.return_value = "bug"
 
-        from ai_agent_orchestrator.phases.fix import FixExecutor
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
 
-        executor = FixExecutor(
+        executor = ImplementExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -1534,11 +1546,11 @@ class TestEnsurePrCreated:
             mock_context,
             mock_sm,
         )
-        request = _make_request(phase="fix")
+        request = _make_request(phase="implement")
         await executor.execute(request)
 
-        # 既存PRが見つかるのでimpl-reviewに遷移
-        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
+        # 既存PRが見つかるのでreviewに遷移 (旧 impl-review)
+        mock_sm.transition.assert_called_with(("org/app", 1), "review")
         state = mock_sm.get_state(1)
         assert state.pr_number == 99
 
@@ -1584,9 +1596,9 @@ class TestEnsurePrCreated:
         request.repo.base_branch = "main"
         await executor.execute(request)
 
-        # APIでPR作成 → impl-reviewに遷移
+        # APIでPR作成 → reviewに遷移 (旧 impl-review)
         mock_github.create_pull_request.assert_called_once()
-        mock_sm.transition.assert_called_with(("org/app", 1), "impl-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "review")
         state = mock_sm.get_state(1)
         assert state.pr_number == 101
 
@@ -1600,7 +1612,7 @@ class TestEnsurePrCreated:
         mock_context: AsyncMock,
         mock_sm: AsyncMock,
     ) -> None:
-        """設計フェーズでもフォールバックPR作成が動作する。"""
+        """設計フェーズ（PlanExecutor/feature-m）でもフォールバックPR作成が動作する。"""
         mock_runner.run.return_value = AgentResult(
             session_id="s1",
             output="設計書を作成しました",  # PR番号なし
@@ -1612,10 +1624,11 @@ class TestEnsurePrCreated:
         created_pr = MagicMock()
         created_pr.number = 55
         mock_github.create_pull_request.return_value = created_pr
+        mock_sm.get_issue_type.return_value = "feature-m"
 
-        from ai_agent_orchestrator.phases.design import DesignExecutor
+        from ai_agent_orchestrator.phases.plan import PlanExecutor
 
-        executor = DesignExecutor(
+        executor = PlanExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -1624,12 +1637,12 @@ class TestEnsurePrCreated:
             mock_context,
             mock_sm,
         )
-        request = _make_request(phase="design")
+        request = _make_request(phase="plan")
         request.repo.base_branch = "main"
         await executor.execute(request)
 
         mock_github.create_pull_request.assert_called_once()
-        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "approve")
         state = mock_sm.get_state(1)
         assert state.design_pr_number == 55
 
@@ -1654,10 +1667,11 @@ class TestEnsurePrCreated:
         # 全て失敗
         mock_github.list_pull_requests.side_effect = Exception("API error")
         mock_github.create_pull_request.side_effect = Exception("Create failed")
+        mock_sm.get_issue_type.return_value = "bug"
 
-        from ai_agent_orchestrator.phases.fix import FixExecutor
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
 
-        executor = FixExecutor(
+        executor = ImplementExecutor(
             mock_runner,
             mock_github,
             mock_notifier,
@@ -1666,7 +1680,7 @@ class TestEnsurePrCreated:
             mock_context,
             mock_sm,
         )
-        request = _make_request(phase="fix")
+        request = _make_request(phase="implement")
         await executor.execute(request)
 
         # RuntimeError → _handle_error → suspended
@@ -1701,12 +1715,12 @@ class TestExtractPrNumber:
 
 
 class TestHearingWaitTransition:
-    """hearing 質問投稿後に hearing-wait へ遷移するテスト."""
+    """hearing 質問投稿後に clarify-wait へ遷移するテスト (旧 hearing-wait)."""
 
     async def test_hearing_question_transitions_to_hearing_wait(
         self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
     ):
-        """質問投稿後に hearing-wait へ遷移する."""
+        """質問投稿後に clarify-wait へ遷移する (旧 hearing-wait)."""
         from ai_agent_orchestrator.phases.hearing import HearingExecutor
 
         mock_sm.get_state.return_value = MagicMock(session_id=None)
@@ -1732,12 +1746,12 @@ class TestHearingWaitTransition:
         )
         await executor.process_result(request, result)
 
-        # hearing-wait へ遷移したことを確認
-        mock_sm.transition.assert_called_once_with(("org/app", 42), "hearing-wait")
-        # ラベルが hearing-wait に更新されたことを確認
+        # clarify-wait へ遷移したことを確認 (旧 hearing-wait)
+        mock_sm.transition.assert_called_once_with(("org/app", 42), "clarify-wait")
+        # ラベルが clarify-wait に更新されたことを確認
         mock_github.replace_phase_label.assert_called_once()
         label_args = mock_github.replace_phase_label.call_args
-        assert "phase:hearing-wait" in str(label_args)
+        assert "phase:clarify-wait" in str(label_args)
 
 
 # ---------------------------------------------------------------------------
@@ -1746,13 +1760,13 @@ class TestHearingWaitTransition:
 
 
 class TestDesignPrLookup:
-    """design フェーズの PR 検索テスト."""
+    """plan フェーズ (feature-m) の PR 検索テスト — 旧 design フェーズ."""
 
     async def test_ensure_pr_created_finds_feature_branch_pr(
         self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
     ):
         """feature/issue-XX ブランチの PR を正しく検索できる."""
-        from ai_agent_orchestrator.phases.design import DesignExecutor
+        from ai_agent_orchestrator.phases.plan import PlanExecutor
 
         mock_sm.get_state.return_value = MagicMock(
             session_id=None,
@@ -1760,6 +1774,7 @@ class TestDesignPrLookup:
             pr_number=None,
             branch_head_sha=None,
         )
+        mock_sm.get_issue_type.return_value = "feature-m"
 
         mock_pr = MagicMock()
         mock_pr.number = 99
@@ -1768,7 +1783,7 @@ class TestDesignPrLookup:
         mock_github.replace_phase_label = AsyncMock()
         mock_sm.transition = AsyncMock()
 
-        executor = DesignExecutor(
+        executor = PlanExecutor(
             runner=mock_runner,
             account_manager=mock_github,
             notifier=mock_notifier,
@@ -1778,7 +1793,7 @@ class TestDesignPrLookup:
             state_machine=mock_sm,
         )
 
-        request = _make_request("design", issue_number=42)
+        request = _make_request("plan", issue_number=42)
         result = AgentResult(
             session_id="sess-001",
             output="設計書を作成しました。",
@@ -1808,10 +1823,11 @@ class TestEnsurePrCreatedFallback:
         # 2nd call (feature/issue-42): found → [mock_pr]
         mock_github.list_pull_requests = AsyncMock(side_effect=[[], [mock_pr]])
         mock_github.get_issue = AsyncMock(return_value=MagicMock(title="Test"))
+        mock_sm.get_issue_type.return_value = "feature-m"
 
-        from ai_agent_orchestrator.phases.design import DesignExecutor
+        from ai_agent_orchestrator.phases.plan import PlanExecutor
 
-        executor = DesignExecutor(
+        executor = PlanExecutor(
             runner=mock_runner,
             account_manager=mock_github,
             notifier=mock_notifier,
@@ -1821,7 +1837,7 @@ class TestEnsurePrCreatedFallback:
             state_machine=mock_sm,
         )
 
-        request = _make_request("design", issue_number=42)
+        request = _make_request("plan", issue_number=42)
         pr_number = await executor._ensure_pr_created(
             request,
             "no PR number here",
@@ -1843,13 +1859,14 @@ class TestHandleErrorObservability:
         self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
     ):
         """_handle_error が phase_suspended イベントを events.jsonl に記録する。"""
-        from ai_agent_orchestrator.phases.fix import FixExecutor
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
 
         mock_sm.get_phase.return_value = None  # DONE でない
         mock_sm.get_state.return_value = MagicMock(session_id=None, branch_head_sha=None)
+        mock_sm.get_issue_type.return_value = "bug"
         mock_runner.run.side_effect = RuntimeError("テストエラー")
 
-        executor = FixExecutor(
+        executor = ImplementExecutor(
             runner=mock_runner,
             account_manager=mock_github,
             notifier=mock_notifier,
@@ -1858,7 +1875,7 @@ class TestHandleErrorObservability:
             context_engine=mock_context,
             state_machine=mock_sm,
         )
-        request = _make_request(phase="fix")
+        request = _make_request(phase="implement")
         await executor.execute(request)
 
         # phase_suspended イベントが記録されていること
@@ -1881,14 +1898,15 @@ class TestHandleErrorObservability:
         self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
     ):
         """_handle_error は create_comment が失敗しても suspended 遷移を完了する。"""
-        from ai_agent_orchestrator.phases.fix import FixExecutor
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
 
         mock_sm.get_phase.return_value = None
         mock_sm.get_state.return_value = MagicMock(session_id=None, branch_head_sha=None)
+        mock_sm.get_issue_type.return_value = "bug"
         mock_runner.run.side_effect = RuntimeError("テストエラー")
         mock_github.create_comment.side_effect = Exception("GitHub API エラー")
 
-        executor = FixExecutor(
+        executor = ImplementExecutor(
             runner=mock_runner,
             account_manager=mock_github,
             notifier=mock_notifier,
@@ -1897,7 +1915,7 @@ class TestHandleErrorObservability:
             context_engine=mock_context,
             state_machine=mock_sm,
         )
-        request = _make_request(phase="fix")
+        request = _make_request(phase="implement")
 
         # create_comment が失敗しても例外が伝播しないこと
         await executor.execute(request)
@@ -1909,14 +1927,15 @@ class TestHandleErrorObservability:
         self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
     ):
         """_handle_error は notifier が失敗しても suspended 遷移を完了する。"""
-        from ai_agent_orchestrator.phases.fix import FixExecutor
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
 
         mock_sm.get_phase.return_value = None
         mock_sm.get_state.return_value = MagicMock(session_id=None, branch_head_sha=None)
+        mock_sm.get_issue_type.return_value = "bug"
         mock_runner.run.side_effect = RuntimeError("テストエラー")
         mock_notifier.notify.side_effect = Exception("Slack 接続エラー")
 
-        executor = FixExecutor(
+        executor = ImplementExecutor(
             runner=mock_runner,
             account_manager=mock_github,
             notifier=mock_notifier,
@@ -1925,7 +1944,7 @@ class TestHandleErrorObservability:
             context_engine=mock_context,
             state_machine=mock_sm,
         )
-        request = _make_request(phase="fix")
+        request = _make_request(phase="implement")
         await executor.execute(request)
 
         mock_sm.transition.assert_called_with(("org/app", 1), "suspended")
@@ -1934,13 +1953,14 @@ class TestHandleErrorObservability:
         self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
     ):
         """_handle_timeout が phase_suspended イベントを events.jsonl に記録する。"""
-        from ai_agent_orchestrator.phases.fix import FixExecutor
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
 
         mock_sm.get_phase.return_value = None
         mock_sm.get_state.return_value = MagicMock(session_id=None, branch_head_sha=None)
+        mock_sm.get_issue_type.return_value = "bug"
         mock_runner.run.side_effect = TimeoutError()
 
-        executor = FixExecutor(
+        executor = ImplementExecutor(
             runner=mock_runner,
             account_manager=mock_github,
             notifier=mock_notifier,
@@ -1949,7 +1969,7 @@ class TestHandleErrorObservability:
             context_engine=mock_context,
             state_machine=mock_sm,
         )
-        request = _make_request(phase="fix")
+        request = _make_request(phase="implement")
         await executor.execute(request)
 
         tracked_calls = [str(c) for c in mock_tracker.track.call_args_list]
@@ -1966,13 +1986,14 @@ class TestHandleErrorObservability:
         self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
     ):
         """_handle_timeout が Issue にタイムアウトコメントを投稿する。"""
-        from ai_agent_orchestrator.phases.fix import FixExecutor
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
 
         mock_sm.get_phase.return_value = None
         mock_sm.get_state.return_value = MagicMock(session_id=None, branch_head_sha=None)
+        mock_sm.get_issue_type.return_value = "bug"
         mock_runner.run.side_effect = TimeoutError()
 
-        executor = FixExecutor(
+        executor = ImplementExecutor(
             runner=mock_runner,
             account_manager=mock_github,
             notifier=mock_notifier,
@@ -1981,7 +2002,7 @@ class TestHandleErrorObservability:
             context_engine=mock_context,
             state_machine=mock_sm,
         )
-        request = _make_request(phase="fix")
+        request = _make_request(phase="implement")
         await executor.execute(request)
 
         mock_github.create_comment.assert_called_once()

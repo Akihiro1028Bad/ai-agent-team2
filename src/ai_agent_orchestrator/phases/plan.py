@@ -52,20 +52,20 @@ _DESIGN_REVIEW_PROMPT = """\
 """
 
 
-def plan_depth_for(request: TaskRequest) -> str:
-    """リクエストの plan_depth を導出する。
+def plan_depth_for(issue_type: str) -> str:
+    """issue_type から plan_depth を導出する (U5 #83 ブリッジ)。
 
-    Phase enum を変更しない U3 段階では旧フェーズ名から導出する
-    (analysis → light / design → full)。#83 でパラメータ駆動に切り替える。
+    統一パイプラインでは PLAN フェーズが light/full を包含するため、
+    深さは issue_type から導出する (bug → light / それ以外 → full)。
+    完全なパラメータ駆動化 (INTAKE がパラメータを付与) は #95 で行う。
 
     Args:
-        request: タスクリクエスト。
+        issue_type: "bug" | "feature-m" | "feature-l" | ""。
 
     Returns:
         "light" または "full"。
     """
-    value = request.phase.value if hasattr(request.phase, "value") else str(request.phase)
-    return "light" if value.replace("_", "-").lower() == "analysis" else "full"
+    return "light" if issue_type == "bug" else "full"
 
 
 class PlanExecutor(PhaseExecutor):
@@ -86,7 +86,7 @@ class PlanExecutor(PhaseExecutor):
         Returns:
             プロンプト文字列。
         """
-        if plan_depth_for(request) == "light":
+        if self._depth(request) == "light":
             return await self._build_light_prompt(request)
         return await self._build_full_prompt(request)
 
@@ -97,10 +97,14 @@ class PlanExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
-        if plan_depth_for(request) == "light":
+        if self._depth(request) == "light":
             await self._process_light_result(request, result)
         else:
             await self._process_full_result(request, result)
+
+    def _depth(self, request: TaskRequest) -> str:
+        """state の issue_type から plan_depth を導出する."""
+        return plan_depth_for(self._sm.get_issue_type(self._issue_key(request)))
 
     # ------------------------------------------------------------------
     # light (旧 analysis) フロー
@@ -151,8 +155,8 @@ class PlanExecutor(PhaseExecutor):
         )
         comment_body += next_action_footer("analysis")
         await client.create_comment(request.repo, request.issue_number, comment_body)
-        await client.replace_phase_label(request.repo, request.issue_number, "phase:plan-review")
-        await self._sm.transition(self._issue_key(request), "plan-review")
+        await client.replace_phase_label(request.repo, request.issue_number, "phase:approve")
+        await self._sm.transition(self._issue_key(request), "approve")
         issue = await client.get_issue(request.repo, request.issue_number)
         repo_full_name = self._get_repo_full_name(request)
         await self._notifier.notify(
@@ -283,8 +287,8 @@ class PlanExecutor(PhaseExecutor):
             state.session_id = result.session_id
 
         client = await self._get_client(request.repo)
-        await client.replace_phase_label(request.repo, request.issue_number, "phase:design-review")
-        await self._sm.transition(self._issue_key(request), "design-review")
+        await client.replace_phase_label(request.repo, request.issue_number, "phase:approve")
+        await self._sm.transition(self._issue_key(request), "approve")
         await self._post_design_review_comment(request, pr_number, client)
         repo_full_name = self._get_repo_full_name(request)
         pr_url = self._build_pr_url(request, pr_number)

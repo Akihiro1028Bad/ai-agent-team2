@@ -60,11 +60,14 @@ class TypeDetectionExecutor(PhaseExecutor):
             request: タスクリクエスト。
             result: エージェント実行結果。
         """
+        valid_types = {"bug", "feature-m", "feature-l"}
         parsed = self._extract_json(result.output)
-        if parsed and "type" in parsed:
+        if parsed and parsed.get("type") in valid_types:
             issue_type: str = parsed["type"]
             reason: str = parsed.get("reason", "AIが判定")
         else:
+            # JSON なし or AI が許可外タイプ ("feature" 等) を返した場合は
+            # フォールバック判定へ (set_issue_type の ValueError 回避)
             issue_type = self._fallback_detection(result.output)
             reason = "AI出力のパースに失敗、フォールバック判定"
 
@@ -86,11 +89,12 @@ class TypeDetectionExecutor(PhaseExecutor):
 
         # タイプ別次フェーズへ遷移
         next_phase_map: dict[str, str] = {
-            "bug": "analysis",
-            "feature-m": "hearing",
-            "feature-l": "hearing",
+            # U5 (#83): 情報が明確な bug は PLAN へ直行、feature はヒアリング (CLARIFY) へ
+            "bug": "plan",
+            "feature-m": "clarify",
+            "feature-l": "clarify",
         }
-        next_phase = next_phase_map.get(issue_type, "hearing")
+        next_phase = next_phase_map.get(issue_type, "clarify")
         await client.replace_phase_label(request.repo, request.issue_number, f"phase:{next_phase}")
         await self._sm.transition(self._issue_key(request), next_phase)
 

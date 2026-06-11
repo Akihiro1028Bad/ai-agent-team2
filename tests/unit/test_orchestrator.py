@@ -260,7 +260,7 @@ class TestExecuteTask:
         settings = _make_settings(tmp_path)
 
         phase_result = MagicMock()
-        phase_result.next_phase = Phase.ANALYSIS.value
+        phase_result.next_phase = Phase.PLAN.value
         phase_result.output_summary = "done"
         phase_result.cost_usd = 0.1
 
@@ -284,7 +284,7 @@ class TestExecuteTask:
 
         await orch._execute_task(task)
 
-        assert orch.state_machine.get_phase(("test-owner/test-repo", 42)) == Phase.ANALYSIS
+        assert orch.state_machine.get_phase(("test-owner/test-repo", 42)) == Phase.PLAN
 
     async def test_execute_task_handles_error_and_suspends(self, tmp_path: Path) -> None:
         """dispatch でエラーが発生した場合に SUSPENDED に遷移すること."""
@@ -302,15 +302,15 @@ class TestExecuteTask:
             phase_dispatcher=dispatcher,
             notifier=notifier,
         )
-        # Register issue and move to ANALYSIS (which can transition to SUSPENDED)
+        # Register issue and move to PLAN (which can transition to SUSPENDED)
         orch.state_machine.register_issue(42, "test-owner/test-repo")
         orch.state_machine.set_issue_type(("test-owner/test-repo", 42), "bug")
-        await orch.state_machine.transition(("test-owner/test-repo", 42), Phase.ANALYSIS)
+        await orch.state_machine.transition(("test-owner/test-repo", 42), Phase.PLAN)
 
         task = TaskRequest(
             issue_number=42,
             repo=FakeRepo(),
-            phase="analysis",
+            phase="plan",
             extra={},
         )
 
@@ -528,5 +528,5 @@ class TestDispatchExtraForwarding:
         from ai_agent_orchestrator.models import Phase
         from ai_agent_orchestrator.models import TaskRequest as ModelsTaskRequest
 
-        req = ModelsTaskRequest(issue_number=1, repo="org/app", phase=Phase.IMPL_REVISE)
+        req = ModelsTaskRequest(issue_number=1, repo="org/app", phase=Phase.REVISE)
         assert req.extra == {}

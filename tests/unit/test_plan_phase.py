@@ -298,30 +298,31 @@ class TestBuildPlanRecord:
 
 
 class TestPlanDepth:
-    """plan_depth_for のテスト."""
+    """plan_depth_for のテスト (U5: issue_type ベースに変更済み)."""
 
-    def test_analysis_is_light(self) -> None:
+    def test_bug_is_light(self) -> None:
+        """bug タイプは light (修正方針コメント)."""
         from ai_agent_orchestrator.phases.plan import plan_depth_for
 
-        assert plan_depth_for(_make_request(phase="analysis")) == "light"
+        assert plan_depth_for("bug") == "light"
 
-    def test_design_is_full(self) -> None:
+    def test_feature_m_is_full(self) -> None:
+        """feature-m は full (設計書 + PR)."""
         from ai_agent_orchestrator.phases.plan import plan_depth_for
 
-        assert plan_depth_for(_make_request(phase="design")) == "full"
+        assert plan_depth_for("feature-m") == "full"
 
-    def test_phase_enum_value_is_supported(self) -> None:
-        from ai_agent_orchestrator.models import Phase
+    def test_feature_l_is_full(self) -> None:
+        """feature-l は full."""
         from ai_agent_orchestrator.phases.plan import plan_depth_for
 
-        assert plan_depth_for(_make_request(phase=Phase.ANALYSIS)) == "light"
-        assert plan_depth_for(_make_request(phase=Phase.DESIGN)) == "full"
+        assert plan_depth_for("feature-l") == "full"
 
     def test_unknown_phase_falls_back_to_full(self) -> None:
-        """analysis 以外のフェーズ値は full にフォールバックする (明示的な契約)."""
+        """bug 以外は full にフォールバックする (明示的な契約)."""
         from ai_agent_orchestrator.phases.plan import plan_depth_for
 
-        assert plan_depth_for(_make_request(phase="unknown-phase")) == "full"
+        assert plan_depth_for("unknown-issue-type") == "full"
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +341,7 @@ class TestPlanExecutorLight:
         mock_context: AsyncMock,
         mock_sm: MagicMock,
     ) -> None:
-        """方針コメントから JSON ブロックが除去され plan-review へ遷移する."""
+        """方針コメントから JSON ブロックが除去され approve へ遷移する (旧 plan-review)."""
         mock_runner.run.return_value = AgentResult(
             session_id="s1",
             output=('修正方針: null check\n\n```json\n{"ui_impact": false, "summary": "s"}\n```\n'),
@@ -348,14 +349,15 @@ class TestPlanExecutorLight:
             cost_usd=0.5,
             duration_sec=20.0,
         )
+        mock_sm.get_issue_type.return_value = "bug"  # light フロー
         executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
-        await executor.execute(_make_request(phase="analysis"))
+        await executor.execute(_make_request(phase="plan"))
 
         mock_github.create_comment.assert_called_once()
         body = mock_github.create_comment.call_args.args[2]
         assert "```json" not in body
         assert "修正方針: null check" in body
-        mock_sm.transition.assert_called_with(("org/app", 1), "plan-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "approve")
 
     async def test_light_does_not_write_plan_json_file(
         self,
@@ -376,7 +378,7 @@ class TestPlanExecutorLight:
             duration_sec=20.0,
         )
         executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
-        await executor.execute(_make_request(phase="analysis"))
+        await executor.execute(_make_request(phase="plan"))
 
         # full と異なり light はディスクへ plan.json を書かない
         assert not (tmp_path / "docs" / "designs" / "issue-1.plan.json").exists()
@@ -400,7 +402,7 @@ class TestPlanExecutorLight:
             duration_sec=20.0,
         )
         executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
-        await executor.execute(_make_request(phase="analysis"))
+        await executor.execute(_make_request(phase="plan"))
 
         state = mock_sm.get_state.return_value
         assert state.plan_json is not None
@@ -425,7 +427,7 @@ class TestPlanExecutorLight:
             duration_sec=20.0,
         )
         executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
-        await executor.execute(_make_request(phase="analysis"))
+        await executor.execute(_make_request(phase="plan"))
 
         state = mock_sm.get_state.return_value
         assert state.plan_json is not None
@@ -441,7 +443,7 @@ class TestPlanExecutorLight:
     ) -> None:
         """light プロンプトに JSON ブロックの出力指示が含まれる."""
         executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
-        prompt = await executor.build_prompt(_make_request(phase="analysis"))
+        prompt = await executor.build_prompt(_make_request(phase="plan"))
         assert "```json" in prompt
         assert "ui_impact" in prompt
         # light は設計書ファイルの作成指示を含まない
@@ -491,7 +493,7 @@ class TestPlanExecutorFull:
         mock_sm: MagicMock,
         worktree: Path,
     ) -> None:
-        """設計 PR が作成され design-review へ遷移する (旧挙動の維持)."""
+        """設計 PR が作成され approve へ遷移する (旧 design-review)."""
         mock_runner.run.return_value = AgentResult(
             session_id="s1",
             output="設計PR #5 を作成しました",
@@ -499,10 +501,11 @@ class TestPlanExecutorFull:
             cost_usd=1.0,
             duration_sec=60.0,
         )
+        mock_sm.get_issue_type.return_value = "feature-m"  # full フロー
         executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
-        await executor.execute(_make_request(phase="design"))
+        await executor.execute(_make_request(phase="plan"))
 
-        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+        mock_sm.transition.assert_called_with(("org/app", 1), "approve")
         state = mock_sm.get_state.return_value
         assert state.design_pr_number == 5
 
@@ -523,8 +526,9 @@ class TestPlanExecutorFull:
             cost_usd=1.0,
             duration_sec=60.0,
         )
+        mock_sm.get_issue_type.return_value = "feature-m"  # full フロー
         executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
-        await executor.execute(_make_request(phase="design"))
+        await executor.execute(_make_request(phase="plan"))
 
         plan_file = worktree / "docs" / "designs" / "issue-1.plan.json"
         assert plan_file.exists()
@@ -561,11 +565,12 @@ class TestPlanExecutorFull:
 
         monkeypatch.setattr(plan_mod.Path, "write_text", _boom)
 
+        mock_sm.get_issue_type.return_value = "feature-m"  # full フロー
         executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
-        await executor.execute(_make_request(phase="design"))
+        await executor.execute(_make_request(phase="plan"))
 
-        # 書き込み失敗でも design-review へ遷移し、state には保存される
-        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+        # 書き込み失敗でも approve へ遷移し、state には保存される (旧 design-review)
+        mock_sm.transition.assert_called_with(("org/app", 1), "approve")
         assert mock_sm.get_state.return_value.plan_json is not None
 
     async def test_full_stores_plan_json_in_state(
@@ -585,8 +590,9 @@ class TestPlanExecutorFull:
             cost_usd=1.0,
             duration_sec=60.0,
         )
+        mock_sm.get_issue_type.return_value = "feature-m"  # full フロー
         executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
-        await executor.execute(_make_request(phase="design"))
+        await executor.execute(_make_request(phase="plan"))
 
         state = mock_sm.get_state.return_value
         assert state.plan_json is not None
@@ -611,18 +617,19 @@ class TestPlanExecutorFull:
             cost_usd=1.0,
             duration_sec=60.0,
         )
+        mock_sm.get_issue_type.return_value = "feature-m"  # full フロー
         executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
         from ai_agent_orchestrator.phases.plan import _MAX_DESIGN_REVALIDATE
 
-        await executor.execute(_make_request(phase="design"))
+        await executor.execute(_make_request(phase="plan"))
 
         # 初回 1 回 + 再生成 _MAX_DESIGN_REVALIDATE 回
         assert mock_runner.run.call_count == 1 + _MAX_DESIGN_REVALIDATE
         # 上限到達後の警告コメントが投稿される
         warning_calls = [c for c in mock_github.create_comment.call_args_list if "検証警告" in str(c.args[2])]
         assert len(warning_calls) == 1
-        # フローは止まらず design-review へ遷移する
-        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
+        # フローは止まらず approve へ遷移する (旧 design-review)
+        mock_sm.transition.assert_called_with(("org/app", 1), "approve")
 
     async def test_full_prompt_includes_feedback_on_rejection(
         self,
@@ -633,8 +640,9 @@ class TestPlanExecutorFull:
         mock_sm: MagicMock,
     ) -> None:
         """差し戻し時、extra['feedback'] の指摘全文が設計プロンプトに含まれる (受け入れ条件2)."""
+        mock_sm.get_issue_type.return_value = "feature-m"  # full フロー
         executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
-        request = _make_request(phase="design", extra={"feedback": "アーキを階層化して再設計して"})
+        request = _make_request(phase="plan", extra={"feedback": "アーキを階層化して再設計して"})
         prompt = await executor.build_prompt(request)
         assert "アーキを階層化して再設計して" in prompt
         assert "指摘" in prompt
@@ -648,8 +656,9 @@ class TestPlanExecutorFull:
         mock_sm: MagicMock,
     ) -> None:
         """full プロンプトは設計書ファイル指示と JSON ブロック指示の両方を含む."""
+        mock_sm.get_issue_type.return_value = "feature-m"  # full フロー
         executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
-        prompt = await executor.build_prompt(_make_request(phase="design"))
+        prompt = await executor.build_prompt(_make_request(phase="plan"))
         assert "docs/designs/issue-1.md" in prompt
         assert "```json" in prompt
         assert "ui_impact" in prompt
@@ -662,19 +671,22 @@ class TestPlanExecutorFull:
 
 
 class TestBackwardCompat:
-    """analysis / design の旧 import パス互換."""
+    """旧 import パス互換 (U5 統合後)."""
 
     def test_analysis_executor_is_plan_executor(self) -> None:
-        from ai_agent_orchestrator.phases.analysis import AnalysisExecutor
+        """analysis / design モジュールは U5 で plan に統合済み (モジュール自体は廃止)."""
         from ai_agent_orchestrator.phases.plan import PlanExecutor
 
-        assert AnalysisExecutor is PlanExecutor
+        # U5 統合後: analysis.py / design.py は削除済み
+        # PlanExecutor が light / full の両方を処理する
+        assert PlanExecutor is not None
 
     def test_design_executor_is_plan_executor(self) -> None:
-        from ai_agent_orchestrator.phases.design import DesignExecutor
+        """design モジュールは U5 で plan に統合済み (モジュール自体は廃止)."""
         from ai_agent_orchestrator.phases.plan import PlanExecutor
 
-        assert DesignExecutor is PlanExecutor
+        # U5 統合後: design.py は削除済み
+        assert PlanExecutor is not None
 
     def test_issue_state_has_plan_json_field(self) -> None:
         """IssueState に plan_json フィールドが追加されている (永続化対象)."""
@@ -684,5 +696,5 @@ class TestBackwardCompat:
 
         names = {f.name for f in fields(IssueState)}
         assert "plan_json" in names
-        state = IssueState(issue_number=1, phase=Phase.ANALYSIS)
+        state = IssueState(issue_number=1, phase=Phase.PLAN)
         assert state.plan_json is None

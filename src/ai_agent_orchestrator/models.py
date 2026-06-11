@@ -57,41 +57,53 @@ class IssueType(StrEnum):
 
 
 class Phase(str, Enum):  # noqa: UP042
-    """Issueのフェーズ."""
+    """Issueのフェーズ (U5 #83: 9 フェーズ統一パイプライン).
 
-    # タイプ判定
-    TYPE_DETECTION = "type-detection"
+    タイプ別分岐 (Bug/Feature-M/L) はフェーズではなくパラメータ
+    (plan_depth / needs_split / approval_style) で表現する。
+    全タイプが INTAKE → CLARIFY → (SPLIT) → PLAN → APPROVE →
+    IMPLEMENT → REVIEW → (REVISE) → DONE の 1 本道を流れる。
+    """
 
-    # Bug専用
-    ANALYSIS = "analysis"
-    FIX = "fix"
+    # 統一パイプライン (9 フェーズ)
+    INTAKE = "intake"  # 規模・性質の判定とパラメータ付与 (旧 type-detection)
+    CLARIFY = "clarify"  # 要件ヒアリング (旧 hearing)
+    SPLIT = "split"  # 分割提案→承認→実行 (旧 split-proposal/split-execute)
+    PLAN = "plan"  # 計画/設計書の生成 (旧 analysis/design)
+    APPROVE = "approve"  # 計画承認ゲート (旧 plan-review/design-review)
+    IMPLEMENT = "implement"  # 実装 (旧 fix/implement)
+    REVIEW = "review"  # CI + 人間レビューゲート (旧 impl-review)
+    REVISE = "revise"  # 修正対応 (旧 design-revise/impl-revise/ci-fix)
+    DONE = "done"  # 完了
 
-    # Bug: 方針レビュー
-    PLAN_REVIEW = "plan-review"
+    # 補助状態
+    CLARIFY_WAIT = "clarify-wait"  # ヒアリング回答待ち (旧 hearing-wait)
+    BLOCKED = "blocked"  # 依存待ち
+    SUSPENDED = "suspended"  # 失敗時の手動復帰待ち
 
-    # Feature-M/L共通
-    HEARING = "hearing"
-    HEARING_WAIT = "hearing-wait"
-    DESIGN = "design"
-    DESIGN_REVIEW = "design-review"
-    DESIGN_REVISE = "design-revise"
 
-    # Feature-L専用
-    SPLIT_PROPOSAL = "split-proposal"
-    SPLIT_EXECUTE = "split-execute"
-
-    # 依存待ち
-    BLOCKED = "blocked"
-
-    # 共通フェーズ
-    IMPLEMENT = "implement"
-    CI_FIX = "ci-fix"
-    IMPL_REVIEW = "impl-review"
-    IMPL_REVISE = "impl-revise"
-
-    # 終了状態
-    DONE = "done"
-    SUSPENDED = "suspended"
+# 旧フェーズ名 → 新フェーズの読み替え表 (state.json マイグレーション用)。
+# 旧 18 値すべてを網羅し、稼働中 Issue を取りこぼさない。
+PHASE_MIGRATION: dict[str, Phase] = {
+    "type-detection": Phase.INTAKE,
+    "hearing": Phase.CLARIFY,
+    "hearing-wait": Phase.CLARIFY_WAIT,
+    "analysis": Phase.PLAN,
+    "design": Phase.PLAN,
+    "design-revise": Phase.PLAN,  # 設計修正中 = 再設計 (U4 で PLAN 差し戻しに統一済み)
+    "plan-review": Phase.APPROVE,
+    "design-review": Phase.APPROVE,
+    "fix": Phase.IMPLEMENT,
+    "implement": Phase.IMPLEMENT,
+    "ci-fix": Phase.REVISE,
+    "impl-review": Phase.REVIEW,
+    "impl-revise": Phase.REVISE,
+    "split-proposal": Phase.SPLIT,
+    "split-execute": Phase.SPLIT,
+    "blocked": Phase.BLOCKED,
+    "done": Phase.DONE,
+    "suspended": Phase.SUSPENDED,
+}
 
 
 class EventType(str, Enum):  # noqa: UP042
@@ -176,19 +188,33 @@ class PhaseContext:
 
 @dataclass
 class TaskRequest:
-    """タスク実行リクエスト."""
+    """タスク実行リクエスト (U5 #83 で task_queue.TaskRequest と一本化).
+
+    asyncio.PriorityQueue で比較可能にするため __lt__ を実装。
+    phase は Phase enum の .value (str)。repo は RepositoryConfig 相当
+    (.owner / .repo を持つオブジェクト)。
+    """
 
     issue_number: int
-    repo: str
-    phase: Phase
+    repo: Any  # RepositoryConfig 相当 (.owner / .repo を持つ)
+    phase: str
     priority: int = 5
-    # フェーズ実行に必要な付帯情報 (review_comment_ids / ci_logs 等)。
-    # task_queue.TaskRequest.extra から dispatch 経由で透過される
+    # フェーズ実行に必要な付帯情報 (feedback / review_comment_ids / ci_logs 等)
     extra: dict[str, Any] = field(default_factory=dict)
 
     def __lt__(self, other: TaskRequest) -> bool:
         """PriorityQueue での優先度比較。値が小さいほど優先。"""
         return self.priority < other.priority
+
+    @property
+    def repo_key(self) -> str:
+        """リポジトリを一意に識別するキー."""
+        return f"{self.repo.owner}/{self.repo.repo}"
+
+    @property
+    def issue_key(self) -> IssueKey:
+        """リポジトリ横断で Issue を一意に識別するキー."""
+        return (self.repo_key, self.issue_number)
 
 
 @dataclass
@@ -260,34 +286,36 @@ class PhaseConfig:
 # ---------------------------------------------------------------------------
 
 VALID_TRANSITIONS: dict[Phase, list[Phase]] = {
-    # 共通: 初期
-    Phase.TYPE_DETECTION: [Phase.HEARING, Phase.ANALYSIS, Phase.SUSPENDED],
-    # Bug ワークフロー
-    Phase.ANALYSIS: [Phase.PLAN_REVIEW, Phase.SUSPENDED],
-    Phase.FIX: [Phase.CI_FIX, Phase.IMPL_REVIEW, Phase.SUSPENDED],
-    # Bug: 方針レビュー
-    Phase.PLAN_REVIEW: [Phase.FIX, Phase.ANALYSIS],
-    # Feature-M ワークフロー
-    Phase.HEARING: [
-        Phase.DESIGN,
-        Phase.SPLIT_PROPOSAL,
-        Phase.ANALYSIS,
-        Phase.SUSPENDED,
-    ],
-    Phase.DESIGN: [Phase.DESIGN_REVIEW, Phase.SUSPENDED],
-    # U4 (#82): APPROVE ゲートの差し戻しは PLAN (design) へ戻す。
-    # DESIGN_REVISE は後方互換のため残置 (#83 の enum 整理で撤去予定)
-    Phase.DESIGN_REVIEW: [Phase.IMPLEMENT, Phase.DESIGN, Phase.DESIGN_REVISE, Phase.SUSPENDED],
-    Phase.DESIGN_REVISE: [Phase.DESIGN_REVIEW, Phase.SUSPENDED],
-    # Feature-L ワークフロー
-    Phase.SPLIT_PROPOSAL: [Phase.SPLIT_EXECUTE, Phase.HEARING, Phase.SUSPENDED],
-    Phase.SPLIT_EXECUTE: [Phase.DONE, Phase.SUSPENDED],
-    # 共通: 実装・レビュー
-    Phase.IMPLEMENT: [Phase.CI_FIX, Phase.IMPL_REVIEW, Phase.SUSPENDED],
-    Phase.CI_FIX: [Phase.IMPL_REVIEW, Phase.CI_FIX, Phase.SUSPENDED],
-    Phase.IMPL_REVIEW: [Phase.DONE, Phase.IMPL_REVISE, Phase.SUSPENDED],
-    Phase.IMPL_REVISE: [Phase.IMPL_REVIEW, Phase.SUSPENDED],
+    # 入口: 情報十分なら PLAN へ直行、曖昧なら CLARIFY
+    Phase.INTAKE: [Phase.CLARIFY, Phase.PLAN, Phase.SUSPENDED],
+    # ヒアリング: 明確→PLAN / 大規模→SPLIT / 質問→回答待ち
+    Phase.CLARIFY: [Phase.PLAN, Phase.SPLIT, Phase.CLARIFY_WAIT, Phase.SUSPENDED],
+    Phase.CLARIFY_WAIT: [Phase.CLARIFY, Phase.SUSPENDED],
+    # 分割: 提案→承認→実行はフェーズ内で完結。修正指示は CLARIFY へ戻る
+    Phase.SPLIT: [Phase.DONE, Phase.CLARIFY, Phase.BLOCKED, Phase.SUSPENDED],
+    # 計画: 生成後は承認ゲートへ
+    Phase.PLAN: [Phase.APPROVE, Phase.SUSPENDED],
+    # 承認ゲート: 承認→IMPLEMENT / 差し戻し→PLAN (指摘全文を feedback で渡す)
+    Phase.APPROVE: [Phase.IMPLEMENT, Phase.PLAN, Phase.SUSPENDED],
+    # 実装: 完了→REVIEW / CI失敗→REVISE(ci)
+    Phase.IMPLEMENT: [Phase.REVIEW, Phase.REVISE, Phase.SUSPENDED],
+    # レビューゲート: マージ→DONE / 指摘・CI失敗→REVISE
+    Phase.REVIEW: [Phase.DONE, Phase.REVISE, Phase.SUSPENDED],
+    # 修正: 対応後 REVIEW へ戻る (連続 CI 失敗等の自己ループを許可)
+    Phase.REVISE: [Phase.REVIEW, Phase.REVISE, Phase.SUSPENDED],
     # 特殊
-    Phase.BLOCKED: [Phase.HEARING, Phase.ANALYSIS, Phase.IMPLEMENT],
-    Phase.SUSPENDED: list(Phase),  # どのフェーズにも復帰可能
+    Phase.BLOCKED: [Phase.CLARIFY, Phase.PLAN, Phase.IMPLEMENT],
+    # SUSPENDED からの復帰先 (DONE/BLOCKED/自身は復帰対象外。state machine の
+    # resume_to_* と完全一致させる)
+    Phase.SUSPENDED: [
+        Phase.INTAKE,
+        Phase.CLARIFY,
+        Phase.CLARIFY_WAIT,
+        Phase.SPLIT,
+        Phase.PLAN,
+        Phase.APPROVE,
+        Phase.IMPLEMENT,
+        Phase.REVIEW,
+        Phase.REVISE,
+    ],
 }
