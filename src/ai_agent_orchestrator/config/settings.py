@@ -107,6 +107,9 @@ class AppSettings(BaseSettings):
     slack: SlackConfig | None = None
     workspace_dir: str = "~/.ai-agent-workspaces"
     approve_comment: str = "LGTM"
+    # Web UI 等からの承認/差し戻しを受け付ける control.jsonl のパス (#82 Phase4)。
+    # 未設定なら control ファイル経由の承認は無効。
+    control_file: str | None = None
 
     # Env vars (secrets)
     slack_webhook_url: str | None = Field(default=None, alias="SLACK_WEBHOOK_URL")

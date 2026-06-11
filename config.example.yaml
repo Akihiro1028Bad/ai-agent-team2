@@ -23,10 +23,17 @@ repositories:
     account: "default"
     label: "ai-agent"
     base_branch: "main"
+    # 承認者の許可リスト (#102)。👍/approve/LGTM を承認として扱うユーザーの
+    # GitHub login を列挙する。未設定 (空) なら owner のみが承認者。
+    approvers: []
 
 concurrency:
   max_total: 4
   max_per_repo: 4
+
+# 将来の Web UI からの承認/差し戻しを受け付ける control.jsonl のパス (#82)。
+# 未設定なら control ファイル経由の承認は無効。
+# control_file: "~/.ai-agent-workspaces/control.jsonl"
 
 timeouts:
   hearing_hours: 24

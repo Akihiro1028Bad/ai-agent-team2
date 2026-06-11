@@ -624,6 +624,21 @@ class TestPlanExecutorFull:
         # フローは止まらず design-review へ遷移する
         mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
 
+    async def test_full_prompt_includes_feedback_on_rejection(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: MagicMock,
+    ) -> None:
+        """差し戻し時、extra['feedback'] の指摘全文が設計プロンプトに含まれる (受け入れ条件2)."""
+        executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
+        request = _make_request(phase="design", extra={"feedback": "アーキを階層化して再設計して"})
+        prompt = await executor.build_prompt(request)
+        assert "アーキを階層化して再設計して" in prompt
+        assert "指摘" in prompt
+
     async def test_full_prompt_requests_design_doc_and_json(
         self,
         mock_runner: AsyncMock,

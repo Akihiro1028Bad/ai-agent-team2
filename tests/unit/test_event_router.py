@@ -168,22 +168,26 @@ class TestEventRouterDesignPR:
         enqueued = mock_tq.enqueue.call_args[0][0]
         assert enqueued.phase == Phase.IMPLEMENT.value
 
-    async def test_design_pr_commented_routes_to_design_revise(
+    async def test_design_pr_commented_routes_back_to_design(
         self,
         router: EventRouter,
         mock_sm: AsyncMock,
         mock_tq: AsyncMock,
     ) -> None:
-        """設計 PR コメント -> DESIGN_REVISE へ遷移."""
+        """設計 PR の差し戻し (指摘) -> APPROVE ゲートとして design (PLAN) へ戻す (U4)."""
         mock_sm.get_phase.return_value = Phase.DESIGN_REVIEW
         event = _make_event(
             EventType.DESIGN_PR_COMMENTED,
-            extra={"comments": "要修正"},
+            extra={"comments": "アーキを見直して"},
         )
         await router.route(event)
 
         args = mock_sm.transition.call_args[0]
-        assert args[1].value == "design-revise"
+        assert args[1].value == "design"
+        # 指摘全文が feedback として再実行プロンプトに渡る (受け入れ条件2)
+        enqueued = mock_tq.enqueue.call_args[0][0]
+        assert enqueued.phase == Phase.DESIGN.value
+        assert "アーキを見直して" in enqueued.extra["feedback"]
 
 
 # ---------------------------------------------------------------------------
