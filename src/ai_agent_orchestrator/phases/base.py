@@ -126,6 +126,7 @@ class IssueStateData(Protocol):
     acknowledged_review_comment_ids: list[int]
     answered_review_comment_ids: list[int]
     answered_review_ids: list[int]
+    plan_json: dict[str, Any] | None
 
 
 @runtime_checkable

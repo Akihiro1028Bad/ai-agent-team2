@@ -66,6 +66,26 @@ def test_save_load_roundtrip(
     assert loaded[("myorg/myapp", 55)].retry_count == 1
 
 
+def test_plan_json_roundtrip(persistence: StatePersistence) -> None:
+    """plan_json (U3 #81) が save/load で保持され、旧 state では None になること."""
+    record = {
+        "schema_version": 1,
+        "plan_depth": "light",
+        "ui_impact": True,
+        "summary": "方針",
+        "test_cases": ["t1"],
+    }
+    states = {
+        ("myorg/myapp", 1): IssueState(issue_number=1, phase=Phase.ANALYSIS, plan_json=record),
+        ("myorg/myapp", 2): IssueState(issue_number=2, phase=Phase.HEARING),
+    }
+    persistence.save(states)
+    loaded = persistence.load()
+
+    assert loaded[("myorg/myapp", 1)].plan_json == record
+    assert loaded[("myorg/myapp", 2)].plan_json is None
+
+
 def test_save_load_empty_states(persistence: StatePersistence) -> None:
     """空のdict を save/load してもエラーにならないこと."""
     persistence.save({})

@@ -211,6 +211,8 @@ class IssueState:
     answered_review_comment_ids: list[int] = field(default_factory=list)
     # トップレベル本文 (review submission) への応答済み review id
     answered_review_ids: list[int] = field(default_factory=list)
+    # PLAN フェーズの構造化成果物 (U3 #81)。ui_impact を常に含む (#91 の判定ソース)
+    plan_json: dict[str, Any] | None = None
 
 
 @dataclass

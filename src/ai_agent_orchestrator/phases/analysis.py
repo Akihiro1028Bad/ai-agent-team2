@@ -1,90 +1,12 @@
-"""Bug 分析フェーズ."""
+"""Bug 分析フェーズ (後方互換 re-export).
+
+U3 (#81) で analysis の実行ロジックは PlanExecutor (plan_depth=light) に
+統合された。旧 import パス互換のため AnalysisExecutor 名を re-export する
+(fix.py / revise.py と同方式)。
+"""
 
 from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING
+from ai_agent_orchestrator.phases.plan import PlanExecutor as AnalysisExecutor
 
-from ai_agent_orchestrator.phases.base import PhaseExecutor
-
-if TYPE_CHECKING:
-    from ai_agent_orchestrator.models import AgentResult, TaskRequest
-
-logger = logging.getLogger(__name__)
-
-
-class AnalysisExecutor(PhaseExecutor):
-    """Bug 分析フェーズ。
-
-    Issue 内容からバグの原因を特定し、修正方針をコメントとして投稿する。
-    方針に対する thumbsup リアクションで承認を待つ。
-    """
-
-    async def build_prompt(self, request: TaskRequest) -> str:
-        """Bug 分析用プロンプトを構築する。
-
-        Args:
-            request: タスクリクエスト。
-
-        Returns:
-            プロンプト文字列。
-        """
-        client = await self._get_client(request.repo)
-        issue = await client.get_issue(request.repo, request.issue_number)
-        worktree = await self._workspace.create_worktree(request.repo, request.issue_number)
-        context = await self._context.build_context(
-            str(worktree),
-            getattr(issue, "body", "") or "",
-            "analysis",
-            issue_number=request.issue_number,
-        )
-
-        extra = getattr(request, "extra", {}) or {}
-        feedback = extra.get("feedback", "")
-        feedback_section = f"\n## 前回の方針に対する指摘\n{feedback}" if feedback else ""
-
-        return (
-            f"以下のバグIssueを分析し、修正方針を作成してください。\n\n"
-            f"## Issue #{request.issue_number}: {issue.title}\n"
-            f"{getattr(issue, 'body', '') or ''}\n"
-            f"{feedback_section}\n\n"
-            f"## コンテキスト\n{context}\n\n"
-            f"## 出力形式 (Markdownテキスト)\n"
-            f"修正方針を出力してください。"
-        )
-
-    async def process_result(self, request: TaskRequest, result: AgentResult) -> None:
-        """分析結果を Issue コメント投稿 -> PLAN_REVIEW 遷移。
-
-        Args:
-            request: タスクリクエスト。
-            result: エージェント実行結果。
-        """
-        state = self._sm.get_state(self._issue_key(request))
-        if state:
-            state.session_id = result.session_id
-
-        from ai_agent_orchestrator.phases.base import next_action_footer
-
-        client = await self._get_client(request.repo)
-        comment_body = (
-            result.output.strip()
-            if result.output.strip()
-            else ("AI分析を実行しましたが、出力が空でした。再実行が必要です。")
-        )
-        comment_body += next_action_footer("analysis")
-        await client.create_comment(request.repo, request.issue_number, comment_body)
-        await client.replace_phase_label(request.repo, request.issue_number, "phase:plan-review")
-        await self._sm.transition(self._issue_key(request), "plan-review")
-        issue = await client.get_issue(request.repo, request.issue_number)
-        repo_full_name = self._get_repo_full_name(request)
-        await self._notifier.notify(
-            f"Issue #{request.issue_number} の修正方針を投稿しました",
-            metadata={
-                "notification_type": "plan_posted",
-                "issue": request.issue_number,
-                "issue_title": issue.title,
-                "repo": repo_full_name,
-                "next_action": "→ 👍で承認をお願いします",
-            },
-        )
+__all__ = ["AnalysisExecutor"]
