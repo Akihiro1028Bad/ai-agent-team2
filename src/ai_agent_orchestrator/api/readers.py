@@ -91,7 +91,12 @@ def _iter_event_lines(path: Path) -> list[EventRecord]:
 
 
 def _issue_cost(workspace: Path, issue_number: int) -> float:
-    """指定 Issue の phase_completed イベントから総コストを集計する."""
+    """指定 Issue の phase_completed イベントから総コストを集計する.
+
+    注意: events.jsonl の格納先 (logs/issue-{n}/) は Issue 番号のみで分かれて
+    おりリポジトリ非分離。複数リポジトリで同一 Issue 番号が稼働した場合、
+    コストは番号単位で合算される (ストレージレイアウト由来の既知の制約)。
+    """
     total = 0.0
     for record in _iter_event_lines(_events_file(workspace, issue_number)):
         if record.event != _PHASE_COMPLETED_EVENT or record.data is None:
@@ -196,6 +201,8 @@ def merge_activity(workspace: Path, limit: int = 100) -> list[EventRecord]:
     merged: list[EventRecord] = []
     for path in _all_event_files(workspace):
         merged.extend(_iter_event_lines(path))
+    # ts は EventLogger が UTC (+00:00) の ISO 8601 で固定出力する前提の文字列比較。
+    # オフセット混在時は順序が崩れるため、生成側のフォーマットを変える場合は要見直し。
     merged.sort(key=lambda e: e.ts, reverse=True)
     return merged[:limit]
 

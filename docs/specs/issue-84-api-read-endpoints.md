@@ -82,3 +82,16 @@ githubkit `rest.pulls.async_list_files`（per_page=100、ページング）。
 - [ ] pytest 単体テスト（カバレッジ 80%）
 - [ ] pyproject に fastapi / uvicorn 追加
 - [ ] `ai-agent api` で起動（127.0.0.1 固定）
+
+## 既知の制約（レビュー指摘の明文化）
+
+- **コスト集計の Issue 番号衝突**: events.jsonl の格納先 `logs/issue-{n}/` は
+  リポジトリ非分離のため、複数リポジトリで同一 Issue 番号が稼働した場合は
+  コストが番号単位で合算される（`/api/issues` の cost_usd は重複計上、
+  `/api/costs` の repo 表示は後勝ち）。解消にはストレージレイアウトの変更
+  （リポジトリ込みのディレクトリ分離）が必要で、対応する場合は別 Issue とする。
+- **ts ソートの UTC 前提**: activity のマージは ts の文字列比較。EventLogger が
+  UTC (+00:00) 固定で出力する前提。
+- **`/api/issues` の N+1 ファイル読み**: Issue ごとに events.jsonl を全読みする。
+  localhost 用途では許容。肥大時は costs と共通の 1 パス集計ヘルパへ寄せる
+  （フォローアップ候補）。
