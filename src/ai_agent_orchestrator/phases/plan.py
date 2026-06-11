@@ -102,7 +102,7 @@ class PlanExecutor(PhaseExecutor):
         else:
             await self._process_full_result(request, result)
 
-    def _depth(self, request: TaskRequest) -> str:
+    def _depth(self, request: TaskRequest) -> PlanDepth:
         """ワークフローパラメータから plan_depth を取得する (U5c #95)."""
         return self._sm.get_workflow_params(self._issue_key(request)).plan_depth
 
