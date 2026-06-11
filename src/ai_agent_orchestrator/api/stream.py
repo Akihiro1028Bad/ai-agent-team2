@@ -60,7 +60,8 @@ def parse_last_event_id(value: str | None) -> tuple[int, int]:
         return (0, 0)
     parts = dict(p.split(":", 1) for p in value.split(",") if ":" in p)
     try:
-        return (int(parts["events"]), int(parts["agent"]))
+        # 負値は 0 にクランプ (負スライスでの行再送・id ずれ防止)
+        return (max(0, int(parts["events"])), max(0, int(parts["agent"])))
     except (KeyError, ValueError):
         return (0, 0)
 

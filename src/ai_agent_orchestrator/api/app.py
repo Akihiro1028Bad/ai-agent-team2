@@ -172,7 +172,8 @@ def create_app(settings: AppSettings) -> FastAPI:
         request: Request,
         issue: int = Query(..., description="対象 Issue 番号"),
         last_event_id: str | None = Query(default=None),
-        poll_interval: float = Query(default=0.5, gt=0.0, le=5.0),
+        # 下限 0.1s: 過小値での毎ループ全ファイル読みによる CPU 占有を防ぐ
+        poll_interval: float = Query(default=0.5, ge=0.1, le=5.0),
         max_idle_sec: float | None = Query(default=None, gt=0.0),
     ) -> StreamingResponse:
         """events.jsonl + agent.jsonl の tail を SSE で配信する (#85).

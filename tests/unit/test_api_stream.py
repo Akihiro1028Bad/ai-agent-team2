@@ -224,3 +224,8 @@ def test_format_sse_keepalive_is_comment() -> None:
     """keepalive イベントは SSE コメント行に整形される (id を進めない)."""
     ev = SseEvent(source="keepalive", events_consumed=2, agent_consumed=5, data="")
     assert format_sse(ev) == ": keep-alive\n\n"
+
+
+def test_parse_last_event_id_negative_clamped_to_zero() -> None:
+    """負のオフセットは 0 にクランプする (負スライスでの行再送・id ずれ防止)."""
+    assert parse_last_event_id("events:-3,agent:-1") == (0, 0)
