@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 PLAN_SCHEMA_VERSION = 1
 
-_JSON_BLOCK_PATTERN = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
+# 閉じ ``` 直前の改行は省略され得る (LLM 出力ゆらぎ) ため任意にする
+_JSON_BLOCK_PATTERN = re.compile(r"```json\s*\n(.*?)\n?```", re.DOTALL)
 
 
 def extract_plan_json(output: str) -> tuple[str, dict[str, Any] | None]:
@@ -70,9 +71,9 @@ def build_plan_record(plan_depth: str, parsed: dict[str, Any] | None) -> dict[st
             logger.warning("plan JSON ui_impact has invalid type %s, falling back to None", type(ui_impact).__name__)
         ui_impact = None
 
-    test_cases = src.get("test_cases")
-    if not isinstance(test_cases, list):
-        test_cases = []
+    raw_test_cases = src.get("test_cases")
+    # 消費側 (#91 / Web UI) が list[str] を期待するため要素も文字列に正規化する
+    test_cases = [str(t) for t in raw_test_cases] if isinstance(raw_test_cases, list) else []
 
     record: dict[str, Any] = {
         "schema_version": PLAN_SCHEMA_VERSION,

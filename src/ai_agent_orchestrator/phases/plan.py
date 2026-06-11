@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ai_agent_orchestrator.phases.base import PhaseExecutor
 from ai_agent_orchestrator.phases.plan_artifact import (
@@ -28,8 +28,6 @@ from ai_agent_orchestrator.phases.plan_artifact import (
 from ai_agent_orchestrator.phases.plan_validation import validate_plan
 
 if TYPE_CHECKING:
-    from typing import Any
-
     from ai_agent_orchestrator.models import AgentResult, TaskRequest
     from ai_agent_orchestrator.phases.base import GitHubClientProtocol
 

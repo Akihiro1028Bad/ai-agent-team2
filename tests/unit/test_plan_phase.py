@@ -173,6 +173,15 @@ class TestExtractPlanJson:
         assert parsed is None
         assert text == output
 
+    def test_handles_missing_newline_before_closing_fence(self) -> None:
+        """閉じ ``` 直前に改行がない LLM 出力ゆらぎでも抽出できる."""
+        from ai_agent_orchestrator.phases.plan_artifact import extract_plan_json
+
+        output = '方針\n```json\n{"ui_impact": false}```\n'
+        _, parsed = extract_plan_json(output)
+        assert parsed is not None
+        assert parsed["ui_impact"] is False
+
 
 class TestBuildPlanRecord:
     """build_plan_record のテスト."""
@@ -221,6 +230,14 @@ class TestBuildPlanRecord:
         record = build_plan_record("light", {"ui_impact": "yes"})
         assert record["ui_impact"] is None
 
+    def test_test_cases_elements_are_normalized_to_str(self) -> None:
+        """test_cases の要素が dict 等でも文字列に正規化される (#91 消費側の契約)."""
+        from ai_agent_orchestrator.phases.plan_artifact import build_plan_record
+
+        record = build_plan_record("light", {"test_cases": [{"name": "t1"}, "t2", 3]})
+        assert all(isinstance(t, str) for t in record["test_cases"])
+        assert "t2" in record["test_cases"]
+
 
 # ---------------------------------------------------------------------------
 # plan_depth の導出
@@ -246,6 +263,12 @@ class TestPlanDepth:
 
         assert plan_depth_for(_make_request(phase=Phase.ANALYSIS)) == "light"
         assert plan_depth_for(_make_request(phase=Phase.DESIGN)) == "full"
+
+    def test_unknown_phase_falls_back_to_full(self) -> None:
+        """analysis 以外のフェーズ値は full にフォールバックする (明示的な契約)."""
+        from ai_agent_orchestrator.phases.plan import plan_depth_for
+
+        assert plan_depth_for(_make_request(phase="unknown-phase")) == "full"
 
 
 # ---------------------------------------------------------------------------
@@ -456,6 +479,37 @@ class TestPlanExecutorFull:
         assert state.plan_json is not None
         assert state.plan_json["plan_depth"] == "full"
         assert state.plan_json["ui_impact"] is None
+
+    async def test_full_revalidates_design_when_doc_missing(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """設計書が無い場合は上限回数まで再生成し、警告コメントを投稿して続行する."""
+        mock_workspace.create_worktree.return_value = str(tmp_path)  # 設計書なし
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="設計PR #5 を作成しました",
+            tool_uses=[],
+            cost_usd=1.0,
+            duration_sec=60.0,
+        )
+        executor = _make_executor(mock_runner, mock_github, mock_workspace, mock_context, mock_sm)
+        from ai_agent_orchestrator.phases.plan import _MAX_DESIGN_REVALIDATE
+
+        await executor.execute(_make_request(phase="design"))
+
+        # 初回 1 回 + 再生成 _MAX_DESIGN_REVALIDATE 回
+        assert mock_runner.run.call_count == 1 + _MAX_DESIGN_REVALIDATE
+        # 上限到達後の警告コメントが投稿される
+        warning_calls = [c for c in mock_github.create_comment.call_args_list if "検証警告" in str(c.args[2])]
+        assert len(warning_calls) == 1
+        # フローは止まらず design-review へ遷移する
+        mock_sm.transition.assert_called_with(("org/app", 1), "design-review")
 
     async def test_full_prompt_requests_design_doc_and_json(
         self,
