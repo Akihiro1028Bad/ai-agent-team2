@@ -17,6 +17,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from ai_agent_orchestrator.agents.claude_runner import (
+    _SHELL_ALLOWED_PHASES,
+    PHASE_CONFIG,
     ClaudeAgentRunner,
     sanitized_env_overrides,
     tool_policy_for,
@@ -55,6 +57,16 @@ class TestToolPolicyFor:
     def test_unknown_phase_falls_back_to_full_bash_deny(self) -> None:
         """未知フェーズは安全側 (Bash 全面 deny) にフォールバックする."""
         assert tool_policy_for("unknown-phase") == ["Bash"]
+
+    def test_new_phase_added_to_config_is_fail_safe(self) -> None:
+        """allowlist 方式: PHASE_CONFIG に新フェーズを足しても全面 deny に倒れる.
+
+        _SHELL_ALLOWED_PHASES へ明示追記しない限り shell は開かない (fail-safe)。
+        """
+        # PHASE_CONFIG にあるが shell 許可集合に入っていないフェーズは全面 deny
+        non_shell_config_phases = set(PHASE_CONFIG) - _SHELL_ALLOWED_PHASES
+        for phase in non_shell_config_phases:
+            assert tool_policy_for(phase) == ["Bash"], phase
 
     @pytest.mark.parametrize("phase", ["plan", "implement", "revise"])
     def test_impl_phases_deny_interpreters_and_git_commit(self, phase: str) -> None:

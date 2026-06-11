@@ -119,8 +119,12 @@ _BYPASS_ALLOWED_TOOLS = [
 # よって deny ルール + env 遮断の多層防御を採る。deny は `bash -c` 等で迂回
 # され得る抑止層であり、秘密保護の本丸は sanitized_env_overrides による遮断。
 
-_NO_BASH_PHASES = frozenset({"intake", "clarify", "split"})
-"""Bash 不要フェーズ。分析・対話のみで shell 実行を要しない。"""
+_SHELL_ALLOWED_PHASES = frozenset({"plan", "implement", "revise"})
+"""shell を許す (specifier deny で絞る) フェーズ。
+
+allowlist 方式にすることで、PHASE_CONFIG に新フェーズを追加しても本集合へ
+明示追記しない限り Bash 全面 deny に倒れる (新フェーズ追加が fail-safe)。
+"""
 
 _BASH_DENY_SPECIFIERS = [
     # gh: keyring から `gh auth token` で token を再取得できるため必須 deny
@@ -176,8 +180,10 @@ TODO(#92): ヘッドレス運用 (WSL2) で CLAUDE_CODE_OAUTH_TOKEN による CL
 def tool_policy_for(phase: str) -> list[str]:
     """フェーズに応じた disallowed_tools ポリシーを返す (#101).
 
-    Bash 不要フェーズと未知フェーズは Bash 全面 deny、実装系フェーズは
-    持ち出し・ネットワーク系コマンドの specifier deny を返す。
+    shell を許す実装系フェーズ (_SHELL_ALLOWED_PHASES) のみ持ち出し・
+    ネットワーク系コマンドの specifier deny を返し、それ以外 (Bash 不要
+    フェーズ・未知フェーズ・将来追加フェーズ) は Bash 全面 deny に倒す。
+    allowlist 方式のため新フェーズ追加は常に fail-safe。
 
     Args:
         phase: フェーズ名 (Phase enum の .value)。
@@ -185,9 +191,10 @@ def tool_policy_for(phase: str) -> list[str]:
     Returns:
         disallowed_tools に渡す deny ルールのリスト (毎回新規生成)。
     """
-    if phase in _NO_BASH_PHASES or phase not in PHASE_CONFIG:
-        return ["Bash"]
-    return list(_BASH_DENY_SPECIFIERS)
+    if phase in _SHELL_ALLOWED_PHASES:
+        return list(_BASH_DENY_SPECIFIERS)
+    # 既知の Bash 不要フェーズ・未知フェーズ・新フェーズはすべて全面 deny
+    return ["Bash"]
 
 
 def sanitized_env_overrides() -> dict[str, str]:
