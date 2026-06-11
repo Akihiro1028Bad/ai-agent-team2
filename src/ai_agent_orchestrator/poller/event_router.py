@@ -2,7 +2,7 @@
 
 PollEvent を受け取り、StateMachineManager で遷移を実行し、
 TaskQueue にタスクをエンキューする。
-Issue タイプに応じたルーティング (Bug -> ANALYSIS, Feature-M -> DESIGN 等) を行う。
+イベントを統一パイプライン (INTAKE→…→DONE) のフェーズ遷移にルーティングする。
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ class EventRouter:
 
     PollEvent を受け取り、StateMachineManager で遷移を実行し、
     TaskQueue にタスクをエンキューする。
-    Issue タイプに応じたルーティング (Bug -> FIX, Feature-M -> DESIGN 等) を行う。
+    イベント種別ごとに統一パイプラインのフェーズ遷移・エンキューを行う。
     """
 
     def __init__(
@@ -136,19 +136,19 @@ class EventRouter:
             event: 処理するポーリングイベント.
 
         イベントとアクションの対応:
-            NEW_ISSUE           -> register_issue + TYPE_DETECTION エンキュー
+            NEW_ISSUE           -> register_issue + INTAKE エンキュー
             ISSUE_COMMENT       -> hearing_continue エンキュー (遷移なし)
             HEARING_TIMEOUT     -> SUSPENDED 遷移
-            PLAN_REACTION_ADDED -> Bug->FIX (👍で方針承認)
-            PLAN_COMMENT_ADDED  -> Bug->ANALYSIS (方針指摘で再分析)
+            PLAN_REACTION_ADDED -> APPROVE->IMPLEMENT (👍で方針承認)
+            PLAN_COMMENT_ADDED  -> APPROVE->PLAN (方針指摘で再計画)
             DESIGN_PR_APPROVED  -> IMPLEMENT 遷移 + エンキュー
             DESIGN_PR_COMMENTED -> DESIGN (PLAN) 遷移 + feedback 付きエンキュー (U4 #82)
             IMPL_PR_APPROVED    -> DONE 遷移 + エンキュー
-            IMPL_PR_COMMENTED   -> IMPL_REVISE 遷移 + エンキュー
-            CI_RESULT (failed)  -> CI_FIX (3回以内) or SUSPENDED
-            CI_RESULT (passed)  -> IMPL_REVIEW 遷移
-            SPLIT_APPROVED      -> SPLIT_EXECUTE 遷移 + エンキュー
-            SPLIT_MODIFIED      -> HEARING 遷移 + エンキュー
+            IMPL_PR_COMMENTED   -> REVISE 遷移 + エンキュー
+            CI_RESULT (failed)  -> REVISE(trigger=ci) (3回以内) or SUSPENDED
+            CI_RESULT (passed)  -> REVIEW 遷移
+            SPLIT_APPROVED      -> SPLIT 内で実行ステップをエンキュー
+            SPLIT_MODIFIED      -> CLARIFY 遷移 + エンキュー
         """
         logger.info(
             "Routing event: type=%s issue=#%s",
@@ -402,6 +402,16 @@ class EventRouter:
                 "Issue #%d is already in %s, skipping duplicate plan reaction",
                 event.issue.number,
                 next_phase.value,
+            )
+            return
+        # APPROVE ゲート以外での 👍 は無視する (U5 #83)。再起動リカバリで
+        # ラベルと SM 状態が乖離した場合に PLAN→IMPLEMENT 等の不正遷移で
+        # InvalidTransitionError になるのを防ぐ
+        if current_phase != Phase.APPROVE:
+            logger.info(
+                "Issue #%d is in %s (not APPROVE), ignoring plan reaction",
+                event.issue.number,
+                current_phase.value,
             )
             return
 

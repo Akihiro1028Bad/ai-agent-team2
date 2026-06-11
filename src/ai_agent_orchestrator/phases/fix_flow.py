@@ -21,23 +21,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def is_fix_phase(request: TaskRequest) -> bool:
-    """リクエストが旧 FIX フェーズかどうかを判定する。
-
-    request.phase は Phase enum / 文字列の両方があり得るため正規化して比較する。
-
-    Args:
-        request: タスクリクエスト。
-
-    Returns:
-        fix フェーズなら True。
-    """
-    from ai_agent_orchestrator.models import Phase
-
-    value = request.phase.value if isinstance(request.phase, Phase) else str(request.phase)
-    return value.replace("_", "-").lower() == "fix"
-
-
 async def build_fix_prompt(executor: PhaseExecutor, request: TaskRequest) -> str:
     """Bug 修正プロンプトを構築する（承認された修正方針コメントを参照）。
 
@@ -89,7 +72,7 @@ async def finalize_fix(
     request: TaskRequest,
     result: AgentResult,
 ) -> None:
-    """修正 PR を作成し IMPL_REVIEW に遷移する。
+    """修正 PR を作成し REVIEW に遷移する。
 
     コミットは呼び出し元（ImplementExecutor._execute_fix）が
     _finalize_phase_commit で実施済みであることを前提とする。
@@ -119,7 +102,7 @@ async def finalize_fix(
         "fix_complete",
         issue_number=request.issue_number,
         phase="fix",
-        data={"note": "impl-review に遷移", "pr_number": pr_number},
+        data={"note": "review に遷移", "pr_number": pr_number},
     )
     repo_full_name = executor._get_repo_full_name(request)
     pr_url = executor._build_pr_url(request, pr_number)

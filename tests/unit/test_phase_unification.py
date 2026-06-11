@@ -288,3 +288,63 @@ class TestStateJsonMigration:
             {"org/app:1": {"issue_number": 1, "phase": "planning", "repo": "org/app"}},
         )
         assert loaded[("org/app", 1)].phase is Phase.SUSPENDED  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# dispatcher ブリッジ (REVISE / SPLIT の振り分け)
+# ---------------------------------------------------------------------------
+
+
+class TestDispatcherBridges:
+    """RevisePhaseExecutor / SplitPhaseExecutor の委譲条件."""
+
+    def _request(self, extra: dict[str, object] | None) -> TaskRequest:
+        class _Repo:
+            owner = "org"
+            repo = "app"
+
+        return TaskRequest(issue_number=1, repo=_Repo(), phase="revise", extra=extra or {})
+
+    async def test_revise_routes_ci_trigger_to_ci_fix(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from ai_agent_orchestrator.phases.dispatcher import RevisePhaseExecutor
+
+        review_revise, ci_fix = AsyncMock(), AsyncMock()
+        bridge = RevisePhaseExecutor(review_revise=review_revise, ci_fix=ci_fix)
+        await bridge.execute(self._request({"trigger": "ci"}))
+        ci_fix.execute.assert_awaited_once()
+        review_revise.execute.assert_not_awaited()
+
+    async def test_revise_routes_default_to_review_revise(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from ai_agent_orchestrator.phases.dispatcher import RevisePhaseExecutor
+
+        review_revise, ci_fix = AsyncMock(), AsyncMock()
+        bridge = RevisePhaseExecutor(review_revise=review_revise, ci_fix=ci_fix)
+        await bridge.execute(self._request({"comments": "指摘"}))
+        review_revise.execute.assert_awaited_once()
+        ci_fix.execute.assert_not_awaited()
+
+    async def test_split_routes_execute_step(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from ai_agent_orchestrator.phases.dispatcher import SplitPhaseExecutor
+
+        proposal, execute_step = AsyncMock(), AsyncMock()
+        bridge = SplitPhaseExecutor(proposal=proposal, execute_step=execute_step)
+        await bridge.execute(self._request({"step": "execute"}))
+        execute_step.execute.assert_awaited_once()
+        proposal.execute.assert_not_awaited()
+
+    async def test_split_routes_default_to_proposal(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from ai_agent_orchestrator.phases.dispatcher import SplitPhaseExecutor
+
+        proposal, execute_step = AsyncMock(), AsyncMock()
+        bridge = SplitPhaseExecutor(proposal=proposal, execute_step=execute_step)
+        await bridge.execute(self._request(None))
+        proposal.execute.assert_awaited_once()
+        execute_step.execute.assert_not_awaited()

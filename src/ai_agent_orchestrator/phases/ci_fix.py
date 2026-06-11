@@ -20,8 +20,8 @@ class CiFixExecutor(PhaseExecutor):
     1. CiFixExecutor がコード修正 (commit/push はシステムが実行)
     2. CI が自動実行される (GitHub Actions 等)
     3. Poller が CI 結果を検知
-    4. CI_PASSED -> EventRouter が IMPL_REVIEW に遷移
-    5. CI_FAILED -> EventRouter が CI_FIX に再遷移 (リトライカウント確認)
+    4. CI_PASSED -> EventRouter が REVIEW に遷移
+    5. CI_FAILED -> EventRouter が REVISE(trigger=ci) に再遷移 (リトライカウント確認)
 
     このフェーズ自身は遷移を行わず、CI 結果のポーリングに任せる。
     """

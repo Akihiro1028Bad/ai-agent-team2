@@ -15,7 +15,7 @@ from ai_agent_orchestrator.context.engine import (
 )
 from ai_agent_orchestrator.models import AgentResult, Phase, Subtask
 from ai_agent_orchestrator.phases.base import NoChangesError, PhaseExecutor
-from ai_agent_orchestrator.phases.fix_flow import build_fix_prompt, finalize_fix, is_fix_phase
+from ai_agent_orchestrator.phases.fix_flow import build_fix_prompt, finalize_fix
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.models import TaskRequest
@@ -175,8 +175,7 @@ class ImplementExecutor(PhaseExecutor):
 
             # U5 (#83): fix フェーズは IMPLEMENT に統合済み。bug タイプは
             # 軽量な fix フロー (方針コメント準拠の修正) を通す
-            is_bug = self._sm.get_issue_type(self._issue_key(request)) == "bug"
-            if is_fix_phase(request) or is_bug:
+            if self._sm.get_issue_type(self._issue_key(request)) == "bug":
                 result = await self._execute_fix(request)
                 await self._tracker.track(
                     "phase_end",
