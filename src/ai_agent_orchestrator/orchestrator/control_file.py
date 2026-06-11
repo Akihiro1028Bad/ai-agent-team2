@@ -17,10 +17,12 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-_VALID_ACTIONS = frozenset({"approve", "reject"})
+ControlAction = Literal["approve", "reject"]
+_VALID_ACTIONS: frozenset[str] = frozenset({"approve", "reject"})
 
 
 @dataclass(frozen=True)
@@ -28,7 +30,7 @@ class ControlCommand:
     """Web UI 等から受け取る承認/差し戻し制御コマンド."""
 
     issue_number: int
-    action: str  # "approve" | "reject"
+    action: ControlAction
     approver: str = ""
     feedback: str = ""
 
@@ -58,13 +60,16 @@ def parse_control_line(line: str) -> ControlCommand | None:
 
     issue = data.get("issue")
     action = data.get("action")
-    if not isinstance(issue, int) or action not in _VALID_ACTIONS:
+    # bool は int のサブクラスなので除外する
+    if not isinstance(issue, int) or isinstance(issue, bool) or action not in _VALID_ACTIONS:
         logger.warning("control line missing/invalid issue or action, skipping")
         return None
 
+    # action は _VALID_ACTIONS で検証済み (approve/reject のいずれか)
+    validated_action: ControlAction = action
     return ControlCommand(
         issue_number=issue,
-        action=action,
+        action=validated_action,
         approver=str(data.get("approver", "")),
         feedback=str(data.get("feedback", "")),
     )
@@ -84,6 +89,7 @@ def read_new_control_commands(path: Path, offset: int) -> tuple[list[ControlComm
     Returns:
         (新規 ControlCommand のリスト, 更新後の offset)。
     """
+    path = path.expanduser()
     if not path.exists():
         return [], offset
 

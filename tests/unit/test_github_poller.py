@@ -1051,7 +1051,12 @@ class TestRateLimitGuard:
 class TestGetPrReviewsApproverVerification:
     """PR approve / LGTM の承認者検証 (#102)."""
 
-    def _setup(self, reviews: list[dict[str, object]], approvers: list[str]) -> tuple[AsyncMock, MagicMock, object]:
+    def _setup(
+        self,
+        reviews: list[dict[str, object]],
+        approvers: list[str],
+        comments: list[MagicMock] | None = None,
+    ) -> tuple[AsyncMock, MagicMock, GitHubPoller, MagicMock]:
         client = _make_client()
         pr = MagicMock()
         pr.number = 50
@@ -1062,12 +1067,12 @@ class TestGetPrReviewsApproverVerification:
         pr.head = MagicMock(ref="feature/issue-5")
         client.list_pull_requests = AsyncMock(return_value=[pr])
         client.get_pr_reviews = AsyncMock(return_value=reviews)
-        client.list_comments = AsyncMock(return_value=[])
+        client.list_comments = AsyncMock(return_value=comments or [])
         repo = _make_repo()
         repo.approvers = approvers
         poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
         issue = _make_issue(number=5, labels=["ai-agent", "phase:design-review"])
-        return client, repo, poller, issue  # type: ignore[return-value]
+        return client, repo, poller, issue
 
     async def test_authorized_approve_is_counted(self) -> None:
         reviews = [{"id": 1, "state": "APPROVED", "body": "", "user": {"login": "org"}, "submitted_at": ""}]
@@ -1088,6 +1093,23 @@ class TestGetPrReviewsApproverVerification:
         client, repo, poller, issue = self._setup(reviews, [])
         result = await poller._get_pr_reviews(client, repo, issue)
         assert all(r["state"] != "approved" for r in result)
+
+    def _lgtm_comment(self, login: str) -> MagicMock:
+        comment = _make_comment(comment_id=999, body="LGTM", user_type="User")
+        comment.user.login = login
+        return comment
+
+    async def test_unauthorized_lgtm_pr_comment_is_ignored(self) -> None:
+        """PR 一般コメントの LGTM も許可外ユーザーなら無視される (#102)."""
+        client, repo, poller, issue = self._setup([], [], comments=[self._lgtm_comment("mallory")])
+        result = await poller._get_pr_reviews(client, repo, issue)
+        assert all(r["state"] != "approved" for r in result)
+
+    async def test_authorized_lgtm_pr_comment_is_counted(self) -> None:
+        """PR 一般コメントの LGTM が許可された承認者なら承認として扱われる (#102)."""
+        client, repo, poller, issue = self._setup([], [], comments=[self._lgtm_comment("org")])
+        result = await poller._get_pr_reviews(client, repo, issue)
+        assert any(r["state"] == "approved" for r in result)
 
 
 class TestDetectPrEventsInlineOnlyReview:

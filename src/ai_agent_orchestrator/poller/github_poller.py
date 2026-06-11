@@ -430,13 +430,20 @@ class GitHubPoller:
                         self._seen_reactions.add(reaction_key)
                         approved_issues.append(issue)
                         break
+                    # 許可外の 👍 は承認扱いしない。後から正規ユーザーが 👍 する
+                    # ケースを取りこぼさないため _seen_reactions には入れず、
+                    # 警告ログのみ 1 回に dedup する (毎サイクルのログスパム防止)。
                     if any(getattr(r, "content", None) == "+1" for r in reactions):
-                        logger.info(
-                            "plan-reaction [%s] #%d: 👍 present but no authorized approver (approvers=%s), ignoring",
-                            repo_key,
-                            issue.number,
-                            approvers,
-                        )
+                        log_key = f"unauthorized_reaction:{repo_key}:{issue.number}:{comment.id}"
+                        if log_key not in self._seen_events:
+                            self._seen_events.add(log_key)
+                            logger.info(
+                                "plan-reaction [%s] #%d: 👍 present but no authorized approver "
+                                "(approvers=%s), ignoring",
+                                repo_key,
+                                issue.number,
+                                approvers,
+                            )
         logger.debug("plan-reaction detection [%s]: %d approval(s) detected", repo_key, len(approved_issues))
         return approved_issues
 

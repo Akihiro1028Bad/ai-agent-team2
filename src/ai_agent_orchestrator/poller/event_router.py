@@ -142,7 +142,7 @@ class EventRouter:
             PLAN_REACTION_ADDED -> Bug->FIX (👍で方針承認)
             PLAN_COMMENT_ADDED  -> Bug->ANALYSIS (方針指摘で再分析)
             DESIGN_PR_APPROVED  -> IMPLEMENT 遷移 + エンキュー
-            DESIGN_PR_COMMENTED -> DESIGN_REVISE 遷移 + エンキュー
+            DESIGN_PR_COMMENTED -> DESIGN (PLAN) 遷移 + feedback 付きエンキュー (U4 #82)
             IMPL_PR_APPROVED    -> DONE 遷移 + エンキュー
             IMPL_PR_COMMENTED   -> IMPL_REVISE 遷移 + エンキュー
             CI_RESULT (failed)  -> CI_FIX (3回以内) or SUSPENDED
