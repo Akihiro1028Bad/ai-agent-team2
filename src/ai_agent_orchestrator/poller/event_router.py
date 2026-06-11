@@ -663,13 +663,22 @@ class EventRouter:
         if answered:
             all_review_comments = [c for c in all_review_comments if c.get("id") not in answered]
         # トップレベルコメント（PR 本文コメント）はインライン収集に含まれないため、
-        # それが存在する場合は「全件回答済み」でもスキップしない（サイレント消失防止）
-        has_top_level_comment = bool((event.extra or {}).get("comments", ""))
-        if had_inline_comments and not all_review_comments and not has_top_level_comment:
+        # それが存在する場合は「全件回答済み」でもスキップしない（サイレント消失防止）。
+        # ただし応答済みの review id は永続 dedup の対象（再起動を跨いだ本文応答の重複防止）
+        event_review_id = (event.extra or {}).get("review_id")
+        answered_rids_ref = getattr(state, "answered_review_ids", None) if state else None
+        top_level_answered = (
+            isinstance(answered_rids_ref, list)
+            and isinstance(event_review_id, int)
+            and event_review_id in answered_rids_ref
+        )
+        has_top_level_comment = bool((event.extra or {}).get("comments", "")) and not top_level_answered
+        if not all_review_comments and not has_top_level_comment and (had_inline_comments or top_level_answered):
             logger.info(
-                "Issue #%d: all review comments already answered (%d), skipping re-enqueue",
+                "Issue #%d: all review comments already answered (inline=%d, top_level=%s), skipping re-enqueue",
                 event.issue.number,
                 len(answered),
+                top_level_answered,
             )
             return
 
@@ -705,6 +714,8 @@ class EventRouter:
                     "review_comment_ids": comment_ids,
                     # 構造化リスト（U2: 修正要求/質問の分類と ID 対応付けに使用）
                     "review_comments": all_review_comments,
+                    # トップレベル本文応答の永続 dedup 用 (#103)
+                    "review_id": event_review_id,
                 },
             )
         )
@@ -736,6 +747,7 @@ class EventRouter:
                 # 送信に成功した ID のみ記録（失敗分は次回再送される）
                 if acked_now and isinstance(acked_ids_ref, list):
                     acked_ids_ref.extend(acked_now)
+                    acked_ids_ref[:] = sorted(set(acked_ids_ref))  # 防御的な重複排除
                     self._sm.persist()
         else:
             # フォールバック: PRスレッドへの返信ができない場合は Issue コメントで通知

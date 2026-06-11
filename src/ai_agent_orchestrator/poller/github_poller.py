@@ -529,7 +529,8 @@ class GitHubPoller:
                                 type=EventType.IMPL_PR_COMMENTED,
                                 repo=repo,
                                 issue=issue,
-                                extra={"comments": review_body},
+                                # review_id はトップレベル本文応答の永続 dedup に使用 (#103)
+                                extra={"comments": review_body, "review_id": review_id},
                             )
                         )
                 # approve/LGTM は無視 (実装PRはマージで完了)

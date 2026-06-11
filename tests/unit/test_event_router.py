@@ -929,6 +929,7 @@ class TestReviewReplyDedupPersistence:
         state.pr_number = 10
         state.answered_review_comment_ids = list(answered or [])
         state.acknowledged_review_comment_ids = list(acknowledged or [])
+        state.answered_review_ids = []
         sm.get_state = MagicMock(return_value=state)
         sm.persist = MagicMock()
         tq = AsyncMock()
@@ -995,3 +996,28 @@ class TestReviewReplyDedupPersistence:
         enqueued = tq.enqueue.call_args.args[0]
         assert enqueued.extra["review_comment_ids"] == [102]
         assert [c["id"] for c in enqueued.extra["review_comments"]] == [102]
+
+    async def test_answered_top_level_review_is_skipped(self) -> None:
+        """応答済み review_id のトップレベル本文は再起動後もスキップされる."""
+        router, state, tq, _client = self._make(answered=[101, 102])
+        state.answered_review_ids = [777]
+        event = _make_event(
+            EventType.IMPL_PR_COMMENTED,
+            extra={"comments": "本文の質問", "review_id": 777},
+        )
+
+        await router.route(event)
+
+        tq.enqueue.assert_not_called()
+
+    async def test_review_id_is_passed_to_task_extra(self) -> None:
+        """review_id がタスク extra に透過される（revise 側の記録用）."""
+        router, _state, tq, _client = self._make()
+        event = _make_event(
+            EventType.IMPL_PR_COMMENTED,
+            extra={"comments": "", "review_id": 888},
+        )
+
+        await router.route(event)
+
+        assert tq.enqueue.call_args.args[0].extra["review_id"] == 888

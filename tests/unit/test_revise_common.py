@@ -360,3 +360,42 @@ class TestAnsweredPersistence:
         await executor.process_result(request, _agent_result(REPLIES_OUTPUT))
 
         assert state.answered_review_comment_ids == [101]
+
+
+class TestTopLevelAnsweredPersistence:
+    """#103: トップレベル本文応答の review_id 永続化."""
+
+    async def test_top_level_response_records_review_id(self) -> None:
+        gh = _mock_github()
+        sm = _mock_sm()
+        state = sm.get_state.return_value
+        state.answered_review_ids = []
+        sm.persist = MagicMock()
+        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        output = """```json
+{"replies": [], "summary": "本文質問への回答です。"}
+```"""
+        request = _make_request(extra={"comments": "本文の質問", "review_comment_ids": [], "review_id": 777})
+
+        await executor.process_result(request, _agent_result(output))
+
+        gh.create_comment.assert_called_once()
+        assert state.answered_review_ids == [777]
+        sm.persist.assert_called()
+
+    async def test_top_level_failure_does_not_record(self) -> None:
+        gh = _mock_github()
+        gh.create_comment.side_effect = Exception("api error")
+        sm = _mock_sm()
+        state = sm.get_state.return_value
+        state.answered_review_ids = []
+        sm.persist = MagicMock()
+        executor = _make_executor(ImplReviseExecutor, gh, sm)
+        output = """```json
+{"replies": [], "summary": "s"}
+```"""
+        request = _make_request(extra={"comments": "q", "review_comment_ids": [], "review_id": 777})
+
+        await executor.process_result(request, _agent_result(output))
+
+        assert state.answered_review_ids == []

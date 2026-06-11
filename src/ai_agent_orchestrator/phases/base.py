@@ -123,6 +123,9 @@ class IssueStateData(Protocol):
     branch_head_sha: str | None
     impl_iteration: int
     retry_count: int
+    acknowledged_review_comment_ids: list[int]
+    answered_review_comment_ids: list[int]
+    answered_review_ids: list[int]
 
 
 @runtime_checkable
