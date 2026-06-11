@@ -182,6 +182,16 @@ class TestExtractPlanJson:
         assert parsed is not None
         assert parsed["ui_impact"] is False
 
+    def test_deeply_nested_json_falls_back_gracefully(self) -> None:
+        """深いネスト JSON (RecursionError) でも例外を投げず None フォールバックする."""
+        from ai_agent_orchestrator.phases.plan_artifact import extract_plan_json
+
+        deep = "[" * 50000 + "]" * 50000
+        output = f"方針\n```json\n{deep}\n```\n"
+        text, parsed = extract_plan_json(output)
+        assert parsed is None
+        assert text == output
+
 
 class TestBuildPlanRecord:
     """build_plan_record のテスト."""
@@ -237,6 +247,22 @@ class TestBuildPlanRecord:
         record = build_plan_record("light", {"test_cases": [{"name": "t1"}, "t2", 3]})
         assert all(isinstance(t, str) for t in record["test_cases"])
         assert "t2" in record["test_cases"]
+
+    def test_subtasks_elements_are_normalized(self) -> None:
+        """subtasks 要素が想定外の型でも {id, title} スキーマに正規化される."""
+        from ai_agent_orchestrator.phases.plan_artifact import build_plan_record
+
+        record = build_plan_record(
+            "full",
+            {"subtasks": [{"id": 1, "title": "core"}, "文字列タスク", {"title": "id無し"}, 42]},
+        )
+        subtasks = record["subtasks"]
+        assert subtasks[0] == {"id": 1, "title": "core"}
+        assert subtasks[1] == {"id": None, "title": "文字列タスク"}
+        assert subtasks[2] == {"id": None, "title": "id無し"}
+        assert subtasks[3] == {"id": None, "title": "42"}
+        # 全要素が dict かつ id/title キーを持つ
+        assert all(set(s.keys()) == {"id", "title"} for s in subtasks)
 
 
 # ---------------------------------------------------------------------------

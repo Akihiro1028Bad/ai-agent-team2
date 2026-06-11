@@ -40,7 +40,9 @@ def extract_plan_json(output: str) -> tuple[str, dict[str, Any] | None]:
     last = matches[-1]
     try:
         parsed = json.loads(last.group(1))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError, RecursionError):
+        # 深いネスト (RecursionError) や不正な JSON でも graceful に
+        # plan_json=None へフォールバックし、フェーズの SUSPEND を避ける
         logger.warning("plan JSON block found but failed to parse")
         return output, None
     if not isinstance(parsed, dict):
@@ -83,10 +85,31 @@ def build_plan_record(plan_depth: str, parsed: dict[str, Any] | None) -> dict[st
         "test_cases": test_cases,
     }
     if plan_depth == "full":
-        subtasks = src.get("subtasks")
+        raw_subtasks = src.get("subtasks")
         record["architecture"] = str(src.get("architecture", ""))
-        record["subtasks"] = subtasks if isinstance(subtasks, list) else []
+        # 消費側が {id, title} を期待するため要素を正規化する (test_cases と同方針)
+        record["subtasks"] = [_normalize_subtask(s) for s in raw_subtasks] if isinstance(raw_subtasks, list) else []
     return record
+
+
+def _normalize_subtask(item: object) -> dict[str, Any]:
+    """subtasks の 1 要素を {id, title} スキーマに正規化する。
+
+    LLM が文字列や想定外の型を返しても安全な dict にそろえる。
+
+    Args:
+        item: subtasks 配列の 1 要素。
+
+    Returns:
+        {"id": int | None, "title": str} 形式の dict。
+    """
+    if not isinstance(item, dict):
+        return {"id": None, "title": str(item)}
+    raw_id = item.get("id")
+    return {
+        "id": raw_id if isinstance(raw_id, int) else None,
+        "title": str(item.get("title", "")),
+    }
 
 
 def plan_json_prompt_section(plan_depth: str) -> str:
