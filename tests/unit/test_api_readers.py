@@ -308,3 +308,110 @@ def test_read_agent_logs_excludes_unterminated_final_line(tmp_path: Path) -> Non
     assert [r.text for r in page.records] == ["done"]  # type: ignore[attr-defined]
     assert page.total == 1  # 未終端行は数えない
     assert page.next_offset == 1  # 未終端行は消費しない
+
+
+# ──────────────────────────────────────
+# read_health (#97)
+# ──────────────────────────────────────
+from datetime import UTC, datetime, timedelta  # noqa: E402
+
+from ai_agent_orchestrator.api.readers import read_health  # noqa: E402
+
+
+def _write_health(workspace: Path, payload: dict[str, object]) -> None:
+    (workspace / "health.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _health_payload(ts: str, *, running: bool = True) -> dict[str, object]:
+    return {
+        "ts": ts,
+        "running": running,
+        "queue": {"active": 1, "queued": 3, "max_total": 2},
+        "repositories": ["owner/repo"],
+        "rate_limit": {"remaining": 4990, "limit": 5000, "reset": 123},
+        "worktrees": 2,
+        "last_poll": {"owner/repo": "2026-06-11T09:59:30+00:00"},
+        "accounts": {"github/default": True},
+    }
+
+
+def test_read_health_absent(tmp_path: Path) -> None:
+    """health.json 不在 → running=False, reason あり."""
+    result = read_health(tmp_path)
+    assert result.running is False
+    assert result.stale is False
+    assert result.reason is not None
+
+
+def test_read_health_normal(tmp_path: Path) -> None:
+    """新鮮な health.json → running=True, 各フィールド反映."""
+    now = datetime.now(UTC).isoformat()
+    _write_health(tmp_path, _health_payload(now))
+    result = read_health(tmp_path)
+    assert result.running is True
+    assert result.stale is False
+    assert result.queue == {"active": 1, "queued": 3, "max_total": 2}
+    assert result.repositories == ["owner/repo"]
+    assert result.rate_limit == {"remaining": 4990, "limit": 5000, "reset": 123}
+    assert result.worktrees == 2
+    assert result.last_poll == {"owner/repo": "2026-06-11T09:59:30+00:00"}
+    assert result.accounts == {"github/default": True}
+
+
+def test_read_health_stale(tmp_path: Path) -> None:
+    """古い ts → running=False, stale=True, 統計は引き継ぎ."""
+    old = (datetime.now(UTC) - timedelta(seconds=1000)).isoformat()
+    _write_health(tmp_path, _health_payload(old, running=True))
+    result = read_health(tmp_path, stale_after_sec=900.0)
+    assert result.running is False
+    assert result.stale is True
+    assert result.reason is not None
+    # 統計はファイル内容を引き継ぐ
+    assert result.worktrees == 2
+    assert result.repositories == ["owner/repo"]
+
+
+def test_read_health_broken_json(tmp_path: Path) -> None:
+    """壊れ JSON → running=False."""
+    (tmp_path / "health.json").write_text("{not json", encoding="utf-8")
+    result = read_health(tmp_path)
+    assert result.running is False
+
+
+def test_read_health_unparseable_ts_is_stale(tmp_path: Path) -> None:
+    """ts がパース不能 → stale 扱い."""
+    payload = _health_payload("2026-06-11T09:59:30+00:00")
+    payload["ts"] = "not-a-timestamp"
+    _write_health(tmp_path, payload)
+    result = read_health(tmp_path)
+    assert result.running is False
+    assert result.stale is True
+
+
+def test_read_health_naive_ts_treated_as_utc_fresh(tmp_path: Path) -> None:
+    """tz 無し ts は UTC とみなされ、新鮮なら running を維持する."""
+    naive = datetime.now(UTC).replace(tzinfo=None).isoformat()
+    payload = _health_payload("x")
+    payload["ts"] = naive
+    _write_health(tmp_path, payload)
+    result = read_health(tmp_path)
+    assert result.stale is False
+    assert result.running is True
+
+
+def test_read_health_missing_ts_is_stale(tmp_path: Path) -> None:
+    """ts キー欠落 → パース不能 → stale 扱い."""
+    payload = _health_payload("x")
+    del payload["ts"]
+    _write_health(tmp_path, payload)
+    result = read_health(tmp_path)
+    assert result.stale is True
+    assert result.running is False
+
+
+def test_read_health_non_dict_json(tmp_path: Path) -> None:
+    """health.json が dict でない (配列等) → 不在扱い."""
+    (tmp_path / "health.json").write_text("[1, 2, 3]", encoding="utf-8")
+    result = read_health(tmp_path)
+    assert result.running is False
+    assert result.reason is not None

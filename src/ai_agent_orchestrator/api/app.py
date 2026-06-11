@@ -21,6 +21,7 @@ from ai_agent_orchestrator.api.readers import (
     load_states,
     merge_activity,
     read_agent_logs,
+    read_health,
     read_issue_events,
     read_issue_summaries,
 )
@@ -30,6 +31,7 @@ from ai_agent_orchestrator.api.schemas import (
     DiffFile,
     DiffResponse,
     EventRecord,
+    HealthResponse,
     IssueDetailResponse,
     IssueSummaryResponse,
 )
@@ -212,6 +214,15 @@ def create_app(settings: AppSettings) -> FastAPI:
     ) -> list[EventRecord]:
         """全 Issue のイベントをマージし ts 降順で返す (既定 100 件)."""
         return merge_activity(workspace, limit=limit)
+
+    @app.get("/api/health", response_model=HealthResponse)
+    async def get_health() -> HealthResponse:
+        """orchestrator の稼働状態を返す (#97).
+
+        health.json を読んで返す。不在/古い/running=false でも 200 で
+        「停止中である」事実を返す (#84 の停止中でも応答する方針)。
+        """
+        return read_health(workspace)
 
     @app.get("/api/costs", response_model=CostsResponse)
     async def get_costs() -> CostsResponse:
