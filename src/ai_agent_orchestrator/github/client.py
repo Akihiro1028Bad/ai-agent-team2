@@ -581,6 +581,54 @@ class GitHubClient:
             if "<!-- ai-agent-bot -->" not in (comment.body or "")
         ]
 
+    async def get_pull_request_files(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> list[dict[str, Any]]:
+        """Pull Request の変更ファイル一覧 (patch 含む) を取得する.
+
+        per_page=100 でページングし全ファイルを収集する。
+
+        Args:
+            owner: リポジトリオーナー.
+            repo: リポジトリ名.
+            pr_number: PR 番号.
+
+        Returns:
+            ファイルごとの辞書リスト (filename, status, additions, deletions, patch).
+            patch は巨大ファイル等で欠損する場合があり None に正規化する.
+
+        Raises:
+            githubkit.exception.RequestFailed: API リクエスト失敗時.
+        """
+        files: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            response = await self._github.rest.pulls.async_list_files(
+                owner=owner,
+                repo=repo,
+                pull_number=pr_number,
+                per_page=100,
+                page=page,
+            )
+            batch: list[Any] = list(response.parsed_data)
+            files.extend(
+                {
+                    "filename": f.filename,
+                    "status": f.status,
+                    "additions": f.additions,
+                    "deletions": f.deletions,
+                    "patch": _unset_to_none(getattr(f, "patch", None)),
+                }
+                for f in batch
+            )
+            if len(batch) < 100:
+                break
+            page += 1
+        return files
+
     async def merge_pull_request(
         self,
         repo: RepositoryConfig,
