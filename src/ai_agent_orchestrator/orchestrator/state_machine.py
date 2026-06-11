@@ -91,6 +91,8 @@ TRANSITION_MAP: dict[tuple[Phase, Phase], str] = {
     (Phase.DESIGN, Phase.DESIGN_REVIEW): "design_to_design_review",
     (Phase.DESIGN, Phase.SUSPENDED): "design_to_suspended",
     (Phase.DESIGN_REVIEW, Phase.IMPLEMENT): "design_review_to_implement",
+    # U4 (#82): APPROVE ゲートの差し戻しは design (PLAN) へ戻す
+    (Phase.DESIGN_REVIEW, Phase.DESIGN): "design_review_to_design",
     (Phase.DESIGN_REVIEW, Phase.DESIGN_REVISE): "design_review_to_design_revise",
     (Phase.DESIGN_REVIEW, Phase.SUSPENDED): "design_review_to_suspended",
     (Phase.DESIGN_REVISE, Phase.DESIGN_REVIEW): "design_revise_to_design_review",
@@ -197,6 +199,8 @@ class IssueWorkflow(StateMachine):
     design_to_suspended = design.to(suspended)
 
     design_review_to_implement = design_review.to(implement)
+    # U4 (#82): 差し戻しは design (PLAN) へ戻して再設計させる
+    design_review_to_design = design_review.to(design)
     design_review_to_design_revise = design_review.to(design_revise)
     design_review_to_suspended = design_review.to(suspended)
 

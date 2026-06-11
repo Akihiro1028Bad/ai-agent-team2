@@ -212,6 +212,23 @@ class TestFeatureMWorkflow:
         assert sm.get_phase(key) == Phase.IMPLEMENT
 
     @pytest.mark.asyncio
+    async def test_feature_m_design_review_to_design_on_rejection(self, sm: StateMachineManager) -> None:
+        """Feature-M: DESIGN_REVIEW -> DESIGN (U4 #82 差し戻しは PLAN へ戻す)."""
+        sm.register_issue(24, "owner/repo")
+        key = _key(24)
+        sm.set_issue_type(key, "feature-m")
+
+        await sm.transition(key, Phase.HEARING)
+        await sm.transition(key, Phase.DESIGN)
+        await sm.transition(key, Phase.DESIGN_REVIEW)
+        await sm.transition(key, Phase.DESIGN)
+        assert sm.get_phase(key) == Phase.DESIGN
+        # 再設計後に再び design-review へ進めること
+        await sm.transition(key, Phase.DESIGN_REVIEW)
+        await sm.transition(key, Phase.IMPLEMENT)
+        assert sm.get_phase(key) == Phase.IMPLEMENT
+
+    @pytest.mark.asyncio
     async def test_feature_m_design_revise(self, sm: StateMachineManager) -> None:
         """Feature-M: DESIGN_REVIEW -> DESIGN_REVISE -> DESIGN_REVIEW -> IMPLEMENT."""
         sm.register_issue(21, "owner/repo")
