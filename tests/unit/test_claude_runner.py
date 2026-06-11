@@ -188,31 +188,40 @@ async def test_run_oneshot_hearing(
 
 
 # ---------------------------------------------------------------------------
-# TC-CR-02: run -- マルチターン実行 (impl_revise フェーズ)
+# TC-CR-02: run -- resume 指定時もポリシー配線済みパスを通る (#101)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_run_multiturn_resume(runner: ClaudeAgentRunner) -> None:
-    """resume_session_id 指定時にセッション継続が行われる."""
-    mock_client = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.session_id = "sess-revise-001"
-    mock_result.total_cost_usd = 1.2
-    mock_result.result = "修正完了"
-    mock_result.duration_ms = 5000
-    mock_client.send = AsyncMock(return_value=mock_result)
-    runner._active_sessions["sess-impl-001"] = mock_client
+@patch("ai_agent_orchestrator.agents.claude_runner.query")
+async def test_run_resume_goes_through_policy_path(
+    mock_query: MagicMock,
+    runner: ClaudeAgentRunner,
+) -> None:
+    """resume_session_id 指定時も options 構築パス (deny/env 遮断) を通る (#101).
+
+    旧「アクティブクライアント経由 resume」分岐はポリシーを素通りするため撤去
+    した。_active_sessions に残骸があっても query パスが使われることを固定する。
+    """
+    captured: list[dict[str, Any]] = []
+    mock_query.side_effect = _make_fake_query(
+        [_make_result_message(session_id="sess-revise-001")],
+        captured,
+    )
+    # 旧分岐が復活していれば、この残骸経由で query を迂回してしまう
+    runner._active_sessions["sess-impl-001"] = AsyncMock()
 
     result = await runner.run(
         prompt="レビュー指摘に対応してください",
         cwd="/tmp/worktree/issue-42",
-        phase="impl-revise",
+        phase="revise",
         resume_session_id="sess-impl-001",
     )
 
     assert result.session_id == "sess-revise-001"
-    mock_client.send.assert_called_once_with("レビュー指摘に対応してください")
+    opts = captured[0]["options"]
+    assert "Bash(gh:*)" in opts.disallowed_tools
+    assert opts.env["GITHUB_TOKEN"] == ""
 
 
 # ---------------------------------------------------------------------------
