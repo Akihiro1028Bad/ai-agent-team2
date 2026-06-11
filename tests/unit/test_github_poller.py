@@ -24,6 +24,8 @@ def _make_repo() -> MagicMock:
     repo.repo = "app"
     repo.label = "ai-agent"
     repo.base_branch = "main"
+    # 承認者許可リスト (#102)。空なら owner ("org") のみが承認者
+    repo.approvers = []
     return repo
 
 
@@ -68,10 +70,15 @@ def _make_comment(
     return comment
 
 
-def _make_reaction(content: str = "+1") -> MagicMock:
-    """テスト用 Reaction モック."""
+def _make_reaction(content: str = "+1", login: str = "org") -> MagicMock:
+    """テスト用 Reaction モック.
+
+    login の既定は owner ("org") = 既定の承認者 (#102)。
+    """
     reaction = MagicMock()
     reaction.content = content
+    reaction.user = MagicMock()
+    reaction.user.login = login
     return reaction
 
 
@@ -477,6 +484,38 @@ class TestDetectPlanReactions:
 
         result = await poller._detect_plan_reactions(client, repo, None)
         assert len(result) == 0
+
+    async def test_unauthorized_thumbsup_not_detected(self) -> None:
+        """許可外ユーザーの 👍 は承認として検知されない (#102)."""
+        client = _make_client()
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:plan-review"])
+        client.get_issues_with_label = AsyncMock(return_value=[issue])
+        bot_comment = _make_comment(comment_id=100, body="方針提案", user_type="Bot")
+        client.list_comments = AsyncMock(return_value=[bot_comment])
+        # owner ("org") 以外のユーザーの 👍
+        client.get_reactions = AsyncMock(return_value=[_make_reaction(content="+1", login="mallory")])
+
+        repo = _make_repo()  # approvers=[] → owner "org" のみ
+        poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
+
+        result = await poller._detect_plan_reactions(client, repo, None)
+        assert len(result) == 0
+
+    async def test_configured_approver_thumbsup_detected(self) -> None:
+        """approvers に明示された非 owner ユーザーの 👍 は承認として検知される (#102)."""
+        client = _make_client()
+        issue = _make_issue(number=1, labels=["ai-agent", "phase:plan-review"])
+        client.get_issues_with_label = AsyncMock(return_value=[issue])
+        bot_comment = _make_comment(comment_id=100, body="方針提案", user_type="Bot")
+        client.list_comments = AsyncMock(return_value=[bot_comment])
+        client.get_reactions = AsyncMock(return_value=[_make_reaction(content="+1", login="reviewer1")])
+
+        repo = _make_repo()
+        repo.approvers = ["reviewer1"]
+        poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
+
+        result = await poller._detect_plan_reactions(client, repo, None)
+        assert len(result) == 1
 
     async def test_plan_reaction_not_re_detected(self) -> None:
         """BUG #3: 同じリアクションが2回目のポーリングで再検知されない."""
@@ -1007,6 +1046,70 @@ class TestRateLimitGuard:
 # ---------------------------------------------------------------------------
 # Tests: _detect_pr_events (インラインのみレビューの検知 / U2)
 # ---------------------------------------------------------------------------
+
+
+class TestGetPrReviewsApproverVerification:
+    """PR approve / LGTM の承認者検証 (#102)."""
+
+    def _setup(
+        self,
+        reviews: list[dict[str, object]],
+        approvers: list[str],
+        comments: list[MagicMock] | None = None,
+    ) -> tuple[AsyncMock, MagicMock, GitHubPoller, MagicMock]:
+        client = _make_client()
+        pr = MagicMock()
+        pr.number = 50
+        pr.title = "設計: #5"
+        pr.body = "Closes #5"
+        pr.merged_at = None
+        pr.merged = False
+        pr.head = MagicMock(ref="feature/issue-5")
+        client.list_pull_requests = AsyncMock(return_value=[pr])
+        client.get_pr_reviews = AsyncMock(return_value=reviews)
+        client.list_comments = AsyncMock(return_value=comments or [])
+        repo = _make_repo()
+        repo.approvers = approvers
+        poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
+        issue = _make_issue(number=5, labels=["ai-agent", "phase:design-review"])
+        return client, repo, poller, issue
+
+    async def test_authorized_approve_is_counted(self) -> None:
+        reviews = [{"id": 1, "state": "APPROVED", "body": "", "user": {"login": "org"}, "submitted_at": ""}]
+        client, repo, poller, issue = self._setup(reviews, [])  # owner "org"
+        result = await poller._get_pr_reviews(client, repo, issue)
+        assert any(r["state"] == "approved" for r in result)
+
+    async def test_unauthorized_approve_is_ignored(self) -> None:
+        """許可外ユーザーの approve は承認として扱われない (#102)."""
+        reviews = [{"id": 1, "state": "APPROVED", "body": "", "user": {"login": "mallory"}, "submitted_at": ""}]
+        client, repo, poller, issue = self._setup(reviews, [])  # owner "org" のみ許可
+        result = await poller._get_pr_reviews(client, repo, issue)
+        assert all(r["state"] != "approved" for r in result)
+
+    async def test_unauthorized_lgtm_review_is_ignored(self) -> None:
+        """許可外ユーザーの LGTM レビューも無視される (#102)."""
+        reviews = [{"id": 2, "state": "COMMENTED", "body": "LGTM", "user": {"login": "mallory"}, "submitted_at": ""}]
+        client, repo, poller, issue = self._setup(reviews, [])
+        result = await poller._get_pr_reviews(client, repo, issue)
+        assert all(r["state"] != "approved" for r in result)
+
+    def _lgtm_comment(self, login: str) -> MagicMock:
+        comment = _make_comment(comment_id=999, body="LGTM", user_type="User")
+        comment.user.login = login
+        return comment
+
+    async def test_unauthorized_lgtm_pr_comment_is_ignored(self) -> None:
+        """PR 一般コメントの LGTM も許可外ユーザーなら無視される (#102)."""
+        client, repo, poller, issue = self._setup([], [], comments=[self._lgtm_comment("mallory")])
+        result = await poller._get_pr_reviews(client, repo, issue)
+        assert all(r["state"] != "approved" for r in result)
+
+    async def test_authorized_lgtm_pr_comment_is_counted(self) -> None:
+        """PR 一般コメントの LGTM が許可された承認者なら承認として扱われる (#102)."""
+        client, repo, poller, issue = self._setup([], [], comments=[self._lgtm_comment("org")])
+        result = await poller._get_pr_reviews(client, repo, issue)
+        assert any(r["state"] == "approved" for r in result)
 
 
 class TestDetectPrEventsInlineOnlyReview:

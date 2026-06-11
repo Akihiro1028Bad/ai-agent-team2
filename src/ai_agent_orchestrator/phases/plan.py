@@ -198,10 +198,15 @@ class PlanExecutor(PhaseExecutor):
 
         from ai_agent_orchestrator.phases.prompt_enhancer import enhance_prompt
 
+        extra = getattr(request, "extra", {}) or {}
+        feedback = extra.get("feedback", "")
+        feedback_section = f"## 前回の設計に対する指摘\n{feedback}\n\n" if feedback else ""
+
         raw = (
             f"以下のIssueの設計書を作成してください。\n\n"
             f"## Issue #{request.issue_number}: {issue.title}\n"
             f"{getattr(issue, 'body', '') or ''}\n\n"
+            f"{feedback_section}"
             f"## ヒアリング記録\n{hearing_log}\n\n"
             f"## コンテキスト\n{context}\n\n"
             f"## 指示\n"

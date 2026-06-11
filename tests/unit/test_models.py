@@ -108,7 +108,8 @@ def test_error_category_values() -> None:
 def test_approval_method_values() -> None:
     assert ApprovalMethod.REACTION == "reaction"
     assert ApprovalMethod.PR_APPROVE == "pr-approve"
-    assert len(ApprovalMethod) == 2
+    assert ApprovalMethod.LGTM == "lgtm"
+    assert len(ApprovalMethod) == 3
 
 
 # ---------------------------------------------------------------------------

@@ -127,6 +127,7 @@ class ApprovalMethod(StrEnum):
 
     REACTION = "reaction"
     PR_APPROVE = "pr-approve"
+    LGTM = "lgtm"
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +275,9 @@ VALID_TRANSITIONS: dict[Phase, list[Phase]] = {
         Phase.SUSPENDED,
     ],
     Phase.DESIGN: [Phase.DESIGN_REVIEW, Phase.SUSPENDED],
-    Phase.DESIGN_REVIEW: [Phase.IMPLEMENT, Phase.DESIGN_REVISE, Phase.SUSPENDED],
+    # U4 (#82): APPROVE ゲートの差し戻しは PLAN (design) へ戻す。
+    # DESIGN_REVISE は後方互換のため残置 (#83 の enum 整理で撤去予定)
+    Phase.DESIGN_REVIEW: [Phase.IMPLEMENT, Phase.DESIGN, Phase.DESIGN_REVISE, Phase.SUSPENDED],
     Phase.DESIGN_REVISE: [Phase.DESIGN_REVIEW, Phase.SUSPENDED],
     # Feature-L ワークフロー
     Phase.SPLIT_PROPOSAL: [Phase.SPLIT_EXECUTE, Phase.HEARING, Phase.SUSPENDED],

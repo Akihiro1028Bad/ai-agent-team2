@@ -142,7 +142,7 @@ class EventRouter:
             PLAN_REACTION_ADDED -> Bug->FIX (👍で方針承認)
             PLAN_COMMENT_ADDED  -> Bug->ANALYSIS (方針指摘で再分析)
             DESIGN_PR_APPROVED  -> IMPLEMENT 遷移 + エンキュー
-            DESIGN_PR_COMMENTED -> DESIGN_REVISE 遷移 + エンキュー
+            DESIGN_PR_COMMENTED -> DESIGN (PLAN) 遷移 + feedback 付きエンキュー (U4 #82)
             IMPL_PR_APPROVED    -> DONE 遷移 + エンキュー
             IMPL_PR_COMMENTED   -> IMPL_REVISE 遷移 + エンキュー
             CI_RESULT (failed)  -> CI_FIX (3回以内) or SUSPENDED
@@ -555,7 +555,12 @@ class EventRouter:
         )
 
     async def _handle_design_pr_commented(self, event: PollEvent) -> None:
-        """設計 PR コメント (指摘): DESIGN_REVISE へ遷移してエンキュー."""
+        """設計 PR の差し戻し (指摘): APPROVE ゲートとして design (PLAN) へ戻す (U4 #82).
+
+        統一パイプラインでは design-review は実装前の APPROVE ゲートであり、
+        その差し戻しは PLAN (design) へ戻して指摘全文を feedback として再設計させる
+        (plan-review→analysis と対称)。指摘全文は extra["feedback"] で渡す。
+        """
         if event.issue is None:
             raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
@@ -567,14 +572,15 @@ class EventRouter:
                 current_phase,
             )
             return
-        await self._sm.transition(issue_key, Phase.DESIGN_REVISE)
+        feedback = (event.extra or {}).get("comments", "")
+        await self._sm.transition(issue_key, Phase.DESIGN)
         await self._tq.enqueue(
             TaskRequest(
                 issue_number=event.issue.number,
                 repo=event.repo,
-                phase=Phase.DESIGN_REVISE.value,
+                phase=Phase.DESIGN.value,
                 priority=Priority.CRITICAL,
-                extra={"comments": event.extra or {}},
+                extra={"feedback": feedback},
             )
         )
 

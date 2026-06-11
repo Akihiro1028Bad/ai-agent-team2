@@ -15,6 +15,13 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from ai_agent_orchestrator.models import EventType, IssueKey, PollEvent
+from ai_agent_orchestrator.orchestrator.approval import (
+    ApprovalDecision,
+    classify_pr_review,
+    has_authorized_approval_reaction,
+    is_authorized_approver,
+    resolve_approvers,
+)
 
 if TYPE_CHECKING:
     from githubkit.versions.latest.models import Issue, IssueComment, PullRequestSimple
@@ -401,6 +408,7 @@ class GitHubPoller:
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:plan-review")
         approved_issues: list[Issue] = []
         repo_key = f"{repo.owner}/{repo.repo}"
+        approvers = resolve_approvers(repo.owner, getattr(repo, "approvers", None))
         logger.debug("plan-reaction detection [%s]: %d plan-review issue(s)", repo_key, len(issues))
         # 方針コメントを識別するパターン (Markdown 見出し)
         plan_markers = ("## 修正方針", "## 方針", "## Analysis", "## Plan", "## 分析結果")
@@ -417,11 +425,25 @@ class GitHubPoller:
                     if reaction_key in self._seen_reactions:
                         continue
                     reactions = await client.get_reactions(repo, comment.id)
-                    has_thumbsup = any(r.content == "+1" for r in reactions)
-                    if has_thumbsup:
+                    # #102: 許可された承認者の 👍 のみを承認として扱う
+                    if has_authorized_approval_reaction(reactions, approvers):
                         self._seen_reactions.add(reaction_key)
                         approved_issues.append(issue)
                         break
+                    # 許可外の 👍 は承認扱いしない。後から正規ユーザーが 👍 する
+                    # ケースを取りこぼさないため _seen_reactions には入れず、
+                    # 警告ログのみ 1 回に dedup する (毎サイクルのログスパム防止)。
+                    if any(getattr(r, "content", None) == "+1" for r in reactions):
+                        log_key = f"unauthorized_reaction:{repo_key}:{issue.number}:{comment.id}"
+                        if log_key not in self._seen_events:
+                            self._seen_events.add(log_key)
+                            logger.info(
+                                "plan-reaction [%s] #%d: 👍 present but no authorized approver "
+                                "(approvers=%s), ignoring",
+                                repo_key,
+                                issue.number,
+                                approvers,
+                            )
         logger.debug("plan-reaction detection [%s]: %d approval(s) detected", repo_key, len(approved_issues))
         return approved_issues
 
@@ -624,6 +646,7 @@ class GitHubPoller:
         """
         events: list[PollEvent] = []
         repo_key = f"{repo.owner}/{repo.repo}"
+        approvers = resolve_approvers(repo.owner, getattr(repo, "approvers", None))
         issues = await client.get_issues_with_label(repo, f"{repo.label},phase:split-proposal")
         logger.debug("split-event detection [%s]: %d split-proposal issue(s)", repo_key, len(issues))
         for issue in issues:
@@ -636,8 +659,8 @@ class GitHubPoller:
                     if reaction_key in self._seen_reactions:
                         continue
                     reactions = await client.get_reactions(repo, comment.id)
-                    has_thumbsup = any(r.content == "+1" for r in reactions)
-                    if has_thumbsup:
+                    # #102: 分割承認も許可された承認者の 👍 のみ有効
+                    if has_authorized_approval_reaction(reactions, approvers):
                         self._seen_reactions.add(reaction_key)
                         events.append(
                             PollEvent(
@@ -805,6 +828,8 @@ class GitHubPoller:
             matching_prs = [pr for pr in closed_prs if self._pr_references_issue(pr, issue.number)]
         approved: list[dict[str, str]] = []
         commented: list[dict[str, str]] = []
+        approvers = resolve_approvers(repo.owner, getattr(repo, "approvers", None))
+        repo_key = f"{repo.owner}/{repo.repo}"
         for pr in matching_prs:
             # マージ済みPRはそれ自体が承認済みとみなす
             merged = getattr(pr, "merged_at", None) is not None or getattr(pr, "merged", False)
@@ -823,14 +848,25 @@ class GitHubPoller:
                 body = review.get("body", "") or ""
                 review_id = str(review.get("id", ""))
                 submitted_at = review.get("submitted_at", "") or ""
-                is_approved = state == "APPROVED"
-                is_lgtm = state == "COMMENTED" and body.strip().upper() == self._approve_comment.upper()
+                reviewer = (review.get("user") or {}).get("login") if isinstance(review.get("user"), dict) else None
+                decision = classify_pr_review(state, body, self._approve_comment)
+                is_approval = decision is ApprovalDecision.APPROVED
+                # #102: 承認は許可された承認者のみ有効。許可外の approve/LGTM は無視
+                if is_approval and not is_authorized_approver(reviewer, approvers):
+                    logger.info(
+                        "pr-review [%s] PR #%d: approval by unauthorized '%s' ignored (approvers=%s)",
+                        repo_key,
+                        pr.number,
+                        reviewer,
+                        approvers,
+                    )
+                    is_approval = False
                 has_content = bool(body)
                 if state == "COMMENTED" and not body:
                     if inline_review_ids is None:
                         inline_review_ids = await self._get_inline_review_ids(client, repo, pr.number)
                     has_content = review_id in inline_review_ids
-                if is_approved or is_lgtm:
+                if is_approval:
                     approved.append({"state": "approved", "body": body, "id": review_id})
                     if submitted_at > last_approved_at:
                         last_approved_at = submitted_at
@@ -844,7 +880,18 @@ class GitHubPoller:
                 body = comment.body or ""
                 if _is_bot_comment(body):
                     continue
-                if body.strip() == self._approve_comment:
+                # PR review 経路と同様に大小無視で比較する (一貫性)
+                if body.strip().upper() == self._approve_comment.upper():
+                    # #102: LGTM コメントも許可された承認者のみ有効
+                    commenter = getattr(getattr(comment, "user", None), "login", None)
+                    if not is_authorized_approver(commenter, approvers):
+                        logger.info(
+                            "pr-review [%s] PR #%d: LGTM comment by unauthorized '%s' ignored",
+                            repo_key,
+                            pr.number,
+                            commenter,
+                        )
+                        continue
                     approved.append({"state": "approved", "body": body, "id": str(comment.id)})
                     break
         # 承認後に新たなコメントレビューがある場合はコメントを優先(修正要求の検知)
