@@ -496,6 +496,20 @@ def test_post_control_unknown_action_returns_422(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
+def test_post_control_oversized_strings_return_422(client: TestClient) -> None:
+    """巨大な文字列/リストは 422 (control.jsonl 読み取り上限を越えさせない DoS 対策)."""
+    big = "x" * 10_000
+    assert client.post("/api/control", json={"action": "pause", "issue": 1, "actor": big}).status_code == 422
+    assert (
+        client.post(
+            "/api/control", json={"action": "set_priority", "issue": 1, "phase": big, "priority": 1, "actor": "a"}
+        ).status_code
+        == 422
+    )
+    huge_order = [{"issue": i + 1, "phase": "p"} for i in range(501)]
+    assert client.post("/api/control", json={"action": "reorder", "order": huge_order, "actor": "a"}).status_code == 422
+
+
 # ──────────────────────────────────────
 # GET /api/approvals (#88 Unit B: 承認待ち一覧)
 # ──────────────────────────────────────

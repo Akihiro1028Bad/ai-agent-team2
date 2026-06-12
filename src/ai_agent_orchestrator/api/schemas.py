@@ -198,7 +198,7 @@ class ControlOrderEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     issue: int = Field(gt=0)
-    phase: str = Field(min_length=1)
+    phase: str = Field(min_length=1, max_length=64)
 
 
 # issue を必要としない全体コマンド (control_bus._GLOBAL_ACTIONS + reorder と整合)。
@@ -234,11 +234,13 @@ class ControlRequest(BaseModel):
         "reorder",
     ]
     issue: int | None = None
-    actor: str = ""
-    phase: str | None = None
+    # 文字列長/件数の上限は control.jsonl の読み取り上限 (10MiB) を巨大入力で
+    # 越えさせない DoS 対策 (認証導入 #115 までの暫定ハードニング)。
+    actor: str = Field(default="", max_length=200)
+    phase: str | None = Field(default=None, max_length=64)
     priority: int | None = None
-    target: str | None = None
-    order: list[ControlOrderEntry] | None = None
+    target: str | None = Field(default=None, max_length=64)
+    order: list[ControlOrderEntry] | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
     def _validate_per_action(self) -> ControlRequest:
