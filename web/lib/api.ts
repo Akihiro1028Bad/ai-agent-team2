@@ -496,6 +496,119 @@ export function adaptQueue(q: ApiQueueResponse): QueueView {
   };
 }
 
+// ── 書き込み API (#88) ──
+
+/**
+ * actor 導出ヘルパ。
+ * "owner/repo" 形式から owner を返す。
+ * #115 で実認証導入までの暫定実装。
+ */
+export function actorForRepo(repo: string): string {
+  return repo.split("/")[0] ?? "";
+}
+
+// control action の型定義 (POST /api/control)
+export type ControlAction =
+  | { action: "pause" | "resume" | "abort" | "retry_with_analysis"; issue: number; actor: string }
+  | { action: "enqueue_issue"; issue: number; actor: string }
+  | { action: "shutdown" | "poll_now" | "worktree_gc"; actor: string }
+  | { action: "set_priority"; issue: number; phase: string; priority: number; actor: string }
+  | {
+      action: "rewind";
+      issue: number;
+      target:
+        | "intake"
+        | "clarify"
+        | "clarify-wait"
+        | "split"
+        | "plan"
+        | "approve"
+        | "implement"
+        | "review"
+        | "revise";
+      actor: string;
+    }
+  | { action: "reorder"; order: { issue: number; phase: string }[]; actor: string };
+
+export type ControlRequest = ControlAction;
+
+async function apiPost<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    throw new ApiError(0, `API へ接続できません (${path})`);
+  }
+  if (!res.ok) {
+    throw new ApiError(res.status, `API エラー ${res.status} (${path})`);
+  }
+  return (await res.json()) as T;
+}
+
+/** POST /api/control → 202 {accepted: true} */
+export async function postControl(req: ControlRequest, signal?: AbortSignal): Promise<void> {
+  await apiPost<{ accepted: boolean }>("/api/control", req, signal);
+}
+
+/**
+ * グローバルコマンド (poll_now / worktree_gc 等) 用の actor を実データから導出する。
+ * 監視中 Issue の repo owner = 既定の承認者を使う。取れなければ空文字
+ * (orchestrator 側の認可で無視される)。#115 で実認証導入までの暫定。
+ */
+export async function getDefaultActor(signal?: AbortSignal): Promise<string> {
+  try {
+    const rows = await apiGet<ApiIssueSummary[]>("/api/issues", signal);
+    return actorForRepo(rows[0]?.repo ?? "");
+  } catch {
+    return "";
+  }
+}
+
+// ── 承認待ち (#88) ──
+
+export interface ApiApprovalEntry {
+  repo: string;
+  issue_number: number;
+  phase: "approve" | "review";
+  pr_number: number | null;
+  updated_at: string;
+}
+
+export interface ApprovalRow {
+  repo: string;
+  issue: number;
+  phase: "approve" | "review";
+  prNumber: number | null;
+  updatedAt: string;
+}
+
+export function adaptApproval(a: ApiApprovalEntry): ApprovalRow {
+  return {
+    repo: a.repo,
+    issue: a.issue_number,
+    phase: a.phase,
+    prNumber: a.pr_number,
+    updatedAt: formatRelative(a.updated_at),
+  };
+}
+
+/** GET /api/approvals */
+export async function getApprovals(signal?: AbortSignal): Promise<ApprovalRow[]> {
+  const rows = await apiGet<ApiApprovalEntry[]>("/api/approvals", signal);
+  return rows.map(adaptApproval);
+}
+
+/** POST /api/issues/{n}/reply → 201 {posted: true} */
+export async function postReply(issue: number, text: string, signal?: AbortSignal): Promise<void> {
+  await apiPost<{ posted: boolean }>(`/api/issues/${issue}/reply`, { text }, signal);
+}
+
 // ── エンドポイント ──
 
 export const api = {
@@ -521,6 +634,14 @@ export const api = {
     apiGet<ApiDiffResponse>(`/api/issues/${n}/diff`, signal).then(adaptDiff),
 
   getQueue: (signal?: AbortSignal) => apiGet<ApiQueueResponse>("/api/queue", signal).then(adaptQueue),
+
+  getApprovals: (signal?: AbortSignal) => getApprovals(signal),
+
+  getDefaultActor: (signal?: AbortSignal) => getDefaultActor(signal),
+
+  postControl: (req: ControlRequest, signal?: AbortSignal) => postControl(req, signal),
+
+  postReply: (issue: number, text: string, signal?: AbortSignal) => postReply(issue, text, signal),
 };
 
 /** SSE ストリームの URL を組み立てる (EventSource 用、相対パス)。 */

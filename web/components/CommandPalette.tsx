@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { issues } from "@/lib/mock";
+import { api } from "@/lib/api";
 import { Portal } from "./Portal";
 import { IconArrow, IconBolt, IconGrid, IconSearch } from "./icons";
 import { TypeTag } from "./ui";
@@ -31,7 +32,7 @@ const PAGE_ITEMS: PaletteItem[] = [
 const ACTION_ITEMS: PaletteItem[] = [
   { id: "a-stop", group: "操作", label: "オーケストレーターを停止", hint: "確認あり", keywords: "stop 停止" },
   { id: "a-poll", group: "操作", label: "今すぐポーリング実行", hint: "即時", keywords: "poll 取得" },
-  { id: "a-gc", group: "操作", label: "worktree をクリーンアップ", hint: "孤児を削除", keywords: "worktree gc clean" },
+  { id: "a-gc", group: "操作", label: "worktree を掃除", hint: "孤児を削除", keywords: "worktree gc clean" },
 ];
 
 export function CommandPalette() {
@@ -83,11 +84,39 @@ export function CommandPalette() {
     (item: PaletteItem) => {
       if (item.href) {
         router.push(item.href);
-      } else {
-        setToast(`「${item.label}」を実行しました（モック）`);
-        setTimeout(() => setToast(null), 2600);
+        close();
+        return;
       }
       close();
+      if (item.id === "a-poll") {
+        // actor は実データ (監視中 Issue の repo owner) から導出する。
+        api
+          .getDefaultActor()
+          .then((actor) => api.postControl({ action: "poll_now", actor }))
+          .then(() => {
+            setToast("GitHub ポーリングを実行しました");
+            setTimeout(() => setToast(null), 2600);
+          })
+          .catch(() => {
+            setToast("ポーリングの送信に失敗しました");
+            setTimeout(() => setToast(null), 3200);
+          });
+      } else if (item.id === "a-gc") {
+        api
+          .getDefaultActor()
+          .then((actor) => api.postControl({ action: "worktree_gc", actor }))
+          .then(() => {
+            setToast("worktree のクリーンアップを開始しました");
+            setTimeout(() => setToast(null), 2600);
+          })
+          .catch(() => {
+            setToast("worktree_gc の送信に失敗しました");
+            setTimeout(() => setToast(null), 3200);
+          });
+      } else {
+        setToast(`「${item.label}」を実行しました`);
+        setTimeout(() => setToast(null), 2600);
+      }
     },
     [router, close],
   );
