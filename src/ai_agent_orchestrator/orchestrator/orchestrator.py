@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -49,6 +50,22 @@ if TYPE_CHECKING:
     from ai_agent_orchestrator.phases.dispatcher import PhaseExecutorLike
 
 logger = logging.getLogger(__name__)
+
+# worktree ディレクトリ名 (例: "feature-issue-42" / "docs-issue-42") から issue 番号を抽出する。
+_WORKTREE_ISSUE_RE = re.compile(r"-issue-(\d+)$")
+
+
+def _extract_worktree_issue_number(name: str) -> int | None:
+    """worktree ディレクトリ名から issue 番号を抽出する (#96 worktree_gc).
+
+    Args:
+        name: worktree ディレクトリ名 (``feature-issue-42`` 等)。
+
+    Returns:
+        抽出した issue 番号。命名規則に一致しなければ None。
+    """
+    match = _WORKTREE_ISSUE_RE.search(name)
+    return int(match.group(1)) if match else None
 
 
 # ---------------------------------------------------------------------------
@@ -827,6 +844,12 @@ class Orchestrator:
             await self._handle_resume(cmd)
         elif cmd.action == "abort":
             await self._handle_abort(cmd)
+        elif cmd.action == "poll_now":
+            await self._handle_poll_now(cmd)
+        elif cmd.action == "worktree_gc":
+            await self._handle_worktree_gc(cmd)
+        elif cmd.action == "enqueue_issue":
+            await self._handle_enqueue_issue(cmd)
 
     async def _audit_control(self, event: str, cmd: OperationalCommand) -> None:
         """運用コマンドの適用を events.jsonl に監査記録する."""
@@ -886,6 +909,78 @@ class Orchestrator:
             logger.warning("abort: SUSPENDED への遷移に失敗 (#%d): %s", cmd.issue_number, exc)
 
         await self._audit_control("issue_aborted", cmd)
+
+    async def _handle_poll_now(self, cmd: OperationalCommand) -> None:
+        """poll_now: poller の待機を起こし、次のポーリングを前倒しする (#96)."""
+        trigger = getattr(self._poller, "request_poll_now", None)
+        if callable(trigger):
+            trigger()
+        else:
+            logger.debug("poll_now: poller が request_poll_now 未対応のため無視")
+        await self._audit_control("poll_now_requested", cmd)
+
+    async def _handle_worktree_gc(self, cmd: OperationalCommand) -> None:
+        """worktree_gc: 全 repo の孤児 worktree (未登録 or DONE) を掃除する (#96)."""
+        removed = 0
+        for repo in self._settings.repositories:
+            repo_key = f"{repo.owner}/{repo.repo}"
+            try:
+                worktrees = await self._workspace_manager.list_worktrees(repo)
+            except Exception as exc:
+                logger.warning("worktree_gc: 一覧取得に失敗 (%s): %s", repo_key, exc)
+                continue
+            for path in worktrees:
+                issue_number = _extract_worktree_issue_number(path.name)
+                if issue_number is None or not self._is_orphan_worktree(repo_key, issue_number):
+                    continue
+                try:
+                    await self._workspace_manager.remove_worktree(repo, issue_number)
+                    removed += 1
+                except Exception as exc:
+                    logger.warning("worktree_gc: 削除に失敗 (%s #%d): %s", repo_key, issue_number, exc)
+        logger.info("worktree_gc: 孤児 worktree %d 件を削除", removed)
+        await self._audit_control("worktree_gc", cmd)
+
+    def _is_orphan_worktree(self, repo_key: str, issue_number: int) -> bool:
+        """worktree が孤児 (未登録 or DONE) かを判定する (#96 worktree_gc)."""
+        issue_key = make_issue_key(repo_key, issue_number)
+        if issue_key not in self._state_machine._states:
+            return True
+        return self._state_machine.get_phase(issue_key) is Phase.DONE
+
+    async def _handle_enqueue_issue(self, cmd: OperationalCommand) -> None:
+        """enqueue_issue: issue にトリガラベルを付与し、poller の検知フローへ載せる (#96).
+
+        control.jsonl から直接キューへ投入せず、既存の「ラベル → poller 検知」経路に
+        乗せることで、新規検知と再投入を同一フローへ集約する。
+        """
+        if cmd.issue_number is None:
+            return
+        repo_config = self._repo_for_enqueue(cmd.issue_number)
+        if repo_config is None:
+            logger.warning("enqueue_issue: repo を解決できません (#%d)", cmd.issue_number)
+            return
+        try:
+            client = await self._account_manager.get_client_for_repo(repo_config.owner, repo_config.repo)
+            await client.add_label(repo_config, cmd.issue_number, repo_config.label)
+        except Exception as exc:
+            logger.warning("enqueue_issue: ラベル付与に失敗 (#%d): %s", cmd.issue_number, exc)
+            return
+        await self._audit_control("issue_enqueued", cmd)
+
+    def _repo_for_enqueue(self, issue_number: int) -> RepositoryConfig | None:
+        """enqueue_issue 対象の repo を解決する (#96).
+
+        登録済み issue は state machine から repo を引く。未登録 (新規) でも、
+        設定リポジトリが 1 件なら一意に決まるためそれを使う。複数 repo で未登録の
+        場合は repo を特定できないため None (将来 #88 で repo 指定を追加予定)。
+        """
+        matches = [key for key in self._state_machine._states if key[1] == issue_number]
+        if len(matches) == 1:
+            return self._repo_config_for(matches[0][0])
+        if len(self._settings.repositories) == 1:
+            return self._settings.repositories[0]
+        return None
 
     async def _handle_shutdown(self, cmd: OperationalCommand) -> None:
         """shutdown: drain を要求し、in-flight 完了後に graceful stop する."""

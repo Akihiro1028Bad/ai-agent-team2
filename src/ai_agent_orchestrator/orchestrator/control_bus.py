@@ -1,4 +1,8 @@
-"""ControlBus: control.jsonl の運用コマンド (shutdown/pause/resume/abort) (#87).
+"""ControlBus: control.jsonl の運用コマンド (#87 基盤 + #96 拡張).
+
+対応 action: pause / resume / abort / shutdown (#87)、
+poll_now / worktree_gc / enqueue_issue (#96)。
+poll_now / worktree_gc は issue 不要の全体コマンド、それ以外は issue-scoped。
 
 Web UI 等からの介入を、実行中の asyncio タスクに直接触れず安全に適用するための
 ファイルベースのコマンドキュー。control.jsonl は承認系 (approve/reject,
@@ -28,10 +32,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-OperationalAction = Literal["pause", "resume", "abort", "shutdown"]
-_OPERATIONAL_ACTIONS: frozenset[str] = frozenset({"pause", "resume", "abort", "shutdown"})
-# issue 番号を必要としない全体コマンド。
-_GLOBAL_ACTIONS: frozenset[str] = frozenset({"shutdown"})
+OperationalAction = Literal[
+    "pause",
+    "resume",
+    "abort",
+    "shutdown",
+    "poll_now",
+    "worktree_gc",
+    "enqueue_issue",
+]
+_OPERATIONAL_ACTIONS: frozenset[str] = frozenset(
+    {"pause", "resume", "abort", "shutdown", "poll_now", "worktree_gc", "enqueue_issue"}
+)
+# issue 番号を必要としない全体コマンド (shutdown と #96 の poll_now / worktree_gc)。
+_GLOBAL_ACTIONS: frozenset[str] = frozenset({"shutdown", "poll_now", "worktree_gc"})
 # DoS 対策: control.jsonl の最大サイズ (10 MiB)。control_file.py と同値。
 _MAX_CONTROL_FILE_BYTES = 10 * 1024 * 1024
 

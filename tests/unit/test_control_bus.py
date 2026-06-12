@@ -48,6 +48,19 @@ class TestParseOperationalLine:
         assert cmd is not None
         assert cmd.actor == ""
 
+    def test_global_simple_commands(self) -> None:
+        # poll_now / worktree_gc は issue 不要の全体コマンド (#96)
+        for action in ("poll_now", "worktree_gc"):
+            cmd = parse_operational_line(json.dumps({"action": action, "actor": "alice"}))
+            assert cmd == OperationalCommand(action=action, issue_number=None, actor="alice")
+
+    def test_enqueue_issue_is_issue_scoped(self) -> None:
+        # enqueue_issue は issue 番号必須 (#96)
+        cmd = parse_operational_line(json.dumps({"action": "enqueue_issue", "issue": 9, "actor": "alice"}))
+        assert cmd == OperationalCommand(action="enqueue_issue", issue_number=9, actor="alice")
+        assert parse_operational_line(json.dumps({"action": "enqueue_issue", "actor": "alice"})) is None
+        assert parse_operational_line(json.dumps({"action": "enqueue_issue", "issue": 0, "actor": "alice"})) is None
+
 
 class TestReadNewOperationalCommands:
     def test_returns_only_authorized_new_commands(self, tmp_path: Path) -> None:

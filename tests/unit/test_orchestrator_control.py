@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from ai_agent_orchestrator.config.settings import (
     AppSettings,
@@ -121,6 +121,62 @@ class TestControlConsume:
         # 同じ workspace の新インスタンスは offset を引き継ぐ (処理済みを再適用しない)
         orch2 = _make_orchestrator(tmp_path)
         assert orch2._load_control_offset() == 1
+
+
+class TestExtendedCommands:
+    """#96 Unit B: poll_now / worktree_gc / enqueue_issue."""
+
+    async def test_poll_now_triggers_poller(self, tmp_path: Path) -> None:
+        poller = MagicMock()
+        orch = _make_orchestrator(tmp_path, poller=poller)
+        _write_control(orch, {"action": "poll_now", "actor": "test-owner"})
+
+        await orch._consume_control_commands()
+
+        poller.request_poll_now.assert_called_once()
+
+    async def test_poll_now_noop_when_poller_lacks_hook(self, tmp_path: Path) -> None:
+        # NullPoller は request_poll_now を持たない → 例外を出さず素通り
+        orch = _make_orchestrator(tmp_path)
+        _write_control(orch, {"action": "poll_now", "actor": "test-owner"})
+
+        await orch._consume_control_commands()
+
+        assert orch._control_offset == 1
+
+    async def test_enqueue_issue_adds_trigger_label(self, tmp_path: Path) -> None:
+        account_mgr = AsyncMock()
+        client = AsyncMock()
+        account_mgr.get_client_for_repo = AsyncMock(return_value=client)
+        orch = _make_orchestrator(tmp_path, account_manager=account_mgr)
+        _write_control(orch, {"action": "enqueue_issue", "issue": 9, "actor": "test-owner"})
+
+        await orch._consume_control_commands()
+
+        repo = orch._settings.repositories[0]
+        client.add_label.assert_awaited_once_with(repo, 9, repo.label)
+
+    async def test_worktree_gc_removes_only_orphans(self, tmp_path: Path) -> None:
+        workspace = AsyncMock()
+        workspace.list_worktrees = AsyncMock(
+            return_value=[
+                Path("/wt/feature-issue-7"),  # 未登録 → 孤児 → 削除
+                Path("/wt/feature-issue-8"),  # 実行中 (登録済み) → 保持
+                Path("/wt/feature-issue-9"),  # DONE → 孤児 → 削除
+            ]
+        )
+        orch = _make_orchestrator(tmp_path, workspace_manager=workspace)
+        orch._state_machine.register_issue(8, REPO, initial_phase=Phase.IMPLEMENT)
+        orch._state_machine.register_issue(9, REPO, initial_phase=Phase.DONE)
+        _write_control(orch, {"action": "worktree_gc", "actor": "test-owner"})
+
+        await orch._consume_control_commands()
+
+        repo = orch._settings.repositories[0]
+        removed = {call.args[1] for call in workspace.remove_worktree.await_args_list}
+        assert removed == {7, 9}
+        for call in workspace.remove_worktree.await_args_list:
+            assert call.args[0] is repo
 
 
 class TestQueueJson:

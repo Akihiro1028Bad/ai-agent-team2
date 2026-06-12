@@ -159,6 +159,8 @@ class GitHubPoller:
         self._min_rate_limit_remaining = min_rate_limit_remaining
         self._last_poll: dict[str, datetime] = {}
         self._running = False
+        # #96 poll_now: セットされるとポーリング待機を即時打ち切る。
+        self._poll_now_event = asyncio.Event()
         # BUG #1: Track seen issue keys to avoid re-detecting as "new"
         self._seen_issue_numbers: _BoundedSet = _BoundedSet()
         # BUG #3: Track seen reactions (repo_key, issue_number, comment_id)
@@ -208,11 +210,30 @@ class GitHubPoller:
                             error=e,
                         )
                     )
-            await asyncio.sleep(self._interval_sec)
+            await self._wait_next_cycle()
+
+    async def _wait_next_cycle(self) -> None:
+        """次サイクルまで待機する。poll_now 要求があれば即時に打ち切る (#96)."""
+        try:
+            await asyncio.wait_for(self._poll_now_event.wait(), timeout=self._interval_sec)
+        except TimeoutError:
+            pass
+        finally:
+            self._poll_now_event.clear()
+
+    def request_poll_now(self) -> None:
+        """次のポーリングを前倒しする (ControlBus の poll_now コマンド用, #96).
+
+        待機中の ``_wait_next_cycle`` を起こし、interval を待たずに次サイクルを開始する。
+        スレッド/ループ間ではなく同一イベントループ内からの呼び出しを想定。
+        """
+        self._poll_now_event.set()
 
     async def stop(self) -> None:
         """ポーリングループを停止する."""
         self._running = False
+        # 待機中の場合に即座に起こして停止を早める。
+        self._poll_now_event.set()
 
     async def _poll_repo(
         self,
