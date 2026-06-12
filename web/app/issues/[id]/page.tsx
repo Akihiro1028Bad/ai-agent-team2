@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
@@ -12,7 +12,7 @@ import { IssueControls } from "@/components/IssueControls";
 import { LogViewer } from "@/components/LogViewer";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { ComingSoon } from "@/components/ComingSoon";
-import { IconArrow, IconCheck, IconDiff, IconExternal, IconGate } from "@/components/icons";
+import { IconArrow, IconCheck, IconDiff, IconExternal, IconGate, IconX } from "@/components/icons";
 import type { ApiError } from "@/lib/api";
 
 export default function IssueDetailPage() {
@@ -25,6 +25,11 @@ export default function IssueDetailPage() {
   );
 
   const { data: issue, error, loading } = usePolling(fetcher, 5000);
+
+  // ヒアリング回答送信 (#88)
+  const [replyText, setReplyText] = useState("");
+  const [replySending, setReplySending] = useState(false);
+  const [replyMessage, setReplyMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   // 実 API の PR 番号で導線の表示を判定する (差分/設計レビューへのリンク)。
   const hasPr = issue?.prNumber != null;
@@ -98,7 +103,59 @@ export default function IssueDetailPage() {
           <PhaseRail phase={issue.phase} accent={phaseAccent[issue.phase]} variant="full" />
         </div>
 
-        <IssueControls issue={issue.number} status={issue.status} phase={issue.phase} />
+        <IssueControls issue={issue.number} status={issue.status} phase={issue.phase} repo={issue.repo} />
+
+        {/* ヒアリング回答ボックス (clarify-wait 時のみ表示) */}
+        {issue.phase === "clarify" && issue.status === "waiting" && (
+          <div className="mt-4 rounded-xl border p-4" style={{ borderColor: "color-mix(in srgb, var(--color-amber) 35%, transparent)", background: "color-mix(in srgb, var(--color-amber) 6%, transparent)" }}>
+            <div className="mb-2 flex items-center gap-2">
+              <span className="block h-1.5 w-1.5 rounded-full" style={{ background: "var(--color-amber)" }} />
+              <span className="text-[12.5px] font-medium" style={{ color: "var(--color-amber)" }}>
+                エージェントが回答を待っています
+              </span>
+            </div>
+            <textarea
+              value={replyText}
+              onChange={(e) => setReplyText(e.target.value)}
+              disabled={replySending}
+              placeholder="回答を入力…（送信するとエージェントへ渡されます）"
+              rows={3}
+              className="mb-3 w-full resize-none rounded-xl border bg-transparent px-3.5 py-2.5 text-[13px] outline-none placeholder:text-[var(--color-ink-faint)] focus:border-[var(--color-line-2)] disabled:opacity-50"
+              style={{ borderColor: "var(--color-line)" }}
+            />
+            <div className="flex items-center gap-3">
+              <button
+                disabled={replySending || replyText.trim().length === 0}
+                onClick={() => {
+                  const text = replyText.trim();
+                  if (!text) return;
+                  setReplySending(true);
+                  setReplyMessage(null);
+                  api.postReply(id, text)
+                    .then(() => {
+                      setReplyText("");
+                      setReplyMessage({ ok: true, text: "回答を送信しました。エージェントが処理を再開します。" });
+                      setTimeout(() => setReplyMessage(null), 4000);
+                    })
+                    .catch(() => {
+                      setReplyMessage({ ok: false, text: "送信に失敗しました。少し待ってから再試行してください。" });
+                    })
+                    .finally(() => setReplySending(false));
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium disabled:opacity-40"
+                style={{ color: "#0b0d10", background: "var(--color-amber)" }}
+              >
+                <IconArrow width={14} height={14} /> {replySending ? "送信中…" : "回答を送信"}
+              </button>
+              {replyMessage && (
+                <span className="inline-flex items-center gap-1.5 text-[12px]" style={{ color: replyMessage.ok ? "var(--color-cyan)" : "var(--color-rose)" }}>
+                  {replyMessage.ok ? <IconCheck width={13} height={13} /> : <IconX width={13} height={13} />}
+                  {replyMessage.text}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {hasPr && (
           <Link href={`/issues/${id}/diff`} className="mt-4 flex items-center justify-between rounded-xl border px-4 py-3 transition-colors" style={{ borderColor: "color-mix(in srgb, var(--color-cyan) 32%, transparent)", background: "color-mix(in srgb, var(--color-cyan) 7%, transparent)" }}>

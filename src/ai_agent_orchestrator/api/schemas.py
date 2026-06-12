@@ -192,28 +192,115 @@ class QueueResponse(BaseModel):
     max_per_repo: int = 0
 
 
-class ControlRequest(BaseModel):
-    """POST /api/control のリクエストボディ.
+class ControlOrderEntry(BaseModel):
+    """reorder の order 要素 (希望順の 1 エントリ)."""
 
-    shutdown 以外の action では issue が正整数必須。
-    shutdown では issue は不要 (指定しても無視)。
+    model_config = ConfigDict(extra="forbid")
+
+    issue: int = Field(gt=0)
+    phase: str = Field(min_length=1, max_length=64)
+
+
+# issue を必要としない全体コマンド (control_bus._GLOBAL_ACTIONS + reorder と整合)。
+_CONTROL_GLOBAL_ACTIONS: frozenset[str] = frozenset({"shutdown", "poll_now", "worktree_gc", "reorder"})
+
+
+class ControlRequest(BaseModel):
+    """POST /api/control のリクエストボディ (#87 基盤 + #88 で全語彙対応).
+
+    ControlBus の ``parse_operational_line`` と対称の per-action 検証を行い、
+    orchestrator 側の読み飛ばし (サイレント無視) ではなく API の 422 で弾く。
+
+    - global (shutdown/poll_now/worktree_gc): issue 不要 (指定しても無視)
+    - issue-scoped (pause/resume/abort/enqueue_issue/retry_with_analysis): issue 必須
+    - set_priority: issue + phase + priority 必須
+    - rewind: issue + target (resume 可能な Phase 値) 必須
+    - reorder: order (非空リスト) 必須・issue 不要
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["pause", "resume", "abort", "shutdown"]
+    action: Literal[
+        "pause",
+        "resume",
+        "abort",
+        "shutdown",
+        "poll_now",
+        "worktree_gc",
+        "enqueue_issue",
+        "retry_with_analysis",
+        "set_priority",
+        "rewind",
+        "reorder",
+    ]
     issue: int | None = None
-    actor: str = ""
+    # 文字列長/件数の上限は control.jsonl の読み取り上限 (10MiB) を巨大入力で
+    # 越えさせない DoS 対策 (認証導入 #115 までの暫定ハードニング)。
+    actor: str = Field(default="", max_length=200)
+    phase: str | None = Field(default=None, max_length=64)
+    priority: int | None = None
+    target: str | None = Field(default=None, max_length=64)
+    order: list[ControlOrderEntry] | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
-    def _validate_issue_required(self) -> ControlRequest:
-        """shutdown 以外では issue が正整数であることを検証する."""
-        if self.action != "shutdown" and (self.issue is None or self.issue <= 0):
+    def _validate_per_action(self) -> ControlRequest:
+        """action ごとの必須フィールドを検証する (parse_operational_line と対称)."""
+        if self.action not in _CONTROL_GLOBAL_ACTIONS and (self.issue is None or self.issue <= 0):
             raise ValueError(f"action='{self.action}' requires a positive integer 'issue'")
+        if self.action == "set_priority":
+            if not self.phase:
+                raise ValueError("action='set_priority' requires a non-empty 'phase'")
+            if self.priority is None:
+                raise ValueError("action='set_priority' requires an integer 'priority'")
+        if self.action == "rewind":
+            from ai_agent_orchestrator.orchestrator.control_bus import REWIND_TARGETS
+
+            if self.target not in REWIND_TARGETS:
+                raise ValueError(f"action='rewind' requires 'target' in {sorted(REWIND_TARGETS)}")
+        if self.action == "reorder" and not self.order:
+            raise ValueError("action='reorder' requires a non-empty 'order' list")
         return self
+
+    def to_control_record(self) -> dict[str, object]:
+        """control.jsonl へ追記する行 (parse_operational_line が読める形) を返す."""
+        record: dict[str, object] = {"action": self.action, "actor": self.actor}
+        if self.action not in _CONTROL_GLOBAL_ACTIONS:
+            record["issue"] = self.issue
+        if self.action == "set_priority":
+            record["phase"] = self.phase
+            record["priority"] = self.priority
+        if self.action == "rewind":
+            record["target"] = self.target
+        if self.action == "reorder" and self.order is not None:
+            record["order"] = [{"issue": e.issue, "phase": e.phase} for e in self.order]
+        return record
 
 
 class ControlAcceptedResponse(BaseModel):
     """POST /api/control のレスポンスボディ."""
 
     accepted: bool
+
+
+class ApprovalEntry(BaseModel):
+    """GET /api/approvals の 1 エントリ (人間の承認/レビュー待ち Issue)."""
+
+    repo: str
+    issue_number: int
+    phase: str
+    pr_number: int | None = None
+    updated_at: str = ""
+
+
+class ReplyRequest(BaseModel):
+    """POST /api/issues/{n}/reply のリクエストボディ (ヒアリング回答)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=65536)
+
+
+class ReplyResponse(BaseModel):
+    """POST /api/issues/{n}/reply のレスポンスボディ."""
+
+    posted: bool

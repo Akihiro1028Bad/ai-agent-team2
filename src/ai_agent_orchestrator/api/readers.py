@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from ai_agent_orchestrator.api.schemas import (
     AgentLogPage,
     AgentLogRecord,
+    ApprovalEntry,
     CostsResponse,
     EventRecord,
     HealthResponse,
@@ -141,6 +142,37 @@ def read_queue(workspace: Path) -> QueueResponse:
     except ValidationError:
         logger.warning("queue.json の型検証に失敗: %s", path, exc_info=True)
         return QueueResponse(running=False, reason=_QUEUE_CORRUPT_REASON)
+
+
+# 人間の承認/レビュー待ちとして扱うフェーズ (#88 承認待ち一覧)。
+_APPROVAL_WAIT_PHASES: frozenset[str] = frozenset({"approve", "review"})
+
+
+def read_approvals(workspace: Path) -> list[ApprovalEntry]:
+    """state.json から人間の承認/レビュー待ち Issue を導出する (#88).
+
+    approve (計画承認待ち) と review (PR レビュー待ち) の Issue を
+    updated_at 降順で返す。state.json 不在は空リスト。
+
+    Args:
+        workspace: ワークスペースのルートパス。
+
+    Returns:
+        ApprovalEntry のリスト (updated_at 降順)。
+    """
+    entries = [
+        ApprovalEntry(
+            repo=repo,
+            issue_number=state.issue_number,
+            phase=state.phase.value,
+            pr_number=state.pr_number,
+            updated_at=state.updated_at,
+        )
+        for (repo, _number), state in load_states(workspace).items()
+        if state.phase.value in _APPROVAL_WAIT_PHASES
+    ]
+    entries.sort(key=lambda e: e.updated_at, reverse=True)
+    return entries
 
 
 def _events_file(workspace: Path, issue_number: int) -> Path:

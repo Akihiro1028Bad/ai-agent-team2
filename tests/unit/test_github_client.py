@@ -357,6 +357,25 @@ async def test_create_comment_posts_body(
     assert comment.body == "test body"
     request_body = route.calls[0].request.content
     assert b"test body" in request_body
+    # 既定では bot マーカーが付与される
+    assert b"ai-agent-bot" in request_body
+
+
+@respx.mock
+async def test_create_comment_without_bot_marker(
+    client: GitHubClient,
+    repo_config: RepositoryConfig,
+) -> None:
+    """mark_as_bot=False では bot マーカーを付けない (#88 ヒアリング回答の人間検知用)."""
+    route = respx.post("https://api.github.com/repos/test-org/test-repo/issues/42/comments").mock(
+        return_value=httpx.Response(201, json=_comment(100, body="human reply"))
+    )
+
+    await client.create_comment(repo_config, 42, "human reply", mark_as_bot=False)
+
+    request_body = route.calls[0].request.content
+    assert b"human reply" in request_body
+    assert b"ai-agent-bot" not in request_body
 
 
 @respx.mock

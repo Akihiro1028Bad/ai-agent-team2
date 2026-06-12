@@ -2,8 +2,11 @@
 
 import { useState } from "react";
 import { repos } from "@/lib/mock";
+import { api, actorForRepo } from "@/lib/api";
 import { Portal } from "./Portal";
 import { IconCheck, IconX } from "./icons";
+
+// TODO #118: 複数 repo 環境では repo 指定 UI を追加予定。現状は表示中 repos の先頭を使う。
 
 type Mode = "url" | "new";
 
@@ -16,23 +19,45 @@ export function AddIssueButton() {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [done, setDone] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const valid = mode === "url" ? /github\.com\/.+\/issues\/\d+/.test(url) : title.trim().length > 0;
 
   const reset = () => {
     setOpen(false);
     setDone(null);
+    setErrorMsg(null);
     setUrl("");
     setTitle("");
     setBody("");
   };
 
-  const submit = () => {
-    if (mode === "url") {
-      const num = url.match(/issues\/(\d+)/)?.[1];
-      setDone(`#${num} に ai-agent ラベルを付与し、受付キューに追加しました。次回ポーリングで intake から処理開始します。`);
-    } else {
-      setDone(`${repo} に Issue を起票し、受付キューに追加しました（#132・モック）。`);
+  const submit = async () => {
+    setErrorMsg(null);
+    setSending(true);
+    try {
+      if (mode === "url") {
+        const num = url.match(/issues\/(\d+)/)?.[1];
+        const issueNum = Number(num);
+        if (!issueNum) {
+          setErrorMsg("Issue 番号を取得できません。URL を確認してください。");
+          return;
+        }
+        // URL から repo を導出する (例: github.com/owner/repo/issues/123)
+        const repoFromUrl = url.match(/github\.com\/([^/]+\/[^/]+)\/issues/)?.[1] ?? repos[0].repo;
+        const actor = actorForRepo(repoFromUrl);
+        await api.postControl({ action: "enqueue_issue", issue: issueNum, actor });
+        setDone(`#${issueNum} に ai-agent ラベルを付与し、受付キューに追加しました。次回ポーリングで intake から処理開始します。`);
+      } else {
+        // 新規起票は GitHub API 経由 (現 API スコープ外)。Issue 番号が不明なため
+        // enqueue_issue は送れない。#118 で新規起票 API 追加時に実装予定。
+        setErrorMsg("新規起票は現在 API 未対応です。GitHub で起票後、URL を入力してください。");
+      }
+    } catch {
+      setErrorMsg("送信に失敗しました。少し待ってから再試行してください。");
+    } finally {
+      setSending(false);
     }
   };
 
@@ -143,14 +168,18 @@ export function AddIssueButton() {
                     </div>
                   )}
 
+                  {errorMsg && (
+                    <p className="mt-3 text-[12px]" style={{ color: "var(--color-rose)" }}>{errorMsg}</p>
+                  )}
+
                   <div className="mt-5 flex gap-2.5">
                     <button
-                      onClick={submit}
-                      disabled={!valid}
+                      onClick={() => void submit()}
+                      disabled={!valid || sending}
                       className="rounded-lg px-4 py-2 text-[13px] font-semibold disabled:opacity-40"
                       style={{ color: "#0b0d10", background: "var(--color-signal)" }}
                     >
-                      受付キューに追加
+                      {sending ? "送信中…" : "受付キューに追加"}
                     </button>
                     <button onClick={reset} className="text-[13px]" style={{ color: "var(--color-ink-dim)" }}>
                       キャンセル
