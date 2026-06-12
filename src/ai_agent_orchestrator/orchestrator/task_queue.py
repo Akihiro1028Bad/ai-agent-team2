@@ -97,6 +97,10 @@ class TaskQueue:
         self._active_tasks: dict[IssueKey, asyncio.Task[None]] = {}
         self._queued_issues: set[IssueKey] = set()  # 重複排除用
         self._queued_tasks: set[tuple[IssueKey, str]] = set()  # (issue_key, phase) 重複排除用
+        # ControlBus (#87): pause された Issue とその退避タスク、drain フラグ
+        self._paused: set[IssueKey] = set()
+        self._parked: dict[IssueKey, TaskRequest] = {}
+        self._draining = False
 
     # --- public methods ---
 
@@ -207,9 +211,29 @@ class TaskQueue:
             executor: フェーズ実行エンジン
         """
         while True:
+            # drain 中は新規タスクを拾わずワーカーを自然終了させる
+            # (#87 graceful shutdown: 実行中フェーズは完走、新規は開始しない)。
+            if self._draining:
+                return
             _priority, _seq, request = await self._queue.get()
             try:
                 self._queued_issues.discard(request.issue_key)
+                # pause 中の Issue は実行せず park する (フェーズ境界で graceful に停止)。
+                # resume で再エンキューされるまで待機。実行中フェーズは中断しない。
+                if request.issue_key in self._paused:
+                    self._parked[request.issue_key] = request
+                    logger.info(
+                        "Issue #%d is paused, parking phase=%s",
+                        request.issue_number,
+                        request.phase,
+                    )
+                    continue
+                # drain がデキュー後に立った場合はキューへ戻して次ループで終了する。
+                if self._draining:
+                    self._seq += 1
+                    await self._queue.put((_priority, self._seq, request))
+                    self._queued_issues.add(request.issue_key)
+                    continue
                 # _queued_tasks はデキュー時に除去しない (実行中の重複防止)
                 await self._try_execute(executor, request)
             except Exception as e:
@@ -345,3 +369,32 @@ class TaskQueue:
             logger.info("Cancelled task for Issue #%d (%s)", issue_key[1], issue_key[0])
             return True
         return False
+
+    # --- ControlBus: pause / resume / drain (#87) ---
+
+    def pause(self, issue_key: IssueKey) -> None:
+        """指定 Issue を pause する (次フェーズの dequeue 時に park される)。
+
+        実行中のフェーズは中断しない。フェーズ境界で停止する graceful pause。
+        """
+        self._paused.add(issue_key)
+
+    async def resume(self, issue_key: IssueKey) -> None:
+        """pause を解除し、park 済みタスクがあれば再エンキューする。"""
+        self._paused.discard(issue_key)
+        parked = self._parked.pop(issue_key, None)
+        if parked is not None:
+            await self.enqueue(parked)
+
+    def is_paused(self, issue_key: IssueKey) -> bool:
+        """指定 Issue が pause 中かどうかを返す。"""
+        return issue_key in self._paused
+
+    def request_drain(self) -> None:
+        """drain を要求する (ワーカーは新規タスクを拾わず自然終了する)。"""
+        self._draining = True
+
+    @property
+    def is_draining(self) -> bool:
+        """drain 要求中かどうか。"""
+        return self._draining
