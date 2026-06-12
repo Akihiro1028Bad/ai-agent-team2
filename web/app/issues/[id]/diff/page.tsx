@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { usePolling } from "@/lib/hooks";
@@ -12,8 +12,11 @@ import { IconArrow } from "@/components/icons";
 export default function IssueDiffPage() {
   const { id } = useParams<{ id: string }>();
   const n = Number(id);
+  // 一覧→詳細から引き回した repo で一意化 (#118)。
+  const repo = useSearchParams().get("repo") ?? undefined;
+  const repoQuery = repo ? `?repo=${encodeURIComponent(repo)}` : "";
 
-  const fetcher = useCallback((signal: AbortSignal) => api.getDiff(n, signal), [n]);
+  const fetcher = useCallback((signal: AbortSignal) => api.getDiff(n, repo, signal), [n, repo]);
   const { data: diff, error, loading } = usePolling(fetcher, 8000);
 
   const is404 = error?.status === 404;
@@ -21,7 +24,7 @@ export default function IssueDiffPage() {
   return (
     <div className="mx-auto max-w-[1200px] pb-4">
       <Link
-        href={`/issues/${id}`}
+        href={`/issues/${id}${repoQuery}`}
         className="inline-flex items-center gap-1.5 text-[12.5px]"
         style={{ color: "var(--color-ink-dim)" }}
       >

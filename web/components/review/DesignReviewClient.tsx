@@ -34,7 +34,7 @@ function SectionHead({ n, title, count }: { n: string; title: string; count?: st
  * backend が comments の有無/種別で承認/差し戻し/質問を分類するので、
  * 送信内容 (全コメント or 空) だけ渡し、結果メッセージは outcome で出し分ける。
  */
-function SubmitBar({ issue }: { issue: number }) {
+function SubmitBar({ issue, repo }: { issue: number; repo?: string }) {
   const { comments, setLocked } = useReview();
   const points = comments.filter((c) => c.tag === "指摘").length;
   const questions = comments.filter((c) => c.tag === "質問").length;
@@ -53,7 +53,7 @@ function SubmitBar({ issue }: { issue: number }) {
     setError(null);
     try {
       const actor = await api.getDefaultActor();
-      const outcome = await api.postReview(issue, toSend, actor);
+      const outcome = await api.postReview(issue, toSend, actor, repo);
       setLocked(true);
       setDone(OUTCOME_MESSAGE[outcome] ?? "レビューを提出しました。");
     } catch {
@@ -136,9 +136,10 @@ function testCategory(text: string): string | null {
 interface DesignReviewClientProps {
   issue: number;
   view: DesignView;
+  repo?: string;
 }
 
-function Body({ issue, view }: DesignReviewClientProps) {
+function Body({ issue, view, repo }: DesignReviewClientProps) {
   const { summary, architecture, testCases, subtasks, planDepth, uiImpact } = view;
 
   const nav = [
@@ -243,7 +244,7 @@ function Body({ issue, view }: DesignReviewClientProps) {
         )}
       </div>
 
-      <SubmitBar issue={issue} />
+      <SubmitBar issue={issue} repo={repo} />
     </>
   );
 }

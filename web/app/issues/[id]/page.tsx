@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { usePolling } from "@/lib/hooks";
@@ -18,11 +18,14 @@ import type { ApiError } from "@/lib/api";
 export default function IssueDetailPage() {
   const params = useParams();
   const id = Number(params.id);
+  // マルチリポでの番号衝突を避けるため一覧から渡る ?repo= を詳細系へ引き回す (#118)。
+  const repo = useSearchParams().get("repo") ?? undefined;
+  const repoQuery = repo ? `?repo=${encodeURIComponent(repo)}` : "";
 
   /* v8 ignore next 3 -- usePolling callback is mocked in tests; api.getIssue is tested separately */
   const fetcher = useCallback(
-    (signal: AbortSignal) => api.getIssue(id, signal),
-    [id],
+    (signal: AbortSignal) => api.getIssue(id, repo, signal),
+    [id, repo],
   );
 
   const { data: issue, error, loading } = usePolling(fetcher, 5000);
@@ -161,7 +164,7 @@ export default function IssueDetailPage() {
         )}
 
         {hasPr && (
-          <Link href={`/issues/${id}/diff`} className="mt-4 flex items-center justify-between rounded-xl border px-4 py-3 transition-colors" style={{ borderColor: "color-mix(in srgb, var(--color-cyan) 32%, transparent)", background: "color-mix(in srgb, var(--color-cyan) 7%, transparent)" }}>
+          <Link href={`/issues/${id}/diff${repoQuery}`} className="mt-4 flex items-center justify-between rounded-xl border px-4 py-3 transition-colors" style={{ borderColor: "color-mix(in srgb, var(--color-cyan) 32%, transparent)", background: "color-mix(in srgb, var(--color-cyan) 7%, transparent)" }}>
             <span className="inline-flex items-center gap-2 text-[13px]" style={{ color: "var(--color-cyan)" }}>
               <IconDiff width={15} height={15} /> PR #{issue.prNumber} の差分を見る
             </span>
@@ -170,7 +173,7 @@ export default function IssueDetailPage() {
         )}
 
         {hasReview && (
-          <Link href={`/issues/${id}/review`} className="mt-4 flex items-center justify-between rounded-xl border px-4 py-3 transition-colors" style={{ borderColor: "color-mix(in srgb, var(--color-signal) 32%, transparent)", background: "color-mix(in srgb, var(--color-signal) 7%, transparent)" }}>
+          <Link href={`/issues/${id}/review${repoQuery}`} className="mt-4 flex items-center justify-between rounded-xl border px-4 py-3 transition-colors" style={{ borderColor: "color-mix(in srgb, var(--color-signal) 32%, transparent)", background: "color-mix(in srgb, var(--color-signal) 7%, transparent)" }}>
             <span className="inline-flex items-center gap-2 text-[13px]" style={{ color: "var(--color-signal)" }}>
               <IconGate width={15} height={15} /> 設計レビューを開く（アーキ・図・テスト・計画・画面）
             </span>

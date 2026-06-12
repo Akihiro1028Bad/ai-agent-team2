@@ -96,7 +96,7 @@ describe("DesignReviewClient", () => {
 
     await user.click(screen.getByRole("button", { name: "承認" }));
 
-    expect(api.postReview).toHaveBeenCalledWith(7, [], "owner");
+    expect(api.postReview).toHaveBeenCalledWith(7, [], "owner", undefined);
     expect(await screen.findByText(/設計を承認しました/)).toBeInTheDocument();
   });
 
