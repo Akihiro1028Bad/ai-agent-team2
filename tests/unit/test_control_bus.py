@@ -61,6 +61,44 @@ class TestParseOperationalLine:
         assert parse_operational_line(json.dumps({"action": "enqueue_issue", "actor": "alice"})) is None
         assert parse_operational_line(json.dumps({"action": "enqueue_issue", "issue": 0, "actor": "alice"})) is None
 
+    def test_set_priority_requires_phase_and_priority(self) -> None:
+        cmd = parse_operational_line(
+            json.dumps({"action": "set_priority", "issue": 5, "phase": "implement", "priority": 1, "actor": "a"})
+        )
+        assert cmd == OperationalCommand(
+            action="set_priority", issue_number=5, actor="a", phase="implement", priority=1
+        )
+        # phase 欠落 / priority 欠落 / 型不正 は None
+        assert parse_operational_line(json.dumps({"action": "set_priority", "issue": 5, "priority": 1})) is None
+        assert parse_operational_line(json.dumps({"action": "set_priority", "issue": 5, "phase": "x"})) is None
+        assert (
+            parse_operational_line(json.dumps({"action": "set_priority", "issue": 5, "phase": "x", "priority": True}))
+            is None
+        )
+
+    def test_reorder_parses_order_entries(self) -> None:
+        cmd = parse_operational_line(
+            json.dumps(
+                {
+                    "action": "reorder",
+                    "order": [{"issue": 3, "phase": "plan"}, {"issue": 1, "phase": "implement"}],
+                    "actor": "a",
+                }
+            )
+        )
+        assert cmd == OperationalCommand(
+            action="reorder",
+            issue_number=None,
+            actor="a",
+            order=((3, "plan"), (1, "implement")),
+        )
+
+    def test_reorder_invalid_order_returns_none(self) -> None:
+        assert parse_operational_line(json.dumps({"action": "reorder", "actor": "a"})) is None
+        assert parse_operational_line(json.dumps({"action": "reorder", "order": [], "actor": "a"})) is None
+        assert parse_operational_line(json.dumps({"action": "reorder", "order": [{"issue": 0, "phase": "p"}]})) is None
+        assert parse_operational_line(json.dumps({"action": "reorder", "order": [{"issue": 1}]})) is None
+
 
 class TestReadNewOperationalCommands:
     def test_returns_only_authorized_new_commands(self, tmp_path: Path) -> None:

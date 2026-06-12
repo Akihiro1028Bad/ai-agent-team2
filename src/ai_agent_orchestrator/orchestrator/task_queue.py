@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -411,6 +412,72 @@ class TaskQueue:
             "max_total": self._max_total,
             "max_per_repo": self._max_per_repo,
         }
+
+    # --- ControlBus: 優先度変更 / 並べ替え (#96 Unit C) ---
+
+    def set_priority(self, issue_key: IssueKey, phase: str, priority: int) -> bool:
+        """キュー待ちタスクの優先度を変更し、キューを再構築する (#96)。
+
+        実行中タスクには影響しない。対象がキュー待ちに無ければ False を返す。
+
+        Args:
+            issue_key: 対象 Issue の IssueKey。
+            phase: 対象フェーズ。
+            priority: 新しい優先度 (小さいほど優先)。
+
+        Returns:
+            変更が適用されたら True、対象が見つからなければ False。
+        """
+        key = (issue_key, phase)
+        if key not in self._queued_meta:
+            return False
+        self._rebuild_queue({key: priority})
+        return True
+
+    def reorder(self, order: list[tuple[IssueKey, str]]) -> None:
+        """指定順に優先度を振り直してキューを再構築する (#96)。
+
+        ``order`` の先頭ほど高優先 (priority 値 1, 2, ...) を割り当てる。
+        ``order`` に含まれないキュー待ちタスクは既存の優先度のまま残る。
+
+        Args:
+            order: (issue_key, phase) を希望順に並べたリスト。
+        """
+        overrides = {
+            (issue_key, phase): idx + 1
+            for idx, (issue_key, phase) in enumerate(order)
+            if (issue_key, phase) in self._queued_meta
+        }
+        if overrides:
+            self._rebuild_queue(overrides)
+
+    def _rebuild_queue(self, overrides: dict[tuple[IssueKey, str], int]) -> None:
+        """キューを drain → 新優先度で再構築する (#96)。
+
+        ``get_nowait``/``put_nowait`` のみを使い await を挟まないため、単一イベント
+        ループ内では worker_loop の ``get()`` と原子的に排他される (再構築中に
+        ワーカーが割り込めない)。drain 時の ``task_done`` で ``join`` 計数も整合させる。
+
+        Args:
+            overrides: (issue_key, phase) → 新優先度。指定外は現状維持。
+        """
+        drained: list[tuple[int, int, TaskRequest]] = []
+        while True:
+            try:
+                item = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            drained.append(item)
+            self._queue.task_done()  # get_nowait の counterpart (unfinished 計数の整合)
+        for _priority, seq, request in drained:
+            key = (request.issue_key, request.phase)
+            new_priority = overrides.get(key, request.priority)
+            if new_priority != request.priority:
+                request = replace(request, priority=new_priority)
+                meta = self._queued_meta.get(key)
+                if meta is not None:
+                    self._queued_meta[key] = {**meta, "priority": new_priority}
+            self._queue.put_nowait((new_priority, seq, request))
 
     def is_issue_active(self, issue_key: IssueKey) -> bool:
         """指定 Issue が現在実行中かどうかを返す。"""

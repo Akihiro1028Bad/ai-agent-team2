@@ -850,6 +850,10 @@ class Orchestrator:
             await self._handle_worktree_gc(cmd)
         elif cmd.action == "enqueue_issue":
             await self._handle_enqueue_issue(cmd)
+        elif cmd.action == "set_priority":
+            await self._handle_set_priority(cmd)
+        elif cmd.action == "reorder":
+            await self._handle_reorder(cmd)
 
     async def _audit_control(self, event: str, cmd: OperationalCommand) -> None:
         """運用コマンドの適用を events.jsonl に監査記録する."""
@@ -981,6 +985,31 @@ class Orchestrator:
         if len(self._settings.repositories) == 1:
             return self._settings.repositories[0]
         return None
+
+    async def _handle_set_priority(self, cmd: OperationalCommand) -> None:
+        """set_priority: キュー待ちタスクの優先度を変更する (#96)."""
+        if cmd.issue_number is None or cmd.phase is None or cmd.priority is None:
+            return
+        issue_key = self._resolve_issue_key(cmd.issue_number)
+        if issue_key is None:
+            return
+        if self._task_queue.set_priority(issue_key, cmd.phase, cmd.priority):
+            await self._audit_control("priority_changed", cmd)
+        else:
+            logger.info("set_priority: 対象がキュー待ちにありません (#%d %s)", cmd.issue_number, cmd.phase)
+
+    async def _handle_reorder(self, cmd: OperationalCommand) -> None:
+        """reorder: 指定順にキュー待ちタスクの優先度を振り直す (#96)."""
+        if not cmd.order:
+            return
+        resolved: list[tuple[IssueKey, str]] = []
+        for issue_number, phase in cmd.order:
+            issue_key = self._resolve_issue_key(issue_number)
+            if issue_key is not None:
+                resolved.append((issue_key, phase))
+        if resolved:
+            self._task_queue.reorder(resolved)
+            await self._audit_control("queue_reordered", cmd)
 
     async def _handle_shutdown(self, cmd: OperationalCommand) -> None:
         """shutdown: drain を要求し、in-flight 完了後に graceful stop する."""

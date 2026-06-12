@@ -179,6 +179,48 @@ class TestExtendedCommands:
             assert call.args[0] is repo
 
 
+class TestPriorityCommands:
+    """#96 Unit C: set_priority / reorder."""
+
+    async def test_set_priority_changes_queued_priority(self, tmp_path: Path) -> None:
+        from ai_agent_orchestrator.models import TaskRequest
+
+        orch = _make_orchestrator(tmp_path)
+        repo = orch._settings.repositories[0]
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.IMPLEMENT)
+        await orch._task_queue.enqueue(TaskRequest(issue_number=5, repo=repo, phase="implement", priority=5))
+        _write_control(
+            orch, {"action": "set_priority", "issue": 5, "phase": "implement", "priority": 1, "actor": "test-owner"}
+        )
+
+        await orch._consume_control_commands()
+
+        entry = orch._task_queue.get_queue_snapshot()["queued"][0]
+        assert entry["priority"] == 1
+
+    async def test_reorder_changes_dequeue_order(self, tmp_path: Path) -> None:
+        from ai_agent_orchestrator.models import TaskRequest
+
+        orch = _make_orchestrator(tmp_path)
+        repo = orch._settings.repositories[0]
+        for n, phase in ((1, "plan"), (2, "implement")):
+            orch._state_machine.register_issue(n, REPO, initial_phase=Phase.IMPLEMENT)
+            await orch._task_queue.enqueue(TaskRequest(issue_number=n, repo=repo, phase=phase, priority=5))
+        _write_control(
+            orch,
+            {
+                "action": "reorder",
+                "order": [{"issue": 2, "phase": "implement"}, {"issue": 1, "phase": "plan"}],
+                "actor": "test-owner",
+            },
+        )
+
+        await orch._consume_control_commands()
+
+        first = await orch._task_queue.dequeue()
+        assert first.issue_number == 2
+
+
 class TestQueueJson:
     async def test_build_and_write_queue_json(self, tmp_path: Path) -> None:
         orch = _make_orchestrator(tmp_path)
