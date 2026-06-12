@@ -87,7 +87,7 @@ export default function Dashboard() {
             {issues.map((issue, i) => (
               <Link
                 key={`${issue.repo}#${issue.number}`}
-                href={`/issues/${issue.number}`}
+                href={`/issues/${issue.number}?repo=${encodeURIComponent(issue.repo)}`}
                 className="panel panel-hover group block p-4 rise"
                 style={{ animationDelay: `${140 + i * 45}ms` }}
               >

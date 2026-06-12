@@ -59,7 +59,7 @@ export function CommandPalette() {
         group: "Issue" as const,
         label: `#${i.number} ${i.title}`,
         hint: i.repo,
-        href: `/issues/${i.number}`,
+        href: `/issues/${i.number}?repo=${encodeURIComponent(i.repo)}`,
         issueNo: i.number,
         keywords: `${i.repo} ${i.title} ${i.number} ${i.type}`,
       })),

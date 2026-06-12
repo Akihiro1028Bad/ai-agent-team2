@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError, type DesignView } from "@/lib/api";
 import { DesignReviewClient } from "@/components/review/DesignReviewClient";
@@ -18,6 +18,9 @@ import { IconArrow } from "@/components/icons";
 export default function DesignReviewPage() {
   const { id: idStr } = useParams<{ id: string }>();
   const id = Number(idStr);
+  // 一覧→詳細から引き回した repo で一意化 (#118)。
+  const repo = useSearchParams().get("repo") ?? undefined;
+  const repoQuery = repo ? `?repo=${encodeURIComponent(repo)}` : "";
 
   const [view, setView] = useState<DesignView | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
@@ -26,7 +29,7 @@ export default function DesignReviewPage() {
   useEffect(() => {
     const ac = new AbortController();
     api
-      .getDesign(id, ac.signal)
+      .getDesign(id, repo, ac.signal)
       .then((v) => {
         if (ac.signal.aborted) return;
         setView(v);
@@ -40,11 +43,11 @@ export default function DesignReviewPage() {
         if (!ac.signal.aborted) setLoading(false);
       });
     return () => ac.abort();
-  }, [id]);
+  }, [id, repo]);
 
   return (
     <div className="mx-auto max-w-[920px] pb-4">
-      <Link href={`/issues/${id}`} className="inline-flex items-center gap-1.5 text-[12.5px]" style={{ color: "var(--color-ink-dim)" }}>
+      <Link href={`/issues/${id}${repoQuery}`} className="inline-flex items-center gap-1.5 text-[12.5px]" style={{ color: "var(--color-ink-dim)" }}>
         <IconArrow width={13} height={13} className="rotate-180" /> Issue 詳細
       </Link>
 
@@ -59,7 +62,7 @@ export default function DesignReviewPage() {
         // 「設計未生成」等の無関係なメッセージは出さない。
         null
       ) : view?.present ? (
-        <DesignReviewClient issue={id} view={view} />
+        <DesignReviewClient issue={id} view={view} repo={repo} />
       ) : (
         <div className="panel mt-4 p-8 text-center" style={{ color: "var(--color-ink-dim)" }}>
           {view?.reason ?? "この Issue にはまだ設計が生成されていません（PLAN フェーズ未完了）。"}

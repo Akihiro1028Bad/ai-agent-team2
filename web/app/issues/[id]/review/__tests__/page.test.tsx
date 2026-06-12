@@ -4,6 +4,7 @@ import type { DesignView } from "@/lib/api";
 
 vi.mock("next/navigation", () => ({
   useParams: vi.fn().mockReturnValue({ id: "129" }),
+  useSearchParams: vi.fn().mockReturnValue(new URLSearchParams()),
 }));
 
 vi.mock("next/link", () => ({

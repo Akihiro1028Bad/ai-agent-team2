@@ -354,3 +354,42 @@ describe("api オブジェクト経由 (カバレッジ補完)", () => {
     expect(result.phases).toHaveLength(6);
   });
 });
+
+// ── マルチリポ ?repo= 引き回し (#118) ──
+
+describe("withRepo (?repo= 引き回し)", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const okDiff = () =>
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ pr_number: 1, files: [] } satisfies ApiDiffResponse), { status: 200 }),
+    );
+
+  it("repo 指定時は URL に encode した ?repo= を付与する", async () => {
+    okDiff();
+    await api.getDiff(7, "owner/repo");
+    const [url] = vi.mocked(fetch).mock.calls[0]!;
+    expect(url).toBe("/api/issues/7/diff?repo=owner%2Frepo");
+  });
+
+  it("repo 未指定時は素のパス (?repo= なし)", async () => {
+    okDiff();
+    await api.getDiff(7);
+    const [url] = vi.mocked(fetch).mock.calls[0]!;
+    expect(url).toBe("/api/issues/7/diff");
+  });
+
+  it("postReview も repo を付与する", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ outcome: "approved", accepted: true }), { status: 200 }),
+    );
+    await api.postReview(9, [], "owner", "o/r");
+    const [url] = vi.mocked(fetch).mock.calls[0]!;
+    expect(url).toBe("/api/issues/9/review?repo=o%2Fr");
+  });
+});

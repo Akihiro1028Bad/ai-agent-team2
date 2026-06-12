@@ -687,9 +687,18 @@ export function adaptDesign(d: ApiDesignResponse): DesignView {
   };
 }
 
+/**
+ * Issue スコープ URL に `?repo=owner/repo` を付与する (#118)。
+ * マルチリポで同一 Issue 番号が複数存在すると backend が 400 を返すため、
+ * 一覧 API が返す repo を詳細系リクエストへ載せて一意化する。repo 未指定なら素のパス。
+ */
+function withRepo(path: string, repo?: string): string {
+  return repo ? `${path}?repo=${encodeURIComponent(repo)}` : path;
+}
+
 /** GET /api/issues/{n}/design */
-export async function getDesign(issue: number, signal?: AbortSignal): Promise<DesignView> {
-  return adaptDesign(await apiGet<ApiDesignResponse>(`/api/issues/${issue}/design`, signal));
+export async function getDesign(issue: number, repo?: string, signal?: AbortSignal): Promise<DesignView> {
+  return adaptDesign(await apiGet<ApiDesignResponse>(withRepo(`/api/issues/${issue}/design`, repo), signal));
 }
 
 /** レビュー提出コメント (UI の DraftComment を API 形へ写したもの)。 */
@@ -717,10 +726,11 @@ export async function postReview(
   issue: number,
   comments: ReviewCommentInput[],
   actor: string,
+  repo?: string,
   signal?: AbortSignal,
 ): Promise<ReviewOutcome> {
   const res = await apiPost<{ outcome: ReviewOutcome; accepted: boolean }>(
-    `/api/issues/${issue}/review`,
+    withRepo(`/api/issues/${issue}/review`, repo),
     {
       comments: comments.map((c) => ({
         anchor: c.anchor,
@@ -741,9 +751,10 @@ export const api = {
   listIssues: (signal?: AbortSignal) =>
     apiGet<ApiIssueSummary[]>("/api/issues", signal).then((rows) => rows.map(adaptIssueSummary)),
 
-  getIssue: async (n: number, signal?: AbortSignal): Promise<IssueDetail> => {
+  getIssue: async (n: number, repo?: string, signal?: AbortSignal): Promise<IssueDetail> => {
+    // 詳細は repo で一意化 (#118)。events は logs/issue-{n}/ が番号単位のため repo 不要。
     const [detail, events] = await Promise.all([
-      apiGet<ApiIssueDetail>(`/api/issues/${n}`, signal),
+      apiGet<ApiIssueDetail>(withRepo(`/api/issues/${n}`, repo), signal),
       apiGet<ApiEventRecord[]>(`/api/issues/${n}/events?limit=200`, signal),
     ]);
     return adaptIssueDetail(detail, events);
@@ -756,8 +767,8 @@ export const api = {
 
   getCosts: (signal?: AbortSignal) => apiGet<ApiCostsResponse>("/api/costs", signal),
 
-  getDiff: (n: number, signal?: AbortSignal) =>
-    apiGet<ApiDiffResponse>(`/api/issues/${n}/diff`, signal).then(adaptDiff),
+  getDiff: (n: number, repo?: string, signal?: AbortSignal) =>
+    apiGet<ApiDiffResponse>(withRepo(`/api/issues/${n}/diff`, repo), signal).then(adaptDiff),
 
   getQueue: (signal?: AbortSignal) => apiGet<ApiQueueResponse>("/api/queue", signal).then(adaptQueue),
 
@@ -769,10 +780,10 @@ export const api = {
 
   postReply: (issue: number, text: string, signal?: AbortSignal) => postReply(issue, text, signal),
 
-  getDesign: (issue: number, signal?: AbortSignal) => getDesign(issue, signal),
+  getDesign: (issue: number, repo?: string, signal?: AbortSignal) => getDesign(issue, repo, signal),
 
-  postReview: (issue: number, comments: ReviewCommentInput[], actor: string, signal?: AbortSignal) =>
-    postReview(issue, comments, actor, signal),
+  postReview: (issue: number, comments: ReviewCommentInput[], actor: string, repo?: string, signal?: AbortSignal) =>
+    postReview(issue, comments, actor, repo, signal),
 
   getPhaseModels: (signal?: AbortSignal) => getPhaseModels(signal),
 

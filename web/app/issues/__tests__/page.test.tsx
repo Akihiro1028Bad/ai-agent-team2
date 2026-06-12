@@ -6,6 +6,7 @@ import type { IssueDetail, IssueEvent } from "@/lib/types";
 // next/navigation
 vi.mock("next/navigation", () => ({
   useParams: vi.fn().mockReturnValue({ id: "42" }),
+  useSearchParams: vi.fn().mockReturnValue(new URLSearchParams()),
 }));
 
 // next/link
@@ -48,7 +49,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 import { usePolling } from "@/lib/hooks";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import IssueDetailPage from "@/app/issues/[id]/page";
 
@@ -75,6 +76,7 @@ function makeEvent(id: string, kind: IssueEvent["kind"] = "phase"): IssueEvent {
 beforeEach(() => {
   vi.mocked(usePolling).mockReturnValue({ data: undefined, error: undefined, loading: true });
   vi.mocked(useParams).mockReturnValue({ id: "42" });
+  vi.mocked(useSearchParams).mockReturnValue(new URLSearchParams() as never);
   vi.mocked(api.postReply).mockResolvedValue(undefined);
 });
 afterEach(() => {
@@ -137,6 +139,20 @@ describe("IssueDetailPage", () => {
     });
     render(<IssueDetailPage />);
     await waitFor(() => expect(screen.getByText(/設計レビューを開く/)).toBeDefined());
+  });
+
+  it("?repo= がある場合は差分/設計レビューのリンクに repo を引き回す (#118)", async () => {
+    vi.mocked(useSearchParams).mockReturnValue(new URLSearchParams("repo=owner/repo") as never);
+    vi.mocked(usePolling).mockReturnValue({
+      data: makeIssue({ prNumber: 100, designPrNumber: 50 }),
+      error: undefined,
+      loading: false,
+    });
+    render(<IssueDetailPage />);
+    const diffLink = await screen.findByText(/PR #100 の差分を見る/);
+    const reviewLink = await screen.findByText(/設計レビューを開く/);
+    expect(diffLink.closest("a")?.getAttribute("href")).toBe("/issues/42/diff?repo=owner%2Frepo");
+    expect(reviewLink.closest("a")?.getAttribute("href")).toBe("/issues/42/review?repo=owner%2Frepo");
   });
 
   it("needsHuman がある場合は承認画面へのリンクが表示される", async () => {
