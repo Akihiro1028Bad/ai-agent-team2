@@ -453,3 +453,26 @@ class TestPauseResumeDrain:
             assert worker.done()  # ワーカーは自然終了
         finally:
             await _cancel(worker)
+
+    async def test_discard_control_state_prevents_resume_resurrection(self) -> None:
+        """abort 相当: pause/park を破棄すると resume しても再実行されない。"""
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        req = TaskRequest(issue_number=11, repo=repo, phase="implement", priority=Priority.NORMAL)
+
+        tq.pause(req.issue_key)
+        ex = _RecordingExecutor()
+        await tq.enqueue(req)
+        worker = asyncio.create_task(tq.worker_loop(ex))
+        try:
+            await asyncio.sleep(0.05)
+            assert ex.calls == []  # park 済み
+
+            tq.discard_control_state(req.issue_key)  # abort 相当
+            assert not tq.is_paused(req.issue_key)
+
+            await tq.resume(req.issue_key)
+            await asyncio.sleep(0.05)
+            assert ex.calls == []  # park 破棄済み → 復活しない
+        finally:
+            await _cancel(worker)

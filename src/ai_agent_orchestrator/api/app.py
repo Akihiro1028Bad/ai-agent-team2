@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -85,7 +85,7 @@ class SystemctlControl:
         """``systemctl --user stop`` を実行する."""
         await self._run("stop")
 
-    async def _run(self, verb: str) -> None:
+    async def _run(self, verb: Literal["start", "stop"]) -> None:
         try:
             proc = await asyncio.create_subprocess_exec(
                 "systemctl",
@@ -104,6 +104,14 @@ class SystemctlControl:
                 status_code=503,
                 detail="Failed to control orchestrator service",
             ) from exc
+
+
+def _append_control_line(path: Path, record: dict[str, object]) -> None:
+    """control.jsonl に 1 行 JSON を追記する (同期 I/O。to_thread 経由で呼ぶ)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, ensure_ascii=False) + "\n"
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(line)
 
 
 def _build_default_factory(
@@ -327,13 +335,10 @@ def create_app(settings: AppSettings) -> FastAPI:
         し、actor の権限検証は orchestrator 側で行う。
         """
         control_path: Path = app.state.workspace / "control.jsonl"
-        control_path.parent.mkdir(parents=True, exist_ok=True)
         record: dict[str, object] = {"action": body.action, "actor": body.actor}
         if body.action != "shutdown":
             record["issue"] = body.issue
-        line = json.dumps(record, ensure_ascii=False) + "\n"
-        with control_path.open("a", encoding="utf-8") as fh:
-            fh.write(line)
+        await asyncio.to_thread(_append_control_line, control_path, record)
         return ControlAcceptedResponse(accepted=True)
 
     @app.post("/api/orchestrator/{action}", status_code=200)
@@ -345,15 +350,17 @@ def create_app(settings: AppSettings) -> FastAPI:
         systemd が無い / 失敗した場合は 503 を返す。未知の action は 404。
         """
         if action not in ("start", "stop"):
-            raise HTTPException(status_code=404, detail=f"Unknown orchestrator action: {action!r}")
+            # 入力値はエコーバックしない (固定メッセージ)。
+            raise HTTPException(status_code=404, detail="Unknown orchestrator action")
         systemd: ControlSystemd = app.state.systemd
         if action == "stop":
             # shutdown コマンドを先に追記してから systemd に stop を伝える。
             control_path: Path = app.state.workspace / "control.jsonl"
-            control_path.parent.mkdir(parents=True, exist_ok=True)
-            shutdown_line = json.dumps({"action": "shutdown", "actor": "api"}, ensure_ascii=False) + "\n"
-            with control_path.open("a", encoding="utf-8") as fh:
-                fh.write(shutdown_line)
+            await asyncio.to_thread(
+                _append_control_line,
+                control_path,
+                {"action": "shutdown", "actor": "api"},
+            )
             await systemd.stop()
         else:
             await systemd.start()

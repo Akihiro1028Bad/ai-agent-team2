@@ -781,11 +781,13 @@ class Orchestrator:
             self._control_offset,
             self._control_authorized_actors(),
         )
+        # 適用してから offset を進める (at-least-once)。途中クラッシュ時は
+        # 再起動後に再適用されるが、各コマンドは冪等なので abort 等を取りこぼさない。
+        for cmd in commands:
+            await self._apply_control_command(cmd)
         if new_offset != self._control_offset:
             self._control_offset = new_offset
             self._save_control_offset()
-        for cmd in commands:
-            await self._apply_control_command(cmd)
 
     async def _apply_control_command(self, cmd: OperationalCommand) -> None:
         """1 件の運用コマンドを適用する."""
@@ -834,6 +836,8 @@ class Orchestrator:
             return
 
         await self._task_queue.cancel_task(issue_key)
+        # pause/park 状態も破棄する (park 済みが resume で復活しないように)。
+        self._task_queue.discard_control_state(issue_key)
 
         repo_config = self._repo_config_for(issue_key[0])
         if repo_config is not None:
@@ -862,12 +866,22 @@ class Orchestrator:
         self._shutdown_task = asyncio.create_task(self._drain_then_stop(), name="control-shutdown")
 
     async def _drain_then_stop(self) -> None:
-        """in-flight タスクの完了を待ってから (上限付き) 停止する."""
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + self._SHUTDOWN_DRAIN_TIMEOUT_SEC
-        while self._task_queue.get_status()["active"] > 0 and loop.time() < deadline:
-            await asyncio.sleep(1.0)
-        await self.stop()
+        """in-flight タスクの完了を待ってから (上限付き) 停止する.
+
+        detached タスクとして実行されるため、例外はここでログに留め
+        "Task exception was never retrieved" を避ける。stop() は _running
+        ガードで冪等。
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self._SHUTDOWN_DRAIN_TIMEOUT_SEC
+            while self._task_queue.get_status()["active"] > 0 and loop.time() < deadline:
+                await asyncio.sleep(1.0)
+            await self.stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("drain-then-stop に失敗", exc_info=True)
 
     # ------------------------------------------------------------------
     async def _reenqueue_pending_tasks(self) -> None:

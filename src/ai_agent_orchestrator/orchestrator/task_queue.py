@@ -228,12 +228,13 @@ class TaskQueue:
                         request.phase,
                     )
                     continue
-                # drain がデキュー後に立った場合はキューへ戻して次ループで終了する。
+                # drain がデキュー後に立った場合はキューへ戻してワーカーを終了する
+                # (continue だと先頭の drain 判定まで戻るだけ。return で確実に退場)。
                 if self._draining:
                     self._seq += 1
                     await self._queue.put((_priority, self._seq, request))
                     self._queued_issues.add(request.issue_key)
-                    continue
+                    return
                 # _queued_tasks はデキュー時に除去しない (実行中の重複防止)
                 await self._try_execute(executor, request)
             except Exception as e:
@@ -389,6 +390,15 @@ class TaskQueue:
     def is_paused(self, issue_key: IssueKey) -> bool:
         """指定 Issue が pause 中かどうかを返す。"""
         return issue_key in self._paused
+
+    def discard_control_state(self, issue_key: IssueKey) -> None:
+        """pause / park 状態を破棄する (abort 時に再実行で復活しないように)。
+
+        park 済みタスクを保持したまま abort すると resume で復活してしまうため、
+        abort 時は cancel_task に加えて本メソッドで pause/park を消す。
+        """
+        self._paused.discard(issue_key)
+        self._parked.pop(issue_key, None)
 
     def request_drain(self) -> None:
         """drain を要求する (ワーカーは新規タスクを拾わず自然終了する)。"""
