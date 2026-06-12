@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
+from ai_agent_orchestrator.api.design import build_design_response
 from ai_agent_orchestrator.api.middleware import AuthMiddleware
 from ai_agent_orchestrator.api.readers import (
     aggregate_costs,
@@ -35,6 +36,7 @@ from ai_agent_orchestrator.api.schemas import (
     ControlAcceptedResponse,
     ControlRequest,
     CostsResponse,
+    DesignResponse,
     DiffFile,
     DiffResponse,
     EventRecord,
@@ -302,6 +304,19 @@ def create_app(settings: AppSettings) -> FastAPI:
         (#84 の「停止中でも応答」方針)。
         """
         return read_queue(workspace)
+
+    @app.get("/api/issues/{issue_number}/design", response_model=DesignResponse)
+    async def get_issue_design(
+        issue_number: int,
+        repo: str | None = Query(default=None),
+    ) -> DesignResponse:
+        """Issue の構造化設計 (plan_json 由来・anchor 付き) を返す (#89).
+
+        PLAN 未完了は present=false で 200。複数一致は 400、不在は 404。
+        """
+        states = load_states(workspace)
+        _state_repo, state = _resolve_issue(states, issue_number, repo)
+        return build_design_response(state.plan_json)
 
     @app.get("/api/approvals", response_model=list[ApprovalEntry])
     async def get_approvals() -> list[ApprovalEntry]:
