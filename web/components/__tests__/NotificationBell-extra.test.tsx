@@ -27,11 +27,11 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-vi.mock("@/lib/hooks", () => ({
-  usePolling: vi.fn(),
+vi.mock("@/lib/activity-context", () => ({
+  useActivity: vi.fn(),
 }));
 
-import { usePolling } from "@/lib/hooks";
+import { useActivity } from "@/lib/activity-context";
 
 function makeEvent(overrides: Partial<IssueEvent> & { id: string; kind: IssueEvent["kind"]; title: string }): IssueEvent {
   return {
@@ -51,7 +51,7 @@ const infoEvent = makeEvent({ id: "ev-info", kind: "comment", title: "コメン�
 
 beforeEach(() => {
   localStorage.clear();
-  vi.mocked(usePolling).mockReturnValue({ data: [], error: undefined, loading: false });
+  vi.mocked(useActivity).mockReturnValue({ data: [], error: undefined });
 });
 afterEach(() => {
   localStorage.clear();
@@ -60,10 +60,9 @@ afterEach(() => {
 
 describe("NotificationBell: 追加カバレッジ", () => {
   it("gate 通知のリンクをクリックすると markOne + close", async () => {
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: [gateEvent],
       error: undefined,
-      loading: false,
     });
     render(<NotificationBell />);
 
@@ -81,10 +80,9 @@ describe("NotificationBell: 追加カバレッジ", () => {
   });
 
   it("done 種別の通知はリンクでなく div でラップされる", async () => {
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: [doneEvent],
       error: undefined,
-      loading: false,
     });
     render(<NotificationBell />);
 
@@ -98,10 +96,9 @@ describe("NotificationBell: 追加カバレッジ", () => {
   });
 
   it("通知の body (detail) が表示される", async () => {
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: [errorEvent],
       error: undefined,
-      loading: false,
     });
     render(<NotificationBell />);
     await userEvent.click(screen.getByRole("button", { name: /通知/ }));
@@ -109,10 +106,9 @@ describe("NotificationBell: 追加カバレッジ", () => {
   });
 
   it("外部クリックでドロップダウンが閉じる", async () => {
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: [gateEvent],
       error: undefined,
-      loading: false,
     });
     render(
       <div>
@@ -132,10 +128,9 @@ describe("NotificationBell: 追加カバレッジ", () => {
   it("localStorage が壊れていても loadReadIds は空 Set を返す", () => {
     // 壊れた JSON を設定
     localStorage.setItem("notif-read", "INVALID JSON");
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: [gateEvent],
       error: undefined,
-      loading: false,
     });
     // エラーなく描画される
     render(<NotificationBell />);
@@ -145,10 +140,9 @@ describe("NotificationBell: 追加カバレッジ", () => {
 
   it("localStorage の notif-read が配列でない JSON のとき空 Set を返す", () => {
     localStorage.setItem("notif-read", JSON.stringify({ not: "array" }));
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: [gateEvent],
       error: undefined,
-      loading: false,
     });
     render(<NotificationBell />);
     // 全件が未読扱い
@@ -156,10 +150,9 @@ describe("NotificationBell: 追加カバレッジ", () => {
   });
 
   it("kind が info (gate/error/done どれでもない) は通知に含まれない", async () => {
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: [infoEvent],
       error: undefined,
-      loading: false,
     });
     render(<NotificationBell />);
     // 0 件なのでバッジなし
@@ -168,10 +161,9 @@ describe("NotificationBell: 追加カバレッジ", () => {
 
   it("error が発生して data が空のとき「通知を取得できませんでした」を表示する", async () => {
     const { ApiError } = await import("@/lib/api");
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: undefined,
       error: new ApiError(0, "offline"),
-      loading: false,
     });
     render(<NotificationBell />);
     await userEvent.click(screen.getByRole("button", { name: /通知/ }));
@@ -179,10 +171,9 @@ describe("NotificationBell: 追加カバレッジ", () => {
   });
 
   it("既読 id を markOne で個別追加できる", async () => {
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: [gateEvent, errorEvent],
       error: undefined,
-      loading: false,
     });
     render(<NotificationBell />);
 

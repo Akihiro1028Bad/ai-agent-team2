@@ -6,6 +6,7 @@ import { useCallback, useState, type SVGProps } from "react";
 import { api, adaptHealth } from "@/lib/api";
 import { usePolling } from "@/lib/hooks";
 import type { HealthItem } from "@/lib/health";
+import { ActivityProvider } from "@/lib/activity-context";
 import { CommandPalette } from "./CommandPalette";
 import { NotificationBell } from "./NotificationBell";
 import {
@@ -129,52 +130,54 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const healthSummary = summarizeHealth(healthItems, offline);
 
   return (
-    <div className="flex min-h-dvh">
-      {/* desktop sidebar */}
-      <aside className="sticky top-0 hidden h-dvh w-[248px] shrink-0 border-r lg:block" style={{ borderColor: "var(--color-line)" }}>
-        <SidebarInner pathname={pathname} health={healthSummary} />
-      </aside>
+    <ActivityProvider>
+      <div className="flex min-h-dvh">
+        {/* desktop sidebar */}
+        <aside className="sticky top-0 hidden h-dvh w-[248px] shrink-0 border-r lg:block" style={{ borderColor: "var(--color-line)" }}>
+          <SidebarInner pathname={pathname} health={healthSummary} />
+        </aside>
 
-      {/* mobile slide-over */}
-      {open && (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setOpen(false)} />
-          <aside className="absolute left-0 top-0 h-full w-[270px] border-r bg-base" style={{ background: "var(--color-base)", borderColor: "var(--color-line)" }}>
-            <button onClick={() => setOpen(false)} className="absolute right-3 top-4 text-ink-dim" aria-label="閉じる">
-              <IconX />
+        {/* mobile slide-over */}
+        {open && (
+          <div className="fixed inset-0 z-50 lg:hidden">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setOpen(false)} />
+            <aside className="absolute left-0 top-0 h-full w-[270px] border-r bg-base" style={{ background: "var(--color-base)", borderColor: "var(--color-line)" }}>
+              <button onClick={() => setOpen(false)} className="absolute right-3 top-4 text-ink-dim" aria-label="閉じる">
+                <IconX />
+              </button>
+              <SidebarInner pathname={pathname} health={healthSummary} onNav={() => setOpen(false)} />
+            </aside>
+          </div>
+        )}
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* top bar */}
+          <header className="sticky top-0 z-30 flex items-center gap-3 border-b px-4 py-3 backdrop-blur-md sm:px-6" style={{ borderColor: "var(--color-line)", background: "color-mix(in srgb, var(--color-base) 82%, transparent)" }}>
+            <button className="lg:hidden text-ink-dim" onClick={() => setOpen(true)} aria-label="メニュー">
+              <IconMenu width={20} height={20} />
             </button>
-            <SidebarInner pathname={pathname} health={healthSummary} onNav={() => setOpen(false)} />
-          </aside>
+
+            <div className="flex items-center gap-2">
+              <span className="pulse" style={{ color: running ? "var(--color-signal)" : "var(--color-ink-faint)" }}>
+                <span className="block h-2 w-2 rounded-full" style={{ background: running ? "var(--color-signal)" : "var(--color-ink-faint)" }} />
+              </span>
+              <span className="font-mono text-[12px]" style={{ color: running ? "var(--color-ink)" : "var(--color-ink-dim)" }}>
+                {offline ? "OFFLINE" : running ? "RUNNING" : "STOPPED"}
+              </span>
+              <span className="hidden font-mono text-[11px] text-ink-faint sm:inline" style={{ color: "var(--color-ink-faint)" }}>
+                · {repoCount} repos
+              </span>
+            </div>
+
+            <div className="ml-auto flex items-center gap-2">
+              <CommandPalette />
+              <NotificationBell />
+            </div>
+          </header>
+
+          <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
         </div>
-      )}
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* top bar */}
-        <header className="sticky top-0 z-30 flex items-center gap-3 border-b px-4 py-3 backdrop-blur-md sm:px-6" style={{ borderColor: "var(--color-line)", background: "color-mix(in srgb, var(--color-base) 82%, transparent)" }}>
-          <button className="lg:hidden text-ink-dim" onClick={() => setOpen(true)} aria-label="メニュー">
-            <IconMenu width={20} height={20} />
-          </button>
-
-          <div className="flex items-center gap-2">
-            <span className="pulse" style={{ color: running ? "var(--color-signal)" : "var(--color-ink-faint)" }}>
-              <span className="block h-2 w-2 rounded-full" style={{ background: running ? "var(--color-signal)" : "var(--color-ink-faint)" }} />
-            </span>
-            <span className="font-mono text-[12px]" style={{ color: running ? "var(--color-ink)" : "var(--color-ink-dim)" }}>
-              {offline ? "OFFLINE" : running ? "RUNNING" : "STOPPED"}
-            </span>
-            <span className="hidden font-mono text-[11px] text-ink-faint sm:inline" style={{ color: "var(--color-ink-faint)" }}>
-              · {repoCount} repos
-            </span>
-          </div>
-
-          <div className="ml-auto flex items-center gap-2">
-            <CommandPalette />
-            <NotificationBell />
-          </div>
-        </header>
-
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
       </div>
-    </div>
+    </ActivityProvider>
   );
 }

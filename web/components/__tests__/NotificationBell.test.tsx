@@ -11,12 +11,12 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-// usePolling を差し替えてテストデータを注入する
-vi.mock("@/lib/hooks", () => ({
-  usePolling: vi.fn(),
+// useActivity を差し替えてテストデータを注入する
+vi.mock("@/lib/activity-context", () => ({
+  useActivity: vi.fn(),
 }));
 
-import { usePolling } from "@/lib/hooks";
+import { useActivity } from "@/lib/activity-context";
 import { ApiError } from "@/lib/api";
 
 /** gate/error/done イベントのサンプル */
@@ -35,7 +35,7 @@ const doneEvent = makeEvent({ id: "ev-done", kind: "phase", title: "done 完了"
 
 beforeEach(() => {
   localStorage.clear();
-  vi.mocked(usePolling).mockReturnValue({ data: [], error: undefined, loading: false });
+  vi.mocked(useActivity).mockReturnValue({ data: [], error: undefined });
 });
 afterEach(() => {
   localStorage.clear();
@@ -52,10 +52,9 @@ describe("NotificationBell", () => {
   });
 
   it("gate/error イベントがあると未読バッジが表示される", () => {
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: [gateEvent, errorEvent],
       error: undefined,
-      loading: false,
     });
     render(<NotificationBell />);
     // 未読バッジに数字が出る
@@ -63,10 +62,9 @@ describe("NotificationBell", () => {
   });
 
   it("ベルをクリックすると通知リストが開く", async () => {
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: [gateEvent],
       error: undefined,
-      loading: false,
     });
     render(<NotificationBell />);
 
@@ -75,10 +73,9 @@ describe("NotificationBell", () => {
   });
 
   it("「すべて既読にする」で未読バッジが消える", async () => {
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: [gateEvent, errorEvent],
       error: undefined,
-      loading: false,
     });
     render(<NotificationBell />);
 
@@ -94,10 +91,9 @@ describe("NotificationBell", () => {
   });
 
   it("done パターンのイベントも通知に含まれる", async () => {
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: [doneEvent],
       error: undefined,
-      loading: false,
     });
     render(<NotificationBell />);
     await userEvent.click(screen.getByRole("button", { name: /通知/ }));
@@ -112,10 +108,9 @@ describe("NotificationBell", () => {
   });
 
   it("エラー時かつ通知ゼロのとき取得失敗メッセージを出す", async () => {
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: undefined,
       error: new ApiError(0, "失敗"),
-      loading: false,
     });
     render(<NotificationBell />);
     await userEvent.click(screen.getByRole("button", { name: /通知/ }));
@@ -124,10 +119,9 @@ describe("NotificationBell", () => {
 
   it("localStorage 既読済み id は未読に含まれない", () => {
     localStorage.setItem("notif-read", JSON.stringify([gateEvent.id]));
-    vi.mocked(usePolling).mockReturnValue({
+    vi.mocked(useActivity).mockReturnValue({
       data: [gateEvent, errorEvent],
       error: undefined,
-      loading: false,
     });
     render(<NotificationBell />);
     // gateEvent は既読済み → 未読は errorEvent の 1 件

@@ -5,7 +5,7 @@
 // useLogStream: SSE (EventSource) で agent.jsonl の行を購読する。
 
 import { useEffect, useRef, useState } from "react";
-import { ApiError, adaptAgentLog, streamUrl, type ApiAgentLogRecord } from "@/lib/api";
+import { ApiError, adaptAgentLog, streamUrl, api, type ApiAgentLogRecord } from "@/lib/api";
 import type { LogLine } from "@/lib/logs";
 
 export interface PollingState<T> {
@@ -74,38 +74,58 @@ export interface LogStreamState {
 }
 
 /**
- * Issue の agent.jsonl を SSE で購読し、受信行を LogLine として蓄積する。
+ * Issue のログを購読する。
  *
- * issue が変わったらレンダー中に状態をリセットする (React 公認の
- * set-state-during-render パターン。effect 内同期 setState を避ける)。
+ * - live=true (既定): SSE (EventSource) を張り履歴リプレイ+ライブ更新を受け取る。
+ * - live=false: EventSource を張らず、REST API で一度だけ履歴を取得する。
+ *   これにより done な Issue でもログ履歴を表示できる（アイドル SSE+keepalive を回避）。
+ *
+ * issue または live が変わったら lines をリセットして再実行する。
  */
-export function useLogStream(issue: number): LogStreamState {
+export function useLogStream(issue: number, live = true): LogStreamState {
   const [shownIssue, setShownIssue] = useState(issue);
+  const [shownLive, setShownLive] = useState(live);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [connected, setConnected] = useState(false);
 
-  if (shownIssue !== issue) {
+  // issue または live が変わったらレンダー中にリセットする (React 公認の set-state-during-render)。
+  if (shownIssue !== issue || shownLive !== live) {
     setShownIssue(issue);
+    setShownLive(live);
     setLines([]);
     setConnected(false);
   }
 
   useEffect(() => {
-    const source = new EventSource(streamUrl(issue));
+    if (live) {
+      // live=true: SSE で履歴リプレイ + ライブ購読
+      const source = new EventSource(streamUrl(issue));
 
-    source.addEventListener("agent", (ev: MessageEvent) => {
-      try {
-        const rec = JSON.parse(ev.data) as ApiAgentLogRecord;
-        setLines((prev) => [...prev, adaptAgentLog(rec)]);
-      } catch {
-        // 壊れ行はスキップ (SSE は生行を流すため)。
-      }
-    });
-    source.onopen = () => setConnected(true);
-    source.onerror = () => setConnected(false);
+      source.addEventListener("agent", (ev: MessageEvent) => {
+        try {
+          const rec = JSON.parse(ev.data) as ApiAgentLogRecord;
+          setLines((prev) => [...prev, adaptAgentLog(rec)]);
+        } catch {
+          // 壊れ行はスキップ (SSE は生行を流すため)。
+        }
+      });
+      source.onopen = () => setConnected(true);
+      source.onerror = () => setConnected(false);
 
-    return () => source.close();
-  }, [issue]);
+      return () => source.close();
+    } else {
+      // live=false: REST API で一度だけ履歴を取得 (connected は false 固定)
+      const controller = new AbortController();
+
+      api.getLogs(issue, controller.signal).then((fetched) => {
+        setLines(fetched);
+      }).catch(() => {
+        // 取得失敗時は lines を空のまま無視（壊れ行スキップと同じ哲学）。
+      });
+
+      return () => controller.abort();
+    }
+  }, [issue, live]);
 
   return { lines, connected };
 }

@@ -942,3 +942,25 @@ describe("api.getDesign / api.postReview デリゲート", () => {
     expect(outcome).toBe("questions");
   });
 });
+
+describe("getLogs / api.getLogs", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("getLogs は /api/issues/{n}/logs を GET してログ行配列を返す", async () => {
+    const { getLogs } = await import("@/lib/api");
+    const record = { ts: "2026-06-12T01:02:03+00:00", phase: "implement", type: "text", text: "hello" };
+    vi.stubGlobal("fetch", mockFetch(true, { records: [record], next_offset: 1, total: 1 }));
+    const lines = await getLogs(42);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].text).toBe("hello");
+  });
+
+  it("api.getLogs は getLogs に委譲する", async () => {
+    const record = { ts: "2026-06-12T01:02:03+00:00", phase: "implement", type: "text", text: "via-api" };
+    vi.stubGlobal("fetch", mockFetch(true, { records: [record], next_offset: 1, total: 1 }));
+    const lines = await api.getLogs(42);
+    expect(lines[0].text).toBe("via-api");
+  });
+});

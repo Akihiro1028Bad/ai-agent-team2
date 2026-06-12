@@ -1,11 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { api } from "@/lib/api";
-import { usePolling } from "@/lib/hooks";
+import { useEffect, useReducer, useRef, useState } from "react";
+import { useActivity } from "@/lib/activity-context";
 import type { IssueEvent } from "@/lib/types";
-import { type NotificationKind } from "@/lib/notifications";
+import { type NotificationKind, addReadIds } from "@/lib/notifications";
 import { IconAlert, IconBell, IconCheck, IconGate, IconMessage } from "./icons";
 
 const KIND_META: Record<NotificationKind, { color: string; icon: typeof IconGate }> = {
@@ -83,13 +82,7 @@ export function NotificationBell() {
   );
   const ref = useRef<HTMLDivElement>(null);
 
-  /* v8 ignore start -- usePolling callback mocked in tests; api.getActivity is tested separately */
-  const fetcher = useCallback(
-    (signal: AbortSignal) => api.getActivity(50, signal),
-    [],
-  );
-  /* v8 ignore stop */
-  const { data, error } = usePolling(fetcher, 5000);
+  const { data, error } = useActivity();
 
   // エラー時は最後の data を usePolling が保持する。data が undefined の場合は空配列
   const notifs: NotifItem[] = data ? eventsToNotifs(data) : [];
@@ -105,13 +98,13 @@ export function NotificationBell() {
   }, []);
 
   const markAll = () => {
-    const next = new Set(notifs.map((n) => n.id));
+    const next = addReadIds(readIds, notifs.map((n) => n.id));
     dispatchReadIds(next);
     saveReadIds(next);
   };
 
   const markOne = (id: string) => {
-    const next = new Set([...readIds, id]);
+    const next = addReadIds(readIds, [id]);
     dispatchReadIds(next);
     saveReadIds(next);
   };

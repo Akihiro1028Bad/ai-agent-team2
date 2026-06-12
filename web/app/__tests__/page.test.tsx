@@ -25,7 +25,13 @@ vi.mock("@/lib/hooks", () => ({
   usePolling: vi.fn(),
 }));
 
+// useActivity をモック（NotificationBell は別モジュールで使うが、page.tsx も直接使う）
+vi.mock("@/lib/activity-context", () => ({
+  useActivity: vi.fn(),
+}));
+
 import { usePolling } from "@/lib/hooks";
+import { useActivity } from "@/lib/activity-context";
 import { ApiError } from "@/lib/api";
 import Dashboard from "@/app/page";
 
@@ -47,8 +53,10 @@ function makeEvent(id: string): IssueEvent {
 }
 
 beforeEach(() => {
-  // デフォルト: 両方 loading 中
+  // デフォルト: issues loading 中
   vi.mocked(usePolling).mockReturnValue({ data: undefined, error: undefined, loading: true });
+  // activity: デフォルト空
+  vi.mocked(useActivity).mockReturnValue({ data: [], error: undefined });
 });
 
 describe("Dashboard (app/page.tsx)", () => {
@@ -59,30 +67,23 @@ describe("Dashboard (app/page.tsx)", () => {
   });
 
   it("issues が空の場合 '処理中の Issue はありません。' が表示される", () => {
-    // usePolling を2回呼ぶ: listIssues と getActivity
-    vi.mocked(usePolling)
-      .mockReturnValueOnce({ data: [], error: undefined, loading: false })
-      .mockReturnValueOnce({ data: [], error: undefined, loading: false });
+    vi.mocked(usePolling).mockReturnValue({ data: [], error: undefined, loading: false });
     render(<Dashboard />);
     expect(screen.getByText("処理中の Issue はありません。")).toBeDefined();
   });
 
   it("issues が存在すると Issue タイトルが表示される", async () => {
-    vi.mocked(usePolling)
-      .mockReturnValueOnce({
-        data: [makeIssue({ number: 42, title: "テスト Issue タイトル" })],
-        error: undefined,
-        loading: false,
-      })
-      .mockReturnValueOnce({ data: [], error: undefined, loading: false });
+    vi.mocked(usePolling).mockReturnValue({
+      data: [makeIssue({ number: 42, title: "テスト Issue タイトル" })],
+      error: undefined,
+      loading: false,
+    });
     render(<Dashboard />);
     await waitFor(() => expect(screen.getByText("テスト Issue タイトル")).toBeDefined());
   });
 
   it("API エラー時に ConnectionBanner のアラートが表示される", async () => {
-    vi.mocked(usePolling)
-      .mockReturnValueOnce({ data: undefined, error: new ApiError(0, "接続不可"), loading: false })
-      .mockReturnValueOnce({ data: undefined, error: undefined, loading: false });
+    vi.mocked(usePolling).mockReturnValue({ data: undefined, error: new ApiError(0, "接続不可"), loading: false });
     render(<Dashboard />);
     await waitFor(() => expect(screen.getByRole("alert")).toBeDefined());
   });
@@ -93,9 +94,7 @@ describe("Dashboard (app/page.tsx)", () => {
       makeIssue({ number: 2, status: "running" }),
       makeIssue({ number: 3, status: "waiting" }),
     ];
-    vi.mocked(usePolling)
-      .mockReturnValueOnce({ data: issues, error: undefined, loading: false })
-      .mockReturnValueOnce({ data: [], error: undefined, loading: false });
+    vi.mocked(usePolling).mockReturnValue({ data: issues, error: undefined, loading: false });
     render(<Dashboard />);
     // 稼働中: 2, 人間待ち: 1
     await waitFor(() => {
@@ -106,9 +105,8 @@ describe("Dashboard (app/page.tsx)", () => {
 
   it("アクティビティがあると最初のイベントタイトルが描画される", async () => {
     const events: IssueEvent[] = [makeEvent("ev1")];
-    vi.mocked(usePolling)
-      .mockReturnValueOnce({ data: [], error: undefined, loading: false })
-      .mockReturnValueOnce({ data: events, error: undefined, loading: false });
+    vi.mocked(usePolling).mockReturnValue({ data: [], error: undefined, loading: false });
+    vi.mocked(useActivity).mockReturnValue({ data: events, error: undefined });
     render(<Dashboard />);
     await waitFor(() => expect(screen.getByText("イベント ev1")).toBeDefined());
   });

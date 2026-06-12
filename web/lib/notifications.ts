@@ -2,6 +2,18 @@
 
 export type NotificationKind = "gate" | "error" | "done" | "info";
 
+/**
+ * 既読 ID セットに新しい ID を加算的にマージし、上限 cap 件に収める。
+ *
+ * - 重複は Set 化で除去される。
+ * - cap を超えた場合は「マージ配列の末尾 cap 件」を保持（新しい ID 優先）。
+ * - 最終 Set サイズは cap 以下になることが保証される。
+ */
+export function addReadIds(current: Set<string>, ids: string[], cap = 200): Set<string> {
+  const merged = [...current, ...ids];
+  return new Set(merged.slice(Math.max(0, merged.length - cap)));
+}
+
 export interface AppNotification {
   id: string;
   kind: NotificationKind;
