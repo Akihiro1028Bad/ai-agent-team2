@@ -18,6 +18,7 @@ from ai_agent_orchestrator.phases.base import NoChangesError, PhaseExecutor
 from ai_agent_orchestrator.phases.fix_flow import build_fix_prompt, finalize_fix
 
 if TYPE_CHECKING:
+    from ai_agent_orchestrator.evidence.collector import EvidenceCollector
     from ai_agent_orchestrator.models import TaskRequest
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,9 @@ class ImplementExecutor(PhaseExecutor):
     U5a (#94): 旧 FIX フェーズも本 executor が処理する（enum は不変。
     request.phase が fix の場合は修正方針コメントに基づく単一パスで実行）。
     """
+
+    # エビデンスコレクタ (#91)。外部から注入可能。None ならデフォルト生成する。
+    evidence_collector: EvidenceCollector | None = None
 
     async def execute(self, request: TaskRequest) -> None:
         """実装を実行する。
@@ -756,6 +760,38 @@ class ImplementExecutor(PhaseExecutor):
             return set(stdout.strip().splitlines())
         return set()
 
+    async def _collect_evidence(self, request: TaskRequest) -> None:
+        """IMPLEMENT 完了時にエビデンス (スクショ・録画・テストログ) を収集する (#91)。
+
+        plan_json の ui_impact を判定材料に渡す。収集失敗は握り潰し、本処理
+        (PR 作成・遷移) は継続する。
+
+        Args:
+            request: タスクリクエスト。
+        """
+        try:
+            from ai_agent_orchestrator.evidence.collector import EvidenceCollector
+
+            state = self._sm.get_state(self._issue_key(request))
+            ui_impact = (state.plan_json or {}).get("ui_impact") if state else None
+            wt = await self._workspace.create_worktree(
+                request.repo,
+                request.issue_number,
+                branch_prefix="feature",
+            )
+            collector = self.evidence_collector or EvidenceCollector(self._workspace.base_dir)
+            await collector.collect(
+                request.repo,
+                request.issue_number,
+                str(wt),
+                ui_impact if isinstance(ui_impact, bool) else None,
+            )
+        except Exception:
+            logger.exception(
+                "Issue #%d: エビデンス生成に失敗しました（処理は継続）",
+                request.issue_number,
+            )
+
     async def _finalize(self, request: TaskRequest, result: AgentResult) -> None:
         """PR作成 → impl-review 遷移。
 
@@ -766,6 +802,8 @@ class ImplementExecutor(PhaseExecutor):
         if result.cost_usd == 0.0 and not result.output.strip():
             msg = f"Issue #{request.issue_number}: 実装フェーズが空の結果を返しました。"
             raise RuntimeError(msg)
+
+        await self._collect_evidence(request)
 
         pr_number = await self._ensure_pr_created(
             request,

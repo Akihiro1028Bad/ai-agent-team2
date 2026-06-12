@@ -34,6 +34,15 @@ class WorkspaceManager:
         self._repos_dir = self._base / "repos"
         self._logs_dir = self._base / "logs"
 
+    @property
+    def base_dir(self) -> Path:
+        """ワークスペースのベースディレクトリを返す.
+
+        Returns:
+            ベースディレクトリのパス (~ 展開済み)。
+        """
+        return self._base
+
     def _repo_dir_name(self, repo: RepositoryConfig) -> str:
         """リポジトリのディレクトリ名を返す.
 

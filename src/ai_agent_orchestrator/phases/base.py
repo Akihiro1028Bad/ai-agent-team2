@@ -265,6 +265,11 @@ class StateMachineProtocol:
 class WorkspaceProtocol:
     """Minimal workspace protocol."""
 
+    @property
+    def base_dir(self) -> Path:
+        """Base workspace directory."""
+        return Path()  # pragma: no cover
+
     async def create_worktree(
         self,
         repo: object,

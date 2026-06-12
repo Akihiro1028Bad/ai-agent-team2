@@ -88,6 +88,7 @@ src/ai_agent_orchestrator/     # メインパッケージ
 │   ├── episode_store.py
 │   ├── pattern_extractor.py
 │   └── skill_manager.py
+├── evidence/                  # IMPLEMENT 完了時のエビデンス生成 (スクショ/録画/テストログ) ※#91
 └── commands/                  # CLIサブコマンド
     ├── account.py             # アカウント管理
     ├── setup.py               # 初期セットアップ

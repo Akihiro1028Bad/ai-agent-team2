@@ -412,3 +412,25 @@ class PhaseModelsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     phases: list[PhaseModelInput] = Field(default_factory=list, max_length=50)
+
+
+class EvidenceItemResponse(BaseModel):
+    """GET /api/issues/{n}/evidence の 1 アイテム (#91).
+
+    url はファイル配信エンドポイントへの相対 URL。
+    """
+
+    id: str
+    kind: str
+    title: str
+    url: str
+    viewport: str | None = None
+    created_at: str | None = None
+
+
+class EvidenceResponse(BaseModel):
+    """GET /api/issues/{n}/evidence のレスポンス (#91)."""
+
+    generated_at: str | None = None
+    items: list[EvidenceItemResponse] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)

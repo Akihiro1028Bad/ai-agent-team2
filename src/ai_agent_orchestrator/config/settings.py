@@ -37,6 +37,12 @@ class RepositoryConfig(BaseModel):
     slack_channel: str | None = None
     # 承認者の許可リスト (#102)。空なら owner のみを承認者とする
     approvers: list[str] = Field(default_factory=list)
+    # エビデンス生成 (#91)。dev_command + dev_url が両方設定されている場合のみ
+    # UI スクショ・録画を取得する
+    dev_command: str | None = None  # 例: "npm run dev" (worktree 内で実行)
+    dev_url: str | None = None  # 例: "http://localhost:3000"
+    dev_ready_timeout_sec: int = 60  # dev_url が応答するまでの待機上限
+    test_command: str | None = None  # 例: "uv run pytest"。設定時はログをエビデンス保存
 
 
 class ConcurrencyConfig(BaseModel):
