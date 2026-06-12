@@ -9,6 +9,12 @@ import shutil
 from dataclasses import asdict, fields
 from pathlib import Path
 
+from ai_agent_orchestrator.io_safety import (
+    MAX_STATUS_FILE_BYTES,
+    FileTooLargeError,
+    atomic_write_text,
+    read_text_capped,
+)
 from ai_agent_orchestrator.models import PHASE_MIGRATION, IssueKey, IssueState, Phase
 
 logger = logging.getLogger(__name__)
@@ -46,14 +52,9 @@ class StatePersistence:
 
     def save(self, states: dict[IssueKey, IssueState]) -> None:
         """全Issue状態をJSONファイルに保存."""
-        self._file.parent.mkdir(parents=True, exist_ok=True)
         data = {f"{k[0]}:{k[1]}": asdict(v) for k, v in states.items()}
-        tmp_file = self._file.with_suffix(".tmp")
-        tmp_file.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        tmp_file.replace(self._file)  # atomic rename
+        # atomic write + 0o600 (他ローカルユーザー不可読, #115)。
+        atomic_write_text(self._file, json.dumps(data, ensure_ascii=False, indent=2))
 
     def load(self) -> dict[IssueKey, IssueState]:
         """JSONファイルからIssue状態を復元."""
@@ -61,8 +62,12 @@ class StatePersistence:
             return {}
 
         try:
-            raw = self._file.read_text(encoding="utf-8")
+            raw = read_text_capped(self._file, MAX_STATUS_FILE_BYTES)
             data = json.loads(raw)
+        except FileTooLargeError:
+            # サイズ上限超過 (#115)。巨大ファイルはバックアップせず安全側に倒す。
+            logger.warning("state.json がサイズ上限を超過: %s", self._file)
+            return {}
         except (json.JSONDecodeError, UnicodeDecodeError):
             # 破損ファイルのバックアップ
             backup = self._file.with_suffix(".json.corrupted")
