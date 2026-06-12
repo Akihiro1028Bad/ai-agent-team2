@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ai_agent_orchestrator.models import Phase
 
@@ -159,3 +159,30 @@ class DiffResponse(BaseModel):
 
     pr_number: int
     files: list[DiffFile] = Field(default_factory=list)
+
+
+class ControlRequest(BaseModel):
+    """POST /api/control のリクエストボディ.
+
+    shutdown 以外の action では issue が正整数必須。
+    shutdown では issue は不要 (指定しても無視)。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["pause", "resume", "abort", "shutdown"]
+    issue: int | None = None
+    actor: str = ""
+
+    @model_validator(mode="after")
+    def _validate_issue_required(self) -> ControlRequest:
+        """shutdown 以外では issue が正整数であることを検証する."""
+        if self.action != "shutdown" and (self.issue is None or self.issue <= 0):
+            raise ValueError(f"action='{self.action}' requires a positive integer 'issue'")
+        return self
+
+
+class ControlAcceptedResponse(BaseModel):
+    """POST /api/control のレスポンスボディ."""
+
+    accepted: bool

@@ -7,6 +7,8 @@ events.jsonl) のみを読み取って Web UI に JSON を返す (#84)。diff �
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -27,6 +29,8 @@ from ai_agent_orchestrator.api.readers import (
 )
 from ai_agent_orchestrator.api.schemas import (
     AgentLogPage,
+    ControlAcceptedResponse,
+    ControlRequest,
     CostsResponse,
     DiffFile,
     DiffResponse,
@@ -55,6 +59,51 @@ class _DiffClient(Protocol):
     """diff 取得に必要な最小インターフェース (GitHubClient 互換)."""
 
     async def get_pull_request_files(self, owner: str, repo: str, pr_number: int) -> list[dict[str, object]]: ...
+
+
+class ControlSystemd(Protocol):
+    """systemd ユニット制御の最小インターフェース (テスト差し替え可能)."""
+
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+
+class SystemctlControl:
+    """``systemctl --user`` を使って ai-agent-orchestrator ユニットを制御する.
+
+    実環境に systemd が無い場合でも HTTPException を上位に伝播させ、クラッシュしない。
+    """
+
+    _UNIT = "ai-agent-orchestrator"
+
+    async def start(self) -> None:
+        """``systemctl --user start`` を実行する."""
+        await self._run("start")
+
+    async def stop(self) -> None:
+        """``systemctl --user stop`` を実行する."""
+        await self._run("stop")
+
+    async def _run(self, verb: str) -> None:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "systemctl",
+                "--user",
+                verb,
+                self._UNIT,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+            if proc.returncode != 0:
+                raise RuntimeError(f"systemctl exited with code {proc.returncode}")
+        except Exception as exc:
+            logger.warning("systemctl %s %s に失敗", verb, self._UNIT, exc_info=True)
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to control orchestrator service",
+            ) from exc
 
 
 def _build_default_factory(
@@ -136,6 +185,7 @@ def create_app(settings: AppSettings) -> FastAPI:
 
     app.state.workspace = workspace
     app.state.github_client_factory = _build_default_factory(settings)
+    app.state.systemd = SystemctlControl()
 
     @app.get("/api/issues", response_model=list[IssueSummaryResponse])
     async def list_issues() -> list[IssueSummaryResponse]:
@@ -268,5 +318,45 @@ def create_app(settings: AppSettings) -> FastAPI:
             ) from e
         files = [DiffFile.model_validate(f) for f in raw_files]
         return DiffResponse(pr_number=state.pr_number, files=files)
+
+    @app.post("/api/control", response_model=ControlAcceptedResponse, status_code=202)
+    async def post_control(body: ControlRequest) -> ControlAcceptedResponse:
+        """運用コマンドを control.jsonl に追記する.
+
+        orchestrator 側の ControlBus が非同期に消費する。API は形式検証と追記のみ担当
+        し、actor の権限検証は orchestrator 側で行う。
+        """
+        control_path: Path = app.state.workspace / "control.jsonl"
+        control_path.parent.mkdir(parents=True, exist_ok=True)
+        record: dict[str, object] = {"action": body.action, "actor": body.actor}
+        if body.action != "shutdown":
+            record["issue"] = body.issue
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        with control_path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+        return ControlAcceptedResponse(accepted=True)
+
+    @app.post("/api/orchestrator/{action}", status_code=200)
+    async def post_orchestrator_action(action: str) -> ControlAcceptedResponse:
+        """orchestrator systemd ユニットを start / stop する.
+
+        stop は control.jsonl に shutdown コマンドを先に追記してから
+        ``systemctl --user stop`` を呼ぶ2段階構成。
+        systemd が無い / 失敗した場合は 503 を返す。未知の action は 404。
+        """
+        if action not in ("start", "stop"):
+            raise HTTPException(status_code=404, detail=f"Unknown orchestrator action: {action!r}")
+        systemd: ControlSystemd = app.state.systemd
+        if action == "stop":
+            # shutdown コマンドを先に追記してから systemd に stop を伝える。
+            control_path: Path = app.state.workspace / "control.jsonl"
+            control_path.parent.mkdir(parents=True, exist_ok=True)
+            shutdown_line = json.dumps({"action": "shutdown", "actor": "api"}, ensure_ascii=False) + "\n"
+            with control_path.open("a", encoding="utf-8") as fh:
+                fh.write(shutdown_line)
+            await systemd.stop()
+        else:
+            await systemd.start()
+        return ControlAcceptedResponse(accepted=True)
 
     return app
