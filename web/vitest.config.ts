@@ -37,6 +37,7 @@ export default defineConfig({
       // ここに挙げたファイルは per-file 100% を CI で強制する。
       include: [
         "lib/api.ts",
+        "lib/model-config.ts",
         "lib/hooks.ts",
         "lib/diff-parse.ts",
         "components/ConnectionBanner.tsx",

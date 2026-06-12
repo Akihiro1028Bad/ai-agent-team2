@@ -1,49 +1,108 @@
 "use client";
 
-import { useState } from "react";
-import { defaultPhaseModels, MODEL_META, type ModelId, type PhaseModelConfig as Row } from "@/lib/model-config";
+import { useEffect, useState } from "react";
+import { api, ApiError } from "@/lib/api";
+import { MODEL_META, MODEL_ORDER, toRows, toInputs, type ModelId, type PhaseModelRow } from "@/lib/model-config";
+import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { IconCheck } from "./icons";
 
-function setRow(rows: Row[], i: number, patch: Partial<Row>): Row[] {
+function setRow(rows: PhaseModelRow[], i: number, patch: Partial<PhaseModelRow>): PhaseModelRow[] {
   return rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r));
 }
 
 /** フェーズごとに使用モデル・拡張思考・最大ターン数を設定する */
 export function PhaseModelConfig() {
-  const [rows, setRows] = useState(defaultPhaseModels);
+  const [rows, setRows] = useState<PhaseModelRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<ApiError | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  const update = (i: number, patch: Partial<Row>) => {
+  useEffect(() => {
+    const ac = new AbortController();
+    api
+      .getPhaseModels(ac.signal)
+      .then((res) => {
+        if (ac.signal.aborted) return;
+        setRows(toRows(res));
+        setFetchError(null);
+      })
+      .catch((e: unknown) => {
+        if (ac.signal.aborted) return;
+        setFetchError(e instanceof ApiError ? e : new ApiError(0, String(e)));
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setLoading(false);
+      });
+    return () => ac.abort();
+  }, []);
+
+  const update = (i: number, patch: Partial<PhaseModelRow>) => {
     setRows((prev) => setRow(prev, i, patch));
     setDirty(true);
     setSaved(false);
+    setSaveError(null);
   };
+
+  const handleSave = () => {
+    setSaving(true);
+    setSaveError(null);
+    api
+      .putPhaseModels(toInputs(rows))
+      .then((res) => {
+        setRows(toRows(res));
+        setDirty(false);
+        setSaved(true);
+      })
+      .catch((e: unknown) => {
+        const msg = e instanceof ApiError ? `API エラー (${e.status})` : String(e);
+        setSaveError(msg);
+      })
+      .finally(() => {
+        setSaving(false);
+      });
+  };
+
+  if (loading && rows.length === 0) {
+    return (
+      <div className="panel px-5 py-6">
+        <p style={{ color: "var(--color-ink-faint)" }}>読み込み中…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="panel overflow-hidden">
       <div className="flex flex-wrap items-center gap-2 border-b px-5 py-3" style={{ borderColor: "var(--color-line)" }}>
         <span className="text-[13px] font-semibold">フェーズ別モデル</span>
-        <span className="font-mono text-[10px]" style={{ color: "var(--color-ink-faint)" }}>config.yaml → agents.phase_models</span>
+        <span className="font-mono text-[10px]" style={{ color: "var(--color-ink-faint)" }}>settings.ui.yaml → phase_models</span>
         <div className="ml-auto flex items-center gap-2.5">
           {saved && (
             <span className="inline-flex items-center gap-1 text-[12px]" style={{ color: "var(--color-cyan)" }}>
               <IconCheck width={13} height={13} /> 保存しました
             </span>
           )}
+          {saveError && (
+            <span className="text-[12px]" style={{ color: "var(--color-rose)" }}>{saveError}</span>
+          )}
           <button
-            onClick={() => {
-              setDirty(false);
-              setSaved(true);
-            }}
-            disabled={!dirty}
+            onClick={handleSave}
+            disabled={!dirty || saving}
             className="rounded-lg px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-40"
             style={{ color: "#0b0d10", background: "var(--color-signal)" }}
           >
-            保存
+            {saving ? "保存中…" : "保存"}
           </button>
         </div>
       </div>
+
+      {fetchError && (
+        <div className="px-5 pt-3">
+          <ConnectionBanner error={fetchError} />
+        </div>
+      )}
 
       <div className="flex flex-col">
         {rows.map((r, i) => (
@@ -58,13 +117,13 @@ export function PhaseModelConfig() {
 
             {/* model segmented */}
             <div className="inline-flex overflow-hidden rounded-lg border" style={{ borderColor: "var(--color-line)" }}>
-              {(Object.keys(MODEL_META) as ModelId[]).map((m) => {
+              {MODEL_ORDER.map((m) => {
                 const meta = MODEL_META[m];
                 const active = r.model === m;
                 return (
                   <button
                     key={m}
-                    onClick={() => update(i, { model: m })}
+                    onClick={() => update(i, { model: m as ModelId })}
                     title={meta.costNote}
                     className="px-2.5 py-1.5 font-mono text-[11px] transition-colors"
                     style={{ color: active ? "#0b0d10" : "var(--color-ink-dim)", background: active ? meta.color : "transparent" }}
@@ -95,7 +154,7 @@ export function PhaseModelConfig() {
               <div className="inline-flex items-center overflow-hidden rounded-lg border" style={{ borderColor: "var(--color-line)" }}>
                 <button onClick={() => update(i, { maxTurns: Math.max(1, r.maxTurns - 5) })} className="px-2 py-1 text-[13px]" style={{ color: "var(--color-ink-dim)" }} aria-label="減らす">−</button>
                 <span className="w-[34px] text-center font-mono text-[12px] tnum">{r.maxTurns}</span>
-                <button onClick={() => update(i, { maxTurns: r.maxTurns + 5 })} className="px-2 py-1 text-[13px]" style={{ color: "var(--color-ink-dim)" }} aria-label="増やす">＋</button>
+                <button onClick={() => update(i, { maxTurns: Math.min(500, r.maxTurns + 5) })} className="px-2 py-1 text-[13px]" style={{ color: "var(--color-ink-dim)" }} aria-label="増やす">＋</button>
               </div>
             </div>
           </div>
