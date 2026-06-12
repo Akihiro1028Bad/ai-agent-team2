@@ -321,6 +321,37 @@ class DesignSubtask(BaseModel):
     title: str
 
 
+class ReviewComment(BaseModel):
+    """設計レビューのインラインコメント 1 件 (#89)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    anchor: str = Field(min_length=1, max_length=128)
+    anchor_label: str = Field(default="", max_length=256)
+    tag: Literal["指摘", "質問"]
+    body: str = Field(min_length=1, max_length=8192)
+
+
+class ReviewRequest(BaseModel):
+    """POST /api/issues/{n}/review のリクエストボディ (#89).
+
+    インラインレビュー提出。comments が空なら承認、指摘があれば差し戻し、
+    質問のみなら質問として扱う (分類は api.review.classify_review)。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    comments: list[ReviewComment] = Field(default_factory=list, max_length=500)
+    actor: str = Field(default="", max_length=200)
+
+
+class ReviewResponse(BaseModel):
+    """POST /api/issues/{n}/review のレスポンスボディ (#89)."""
+
+    outcome: Literal["approved", "changes_requested", "questions"]
+    accepted: bool
+
+
 class DesignResponse(BaseModel):
     """GET /api/issues/{n}/design のレスポンスボディ (#89).
 

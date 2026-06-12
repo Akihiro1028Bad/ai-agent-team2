@@ -564,6 +564,62 @@ def test_design_ambiguous_without_repo_returns_400(client: TestClient, workspace
 
 
 # ──────────────────────────────────────
+# POST /api/issues/{n}/review (#89 Unit B: 設計レビュー提出)
+# ──────────────────────────────────────
+def test_review_empty_writes_approve(client: TestClient, workspace: Path) -> None:
+    """コメント 0 件 → 承認。control.jsonl に approve 行を書く."""
+    _write_state(workspace, {"o/r:1": _state_entry(number=1, repo="o/r", phase="approve")})
+    resp = client.post("/api/issues/1/review", json={"comments": [], "actor": "o"})
+    assert resp.status_code == 200
+    assert resp.json() == {"outcome": "approved", "accepted": True}
+    record = json.loads((workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert record == {"issue": 1, "action": "approve", "approver": "o"}
+
+
+def test_review_correction_writes_reject_with_feedback(client: TestClient, workspace: Path) -> None:
+    """指摘あり → 差し戻し。control.jsonl に reject + feedback 行を書く."""
+    _write_state(workspace, {"o/r:1": _state_entry(number=1, repo="o/r", phase="approve")})
+    resp = client.post(
+        "/api/issues/1/review",
+        json={
+            "comments": [{"anchor": "arch-1", "anchor_label": "構成", "tag": "指摘", "body": "ここが誤り"}],
+            "actor": "o",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["outcome"] == "changes_requested"
+    record = json.loads((workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert record["action"] == "reject"
+    assert "ここが誤り" in record["feedback"]
+    assert "arch-1" in record["feedback"]
+
+
+def test_review_questions_only(client: TestClient, workspace: Path) -> None:
+    _write_state(workspace, {"o/r:1": _state_entry(number=1, repo="o/r", phase="approve")})
+    resp = client.post(
+        "/api/issues/1/review",
+        json={"comments": [{"anchor": "sum-1", "tag": "質問", "body": "なぜ?"}], "actor": "o"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["outcome"] == "questions"
+    record = json.loads((workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert record["action"] == "reject"
+
+
+def test_review_unknown_issue_returns_404(client: TestClient) -> None:
+    assert client.post("/api/issues/99/review", json={"comments": [], "actor": "o"}).status_code == 404
+
+
+def test_review_invalid_tag_returns_422(client: TestClient, workspace: Path) -> None:
+    _write_state(workspace, {"o/r:1": _state_entry(number=1, repo="o/r", phase="approve")})
+    resp = client.post(
+        "/api/issues/1/review",
+        json={"comments": [{"anchor": "tc-01", "tag": "感想", "body": "x"}], "actor": "o"},
+    )
+    assert resp.status_code == 422
+
+
+# ──────────────────────────────────────
 # GET /api/approvals (#88 Unit B: 承認待ち一覧)
 # ──────────────────────────────────────
 def test_approvals_empty_workspace_returns_200(client: TestClient) -> None:

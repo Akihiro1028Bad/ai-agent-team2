@@ -30,6 +30,7 @@ from ai_agent_orchestrator.api.readers import (
     read_issue_summaries,
     read_queue,
 )
+from ai_agent_orchestrator.api.review import build_review_control_record, classify_review
 from ai_agent_orchestrator.api.schemas import (
     AgentLogPage,
     ApprovalEntry,
@@ -46,6 +47,8 @@ from ai_agent_orchestrator.api.schemas import (
     QueueResponse,
     ReplyRequest,
     ReplyResponse,
+    ReviewRequest,
+    ReviewResponse,
 )
 from ai_agent_orchestrator.api.stream import (
     KEEPALIVE_INTERVAL_SEC,
@@ -317,6 +320,25 @@ def create_app(settings: AppSettings) -> FastAPI:
         states = load_states(workspace)
         _state_repo, state = _resolve_issue(states, issue_number, repo)
         return build_design_response(state.plan_json)
+
+    @app.post("/api/issues/{issue_number}/review", response_model=ReviewResponse)
+    async def post_issue_review(
+        issue_number: int,
+        body: ReviewRequest,
+        repo: str | None = Query(default=None),
+    ) -> ReviewResponse:
+        """設計レビュー提出を分類し、承認/差し戻しを control.jsonl へ書く (#89).
+
+        指摘=差し戻し(PLAN) / 質問=差し戻し(回答促し) / 0件=承認。actor の権限検証は
+        orchestrator 側 (control_file の approver 検証) で行う。不在 404・複数一致 400。
+        """
+        states = load_states(workspace)
+        _state_repo, _state = _resolve_issue(states, issue_number, repo)
+        outcome = classify_review(body.comments)
+        record = build_review_control_record(issue_number, body.actor, body.comments)
+        control_path: Path = app.state.workspace / "control.jsonl"
+        await asyncio.to_thread(_append_control_line, control_path, record)
+        return ReviewResponse(outcome=outcome, accepted=True)
 
     @app.get("/api/approvals", response_model=list[ApprovalEntry])
     async def get_approvals() -> list[ApprovalEntry]:
