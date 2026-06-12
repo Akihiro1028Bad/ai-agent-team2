@@ -304,3 +304,67 @@ class ReplyResponse(BaseModel):
     """POST /api/issues/{n}/reply のレスポンスボディ."""
 
     posted: bool
+
+
+class DesignAnchor(BaseModel):
+    """design.json の anchor 付きテキスト要素 (#89)."""
+
+    anchor: str
+    text: str
+
+
+class DesignSubtask(BaseModel):
+    """design.json の anchor 付きサブタスク要素 (#89)."""
+
+    anchor: str
+    id: int | None = None
+    title: str
+
+
+class ReviewComment(BaseModel):
+    """設計レビューのインラインコメント 1 件 (#89)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    anchor: str = Field(min_length=1, max_length=128)
+    anchor_label: str = Field(default="", max_length=256)
+    tag: Literal["指摘", "質問"]
+    body: str = Field(min_length=1, max_length=8192)
+
+
+class ReviewRequest(BaseModel):
+    """POST /api/issues/{n}/review のリクエストボディ (#89).
+
+    インラインレビュー提出。comments が空なら承認、指摘があれば差し戻し、
+    質問のみなら質問として扱う (分類は api.review.classify_review)。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    comments: list[ReviewComment] = Field(default_factory=list, max_length=500)
+    actor: str = Field(default="", max_length=200)
+
+
+class ReviewResponse(BaseModel):
+    """POST /api/issues/{n}/review のレスポンスボディ (#89)."""
+
+    outcome: Literal["approved", "changes_requested", "questions"]
+    accepted: bool
+
+
+class DesignResponse(BaseModel):
+    """GET /api/issues/{n}/design のレスポンスボディ (#89).
+
+    plan_json から導出した構造化設計。各要素に安定 anchor ID を持たせ、
+    インラインレビューの指摘を該当要素へ紐づけられるようにする。
+    PLAN 未完了 (plan_json 不在) は present=false + reason で返す (常に 200)。
+    """
+
+    present: bool
+    plan_depth: str | None = None
+    ui_impact: bool | None = None
+    summary: DesignAnchor | None = None
+    test_cases: list[DesignAnchor] = Field(default_factory=list)
+    architecture: list[DesignAnchor] = Field(default_factory=list)
+    subtasks: list[DesignSubtask] = Field(default_factory=list)
+    reason: str | None = None

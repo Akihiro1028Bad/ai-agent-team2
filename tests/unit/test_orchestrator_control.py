@@ -302,6 +302,72 @@ class TestRewind:
         assert orch._task_queue.get_queue_snapshot()["queued"] == []
 
 
+class TestReviewConsume:
+    """#89 Unit B2: control_file の approve/reject 消費 → パイプライン駆動."""
+
+    def _orch_with_mocks(self, tmp_path: Path) -> tuple[Orchestrator, AsyncMock]:
+        account_mgr = AsyncMock()
+        account_mgr.get_client_for_repo = AsyncMock(return_value=AsyncMock())
+        orch = _make_orchestrator(tmp_path, account_manager=account_mgr)
+        return orch, account_mgr
+
+    async def test_approve_advances_approve_to_implement(self, tmp_path: Path) -> None:
+        orch, _ = self._orch_with_mocks(tmp_path)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.APPROVE)
+        _write_control(orch, {"issue": 5, "action": "approve", "approver": "test-owner"})
+
+        await orch._consume_review_commands()
+
+        assert orch._state_machine.get_phase(make_issue_key(REPO, 5)) is Phase.IMPLEMENT
+        snapshot = orch._task_queue.get_queue_snapshot()
+        assert any(q["issue_number"] == 5 and q["phase"] == "implement" for q in snapshot["queued"])
+
+    async def test_reject_returns_to_plan_with_feedback(self, tmp_path: Path) -> None:
+        orch, _ = self._orch_with_mocks(tmp_path)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.APPROVE)
+        _write_control(orch, {"issue": 5, "action": "reject", "approver": "test-owner", "feedback": "再設計して"})
+
+        await orch._consume_review_commands()
+
+        assert orch._state_machine.get_phase(make_issue_key(REPO, 5)) is Phase.PLAN
+        req = await orch._task_queue.dequeue()
+        assert req.phase == "plan"
+        assert req.extra["feedback"] == "再設計して"
+
+    async def test_ignored_when_not_approve_phase(self, tmp_path: Path) -> None:
+        orch, _ = self._orch_with_mocks(tmp_path)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.IMPLEMENT)
+        _write_control(orch, {"issue": 5, "action": "approve", "approver": "test-owner"})
+
+        await orch._consume_review_commands()
+
+        # APPROVE 相でなければ無視 (誤遷移を防ぐ)。offset は進む
+        assert orch._state_machine.get_phase(make_issue_key(REPO, 5)) is Phase.IMPLEMENT
+        assert orch._task_queue.get_queue_snapshot()["queued"] == []
+        assert orch._review_offset == 1
+
+    async def test_unauthorized_approver_ignored(self, tmp_path: Path) -> None:
+        orch, _ = self._orch_with_mocks(tmp_path)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.APPROVE)
+        _write_control(orch, {"issue": 5, "action": "approve", "approver": "mallory"})
+
+        await orch._consume_review_commands()
+
+        assert orch._state_machine.get_phase(make_issue_key(REPO, 5)) is Phase.APPROVE
+        assert orch._review_offset == 1
+
+    async def test_review_offset_persisted_across_instances(self, tmp_path: Path) -> None:
+        orch, _ = self._orch_with_mocks(tmp_path)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.APPROVE)
+        _write_control(orch, {"issue": 5, "action": "approve", "approver": "test-owner"})
+
+        await orch._consume_review_commands()
+        assert orch._review_offset == 1
+
+        orch2, _ = self._orch_with_mocks(tmp_path)
+        assert orch2._load_review_offset() == 1
+
+
 class TestQueueJson:
     async def test_build_and_write_queue_json(self, tmp_path: Path) -> None:
         orch = _make_orchestrator(tmp_path)

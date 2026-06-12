@@ -610,6 +610,92 @@ export async function postReply(issue: number, text: string, signal?: AbortSigna
   await apiPost<{ posted: boolean }>(`/api/issues/${issue}/reply`, { text }, signal);
 }
 
+// ── 設計レビュー (#89) ──
+
+export interface ApiDesignAnchor {
+  anchor: string;
+  text: string;
+}
+
+export interface ApiDesignSubtask {
+  anchor: string;
+  id: number | null;
+  title: string;
+}
+
+export interface ApiDesignResponse {
+  present: boolean;
+  plan_depth: string | null;
+  ui_impact: boolean | null;
+  summary: ApiDesignAnchor | null;
+  test_cases: ApiDesignAnchor[];
+  architecture: ApiDesignAnchor[];
+  subtasks: ApiDesignSubtask[];
+  reason: string | null;
+}
+
+export interface DesignView {
+  present: boolean;
+  planDepth: string | null;
+  uiImpact: boolean | null;
+  summary: ApiDesignAnchor | null;
+  testCases: ApiDesignAnchor[];
+  architecture: ApiDesignAnchor[];
+  subtasks: ApiDesignSubtask[];
+  reason: string | null;
+}
+
+export function adaptDesign(d: ApiDesignResponse): DesignView {
+  return {
+    present: d.present,
+    planDepth: d.plan_depth,
+    uiImpact: d.ui_impact,
+    summary: d.summary,
+    testCases: d.test_cases,
+    architecture: d.architecture,
+    subtasks: d.subtasks,
+    reason: d.reason,
+  };
+}
+
+/** GET /api/issues/{n}/design */
+export async function getDesign(issue: number, signal?: AbortSignal): Promise<DesignView> {
+  return adaptDesign(await apiGet<ApiDesignResponse>(`/api/issues/${issue}/design`, signal));
+}
+
+/** レビュー提出コメント (UI の DraftComment を API 形へ写したもの)。 */
+export interface ReviewCommentInput {
+  anchor: string;
+  anchorLabel: string;
+  tag: "指摘" | "質問";
+  body: string;
+}
+
+export type ReviewOutcome = "approved" | "changes_requested" | "questions";
+
+/** POST /api/issues/{n}/review → {outcome, accepted} */
+export async function postReview(
+  issue: number,
+  comments: ReviewCommentInput[],
+  actor: string,
+  signal?: AbortSignal,
+): Promise<ReviewOutcome> {
+  const res = await apiPost<{ outcome: ReviewOutcome; accepted: boolean }>(
+    `/api/issues/${issue}/review`,
+    {
+      comments: comments.map((c) => ({
+        anchor: c.anchor,
+        anchor_label: c.anchorLabel,
+        tag: c.tag,
+        body: c.body,
+      })),
+      actor,
+    },
+    signal,
+  );
+  return res.outcome;
+}
+
 // ── エンドポイント ──
 
 export const api = {
@@ -643,6 +729,11 @@ export const api = {
   postControl: (req: ControlRequest, signal?: AbortSignal) => postControl(req, signal),
 
   postReply: (issue: number, text: string, signal?: AbortSignal) => postReply(issue, text, signal),
+
+  getDesign: (issue: number, signal?: AbortSignal) => getDesign(issue, signal),
+
+  postReview: (issue: number, comments: ReviewCommentInput[], actor: string, signal?: AbortSignal) =>
+    postReview(issue, comments, actor, signal),
 };
 
 /** SSE ストリームの URL を組み立てる (EventSource 用、相対パス)。 */

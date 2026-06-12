@@ -30,6 +30,10 @@ from ai_agent_orchestrator.orchestrator.control_bus import (
     OperationalCommand,
     read_new_operational_commands,
 )
+from ai_agent_orchestrator.orchestrator.control_file import (
+    ControlCommand,
+    read_new_control_commands,
+)
 from ai_agent_orchestrator.orchestrator.execution_guard import ExecutionGuard
 from ai_agent_orchestrator.orchestrator.state_machine import (
     InvalidTransitionError,
@@ -451,6 +455,8 @@ class Orchestrator:
         self._control_task: asyncio.Task[None] | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
         self._control_offset = 0
+        # 承認/差し戻し (control_file の approve/reject) は別系統・別 offset で消費する (#89)。
+        self._review_offset = 0
 
         # Event queue for poller -> router communication
         self._event_queue: asyncio.Queue[object] = asyncio.Queue()
@@ -469,6 +475,8 @@ class Orchestrator:
         )
         # offset は control_file と同じディレクトリに置く (custom パス時のズレ防止)。
         self._control_offset_file = self._control_file.with_name(self._control_file.name + ".offset")
+        # 承認/差し戻し消費の offset (operational とは独立に同一ファイルを併読する, #89)。
+        self._review_offset_file = self._control_file.with_name(self._control_file.name + ".review-offset")
         # キュー可視化 (#96): TaskQueue 状態の書き出し先。
         self._queue_file = workspace_path / "queue.json"
         self._persistence = persistence or StatePersistence(
@@ -656,6 +664,7 @@ class Orchestrator:
         # ControlBus 消費ループ (#87)。停止中に積まれたコマンドを起動時から消費する
         # ため、永続化した offset を復元する (処理済みは再適用しない)。
         self._control_offset = self._load_control_offset()
+        self._review_offset = self._load_review_offset()
         self._control_task = asyncio.create_task(self._control_loop(), name="control-bus")
 
         # 3. Start poller
@@ -774,6 +783,20 @@ class Orchestrator:
         except OSError:
             logger.warning("failed to persist control offset", exc_info=True)
 
+    def _load_review_offset(self) -> int:
+        """永続化済みの承認/差し戻し消費 offset を読む (失敗時 0, #89)."""
+        try:
+            return int(self._review_offset_file.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return 0
+
+    def _save_review_offset(self) -> None:
+        """承認/差し戻し消費 offset を永続化する (#89)."""
+        try:
+            self._review_offset_file.write_text(str(self._review_offset), encoding="utf-8")
+        except OSError:
+            logger.warning("failed to persist review offset", exc_info=True)
+
     def _control_authorized_actors(self) -> list[str]:
         """運用コマンドを発行できる actor の許可集合 (全リポの承認者和集合)."""
         actors: set[str] = set()
@@ -808,6 +831,7 @@ class Orchestrator:
         while self._running:
             try:
                 await self._consume_control_commands()
+                await self._consume_review_commands()
                 await self._write_queue_json()
             except asyncio.CancelledError:
                 raise
@@ -850,6 +874,85 @@ class Orchestrator:
         if new_offset != self._control_offset:
             self._control_offset = new_offset
             self._save_control_offset()
+
+    async def _consume_review_commands(self) -> None:
+        """未処理の承認/差し戻し (approve/reject) を読み取り、順に適用する (#89).
+
+        operational コマンドと同一ファイルを別 offset で併読する (control_file は
+        approve/reject のみ、operational は pause 等のみを拾い、互いの行は無視する)。
+        承認者検証は read_new_control_commands が許可リストで行う。
+        """
+        commands, new_offset = read_new_control_commands(
+            self._control_file,
+            self._review_offset,
+            self._control_authorized_actors(),
+        )
+        for cmd in commands:
+            await self._apply_review_command(cmd)
+        if new_offset != self._review_offset:
+            self._review_offset = new_offset
+            self._save_review_offset()
+
+    async def _apply_review_command(self, cmd: ControlCommand) -> None:
+        """承認/差し戻しを APPROVE ゲートとして適用する (#89).
+
+        - approve → APPROVE→IMPLEMENT 遷移 + IMPLEMENT 再エンキュー
+        - reject  → APPROVE→PLAN 遷移 + feedback 付き PLAN 再エンキュー
+
+        APPROVE 相にない Issue は誤遷移防止のため無視する (poller 経由の承認と同方針)。
+        """
+        issue_key = self._resolve_issue_key(cmd.issue_number)
+        if issue_key is None:
+            return
+        current = self._state_machine.get_phase(issue_key)
+        if current is not Phase.APPROVE:
+            logger.info(
+                "review: #%d は APPROVE 相でないため無視 (現在 %s)",
+                cmd.issue_number,
+                current.value,
+            )
+            return
+        repo_config = self._repo_config_for(issue_key[0])
+        if repo_config is None:
+            logger.warning("review: repo を解決できません (#%d)", cmd.issue_number)
+            return
+
+        next_phase = Phase.IMPLEMENT if cmd.action == "approve" else Phase.PLAN
+        try:
+            await self._state_machine.transition(issue_key, next_phase)
+        except (InvalidTransitionError, KeyError) as exc:
+            logger.warning("review: %s への遷移に失敗 (#%d): %s", next_phase.value, cmd.issue_number, exc)
+            return
+
+        # 遷移と再エンキューは await を挟まず連続させる: 間に GitHub 呼び出し等の
+        # await を置くと、その途中でクラッシュした場合に「遷移済みだがキューに無い」
+        # 状態 (再適用時は APPROVE 相でないため再エンキューがスキップ) を招く。
+        # ラベル更新 (best-effort) はキュー投入後に行う。
+        extra: dict[str, Any] = {}
+        if cmd.action == "reject" and cmd.feedback:
+            extra["feedback"] = cmd.feedback
+        await self._task_queue.enqueue(
+            TaskRequest(
+                issue_number=cmd.issue_number,
+                repo=repo_config,
+                phase=next_phase.value,
+                priority=Priority.NORMAL,
+                extra=extra,
+            )
+        )
+        # ラベル更新は best-effort (失敗しても状態+キューは確定済み)。
+        try:
+            client = await self._account_manager.get_client_for_repo(repo_config.owner, repo_config.repo)
+            await client.replace_phase_label(repo_config, cmd.issue_number, f"phase:{next_phase.value}")
+        except Exception as exc:
+            logger.warning("review: ラベル更新に失敗 (#%d): %s", cmd.issue_number, exc)
+
+        await self._event_logger.track(
+            "plan_approved" if cmd.action == "approve" else "plan_rejected",
+            issue_number=cmd.issue_number,
+            phase="system",
+            data={"action": cmd.action, "approver": cmd.approver},
+        )
 
     async def _apply_control_command(self, cmd: OperationalCommand) -> None:
         """1 件の運用コマンドを適用する."""
