@@ -63,6 +63,22 @@ _OPERATIONAL_ACTIONS: frozenset[str] = frozenset(
 # issue 番号を必要としない全体コマンド (shutdown と #96 の poll_now / worktree_gc)。
 # reorder も issue 単独では特定できないが order を取るため別途処理する。
 _GLOBAL_ACTIONS: frozenset[str] = frozenset({"shutdown", "poll_now", "worktree_gc"})
+
+# rewind の巻き戻し先として許可するフェーズ値 (state machine の resume_to_* と一致)。
+# 語彙の所有権を本モジュールに置き、orchestrator / API schema の双方が参照する (#88)。
+REWIND_TARGETS: frozenset[str] = frozenset(
+    {
+        "intake",
+        "clarify",
+        "clarify-wait",
+        "split",
+        "plan",
+        "approve",
+        "implement",
+        "review",
+        "revise",
+    }
+)
 # DoS 対策: control.jsonl の最大サイズ (10 MiB)。control_file.py と同値。
 _MAX_CONTROL_FILE_BYTES = 10 * 1024 * 1024
 

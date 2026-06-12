@@ -398,6 +398,133 @@ def test_post_control_appends_multiple_lines(client: TestClient, workspace: Path
 
 
 # ──────────────────────────────────────
+# POST /api/control 語彙拡張 (#88 Unit A: #96 コマンドの発行側)
+# ──────────────────────────────────────
+def test_post_control_global_simple_commands(client: TestClient, workspace: Path) -> None:
+    """poll_now / worktree_gc は issue 不要で 202、行に issue キーなし."""
+    for action in ("poll_now", "worktree_gc"):
+        resp = client.post("/api/control", json={"action": action, "actor": "alice"})
+        assert resp.status_code == 202, action
+    lines = (workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()
+    records = [json.loads(line) for line in lines]
+    assert [r["action"] for r in records] == ["poll_now", "worktree_gc"]
+    assert all("issue" not in r for r in records)
+
+
+def test_post_control_issue_scoped_simple_commands(client: TestClient, workspace: Path) -> None:
+    """enqueue_issue / retry_with_analysis は issue 必須で 202."""
+    for action in ("enqueue_issue", "retry_with_analysis"):
+        resp = client.post("/api/control", json={"action": action, "issue": 9, "actor": "alice"})
+        assert resp.status_code == 202, action
+        # issue 欠落は 422
+        resp = client.post("/api/control", json={"action": action, "actor": "alice"})
+        assert resp.status_code == 422, action
+    lines = (workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line)["issue"] for line in lines] == [9, 9]
+
+
+def test_post_control_set_priority(client: TestClient, workspace: Path) -> None:
+    """set_priority は issue + phase + priority 必須で 202、行に両フィールドが載る."""
+    resp = client.post(
+        "/api/control",
+        json={"action": "set_priority", "issue": 5, "phase": "implement", "priority": 1, "actor": "a"},
+    )
+    assert resp.status_code == 202
+    record = json.loads((workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert record == {"action": "set_priority", "issue": 5, "phase": "implement", "priority": 1, "actor": "a"}
+    # phase / priority 欠落は 422
+    assert client.post("/api/control", json={"action": "set_priority", "issue": 5, "priority": 1}).status_code == 422
+    assert (
+        client.post("/api/control", json={"action": "set_priority", "issue": 5, "phase": "implement"}).status_code
+        == 422
+    )
+
+
+def test_post_control_rewind_valid_target(client: TestClient, workspace: Path) -> None:
+    """rewind は issue + target (resume 可能な Phase 値) で 202."""
+    resp = client.post("/api/control", json={"action": "rewind", "issue": 5, "target": "plan", "actor": "a"})
+    assert resp.status_code == 202
+    record = json.loads((workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert record == {"action": "rewind", "issue": 5, "target": "plan", "actor": "a"}
+
+
+def test_post_control_rewind_invalid_target_returns_422(client: TestClient) -> None:
+    """rewind の target が resume 不可な値 (done/不正文字列) なら 422."""
+    for target in ("done", "suspended", "nonsense", ""):
+        resp = client.post("/api/control", json={"action": "rewind", "issue": 5, "target": target, "actor": "a"})
+        assert resp.status_code == 422, target
+    # target 欠落も 422
+    assert client.post("/api/control", json={"action": "rewind", "issue": 5, "actor": "a"}).status_code == 422
+
+
+def test_post_control_reorder(client: TestClient, workspace: Path) -> None:
+    """reorder は order (非空リスト) 必須・issue 不要で 202、行に order が載る."""
+    resp = client.post(
+        "/api/control",
+        json={
+            "action": "reorder",
+            "order": [{"issue": 3, "phase": "plan"}, {"issue": 1, "phase": "implement"}],
+            "actor": "a",
+        },
+    )
+    assert resp.status_code == 202
+    record = json.loads((workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert record["action"] == "reorder"
+    assert record["order"] == [{"issue": 3, "phase": "plan"}, {"issue": 1, "phase": "implement"}]
+    assert "issue" not in record
+
+
+def test_post_control_reorder_invalid_returns_422(client: TestClient) -> None:
+    """reorder の order 欠落・空・要素不正は 422."""
+    assert client.post("/api/control", json={"action": "reorder", "actor": "a"}).status_code == 422
+    assert client.post("/api/control", json={"action": "reorder", "order": [], "actor": "a"}).status_code == 422
+    assert (
+        client.post(
+            "/api/control", json={"action": "reorder", "order": [{"issue": 0, "phase": "p"}], "actor": "a"}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post("/api/control", json={"action": "reorder", "order": [{"issue": 1}], "actor": "a"}).status_code
+        == 422
+    )
+
+
+def test_post_control_unknown_action_returns_422(client: TestClient) -> None:
+    """未知 action は 422 (Literal 検証)."""
+    resp = client.post("/api/control", json={"action": "explode", "issue": 1, "actor": "a"})
+    assert resp.status_code == 422
+
+
+def test_post_control_roundtrip_parses_in_control_bus(client: TestClient, workspace: Path) -> None:
+    """API が受理した全 action の行を parse_operational_line が読める (語彙 drift 防止)."""
+    from ai_agent_orchestrator.orchestrator.control_bus import parse_operational_line
+
+    requests: list[dict[str, object]] = [
+        {"action": "pause", "issue": 1, "actor": "a"},
+        {"action": "resume", "issue": 1, "actor": "a"},
+        {"action": "abort", "issue": 1, "actor": "a"},
+        {"action": "shutdown", "actor": "a"},
+        {"action": "poll_now", "actor": "a"},
+        {"action": "worktree_gc", "actor": "a"},
+        {"action": "enqueue_issue", "issue": 2, "actor": "a"},
+        {"action": "retry_with_analysis", "issue": 2, "actor": "a"},
+        {"action": "set_priority", "issue": 2, "phase": "implement", "priority": 1, "actor": "a"},
+        {"action": "rewind", "issue": 2, "target": "plan", "actor": "a"},
+        {"action": "reorder", "order": [{"issue": 2, "phase": "plan"}], "actor": "a"},
+    ]
+    for req in requests:
+        assert client.post("/api/control", json=req).status_code == 202, req["action"]
+
+    lines = (workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == len(requests)
+    for line, req in zip(lines, requests, strict=True):
+        cmd = parse_operational_line(line)
+        assert cmd is not None, f"parse failed for {req['action']}: {line}"
+        assert cmd.action == req["action"]
+
+
+# ──────────────────────────────────────
 # POST /api/orchestrator/{action}
 # ──────────────────────────────────────
 class _MockSystemd:

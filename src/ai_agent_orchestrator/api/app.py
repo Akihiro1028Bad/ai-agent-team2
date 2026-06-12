@@ -346,10 +346,7 @@ def create_app(settings: AppSettings) -> FastAPI:
         し、actor の権限検証は orchestrator 側で行う。
         """
         control_path: Path = app.state.workspace / "control.jsonl"
-        record: dict[str, object] = {"action": body.action, "actor": body.actor}
-        if body.action != "shutdown":
-            record["issue"] = body.issue
-        await asyncio.to_thread(_append_control_line, control_path, record)
+        await asyncio.to_thread(_append_control_line, control_path, body.to_control_record())
         return ControlAcceptedResponse(accepted=True)
 
     @app.post("/api/orchestrator/{action}", status_code=200)

@@ -26,6 +26,7 @@ from ai_agent_orchestrator.models import ErrorCategory, IssueKey, Phase, make_is
 from ai_agent_orchestrator.notifications.slack import SlackNotifier
 from ai_agent_orchestrator.orchestrator.approval import resolve_approvers
 from ai_agent_orchestrator.orchestrator.control_bus import (
+    REWIND_TARGETS,
     OperationalCommand,
     read_new_operational_commands,
 )
@@ -69,20 +70,6 @@ def _extract_worktree_issue_number(name: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-# rewind の巻き戻し先として許可するフェーズ (state machine の resume_to_* と一致)。
-_REWIND_TARGETS: frozenset[Phase] = frozenset(
-    {
-        Phase.INTAKE,
-        Phase.CLARIFY,
-        Phase.CLARIFY_WAIT,
-        Phase.SPLIT,
-        Phase.PLAN,
-        Phase.APPROVE,
-        Phase.IMPLEMENT,
-        Phase.REVIEW,
-        Phase.REVISE,
-    }
-)
 # retry_with_analysis で現フェーズのまま再試行できる実行フェーズ。
 _RETRYABLE_PHASES: frozenset[Phase] = frozenset({Phase.PLAN, Phase.IMPLEMENT, Phase.REVISE})
 
@@ -90,14 +77,12 @@ _RETRYABLE_PHASES: frozenset[Phase] = frozenset({Phase.PLAN, Phase.IMPLEMENT, Ph
 def _parse_rewind_target(target: str) -> Phase | None:
     """rewind の target 文字列を、resume 可能な Phase へ変換する (#96).
 
-    Phase.value (例: "implement", "clarify-wait") に一致し、かつ resume 先として
-    許可された相のみ受理する。不正・未許可は None。
+    許可語彙は control_bus.REWIND_TARGETS (state machine の resume_to_* と一致) を
+    共有参照する。不正・未許可は None。
     """
-    try:
-        phase = Phase(target)
-    except ValueError:
+    if target not in REWIND_TARGETS:
         return None
-    return phase if phase in _REWIND_TARGETS else None
+    return Phase(target)
 
 
 # ---------------------------------------------------------------------------
