@@ -161,3 +161,17 @@ UI → POST /api/control → state/control.jsonl に追記
 - **介入コマンドと実行中タスクの競合**: pause/abort はターン境界でのみ消費する設計で回避（強制 kill はしない）
 - **ファイル tail の取りこぼし**: SSE 再接続時は Last-Event-ID で events.jsonl のオフセットから再送
 - **モック → 実データ移行時の型ずれ**: web/lib/types.ts を API のレスポンススキーマ（pydantic → OpenAPI → 型生成）と一致させる
+
+## 9. レビュー由来の追従課題（#118 / #86・PR #117）
+
+PR #117 の @claude レビューで挙がった、M1「見える化」では非発火/軽微だが**本実装フェーズで取りこぼしたくない**課題。
+いずれも現状のプロトタイプ（静的モック・Server Components）には**該当コードが存在せず**、Phase 1（モック → API クライアント差し替え）で実装する箇所への要件として記録する。
+
+| # | 課題 | 現状 | 対応フェーズ | 対応方針 |
+|---|---|---|---|---|
+| F1 | **マルチリポ時の Issue 番号衝突**（中） | フロント `lib/api.ts` は未実装。**バックエンド `app.py` は既に対応済み**: `GET /api/issues/{n}`・`GET /api/issues/{n}/diff` が `repo: str \| None = Query()` を受け、`_resolve_issue` が複数リポジトリで同一番号が一致かつ `repo` 未指定なら 400 を返す（`detail` に `Specify ?repo=owner/repo`） | 1 | `/api/issues` が返す `repo`（`IssueSummary.repo`）を一覧→詳細の導線に乗せ、`getIssue(n, repo)`/`getDiff(n, repo)` から `?repo=owner/repo` を付与。番号衝突に備える |
+| F2 | **LogViewer が常に SSE 接続**（低） | `useLogStream`/`EventSource` は未実装。プロトタイプの `LogViewer` は既に `live={status === "running"}` で再生制御済み（components/LogViewer.tsx）。本実装の SSE 購読は status を見ずに張る懸念 | 1 | `useLogStream` は実行中（`running` 等の active 状態）のときのみ `EventSource` を張る。`done`/`suspended` の Issue ではアイドル SSE+keepalive を保持しない |
+| F3 | **ポーリングの重複**（低） | プロトタイプの `Shell`/`NotificationBell` は静的 import で `setInterval` 無し（重複は本実装で初めて発生）。本実装では `Shell`(health) + `NotificationBell`(activity) + 各ページ poller が独立し、ダッシュボードで activity が二重取得 | 1 | SWR 的な dedup / 共有キャッシュ層を導入、または activity 購読を 1 箇所に集約して配布。§3.2 の SSE と役割分担を明確化（活動は SSE、ヘルスは軽量ポーリング等） |
+| F4 | **通知既読の非対称**（低） | プロトタイプの `NotificationBell` は in-memory の `markAll`（現在分で置換）のみで、`markOne`/localStorage 永続化は未実装 | 1 | 既読 ID の保持方針を統一（**上限付き LRU** 等）。`markOne`（累積）と `markAll`（置換）で localStorage の増減挙動が読みづらくならないよう、単一の保持戦略に揃える |
+
+> 補足: F1 はバックエンド側が既に `?repo=` を実装済みのため、本実装ではフロントの導線整備のみで閉じる。F2〜F4 は Phase 1 の UI 実データ接続時に上記方針で実装する。
