@@ -496,6 +496,27 @@ export function adaptQueue(q: ApiQueueResponse): QueueView {
   };
 }
 
+// ── フェーズ別モデル設定 (#90) ──
+
+export interface ApiPhaseModelRow {
+  phase: string;
+  model: string;
+  thinking: boolean;
+  max_turns: number | null;
+}
+
+export interface ApiPhaseModelsResponse {
+  phases: ApiPhaseModelRow[];
+  allowed_models: string[];
+}
+
+export interface PhaseModelInput {
+  phase: string;
+  model: string;
+  thinking: boolean;
+  max_turns: number | null;
+}
+
 // ── 書き込み API (#88) ──
 
 /**
@@ -533,11 +554,11 @@ export type ControlAction =
 
 export type ControlRequest = ControlAction;
 
-async function apiPost<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+async function apiSend<T>(method: string, path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
-      method: "POST",
+      method,
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(body),
       signal,
@@ -550,6 +571,14 @@ async function apiPost<T>(path: string, body: unknown, signal?: AbortSignal): Pr
     throw new ApiError(res.status, `API エラー ${res.status} (${path})`);
   }
   return (await res.json()) as T;
+}
+
+function apiPost<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  return apiSend<T>("POST", path, body, signal);
+}
+
+function apiPut<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  return apiSend<T>("PUT", path, body, signal);
 }
 
 /** POST /api/control → 202 {accepted: true} */
@@ -673,6 +702,16 @@ export interface ReviewCommentInput {
 
 export type ReviewOutcome = "approved" | "changes_requested" | "questions";
 
+/** GET /api/config/phase-models */
+export async function getPhaseModels(signal?: AbortSignal): Promise<ApiPhaseModelsResponse> {
+  return apiGet<ApiPhaseModelsResponse>("/api/config/phase-models", signal);
+}
+
+/** PUT /api/config/phase-models */
+export async function putPhaseModels(rows: PhaseModelInput[], signal?: AbortSignal): Promise<ApiPhaseModelsResponse> {
+  return apiPut<ApiPhaseModelsResponse>("/api/config/phase-models", { phases: rows }, signal);
+}
+
 /** POST /api/issues/{n}/review → {outcome, accepted} */
 export async function postReview(
   issue: number,
@@ -734,6 +773,10 @@ export const api = {
 
   postReview: (issue: number, comments: ReviewCommentInput[], actor: string, signal?: AbortSignal) =>
     postReview(issue, comments, actor, signal),
+
+  getPhaseModels: (signal?: AbortSignal) => getPhaseModels(signal),
+
+  putPhaseModels: (rows: PhaseModelInput[], signal?: AbortSignal) => putPhaseModels(rows, signal),
 };
 
 /** SSE ストリームの URL を組み立てる (EventSource 用、相対パス)。 */

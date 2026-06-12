@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   adaptAgentLog,
   adaptCostRows,
@@ -9,6 +9,10 @@ import {
   adaptIssueSummary,
   formatRelative,
   normalizePhase,
+  getPhaseModels,
+  putPhaseModels,
+  ApiError,
+  api,
   type ApiAgentLogRecord,
   type ApiCostsResponse,
   type ApiDiffResponse,
@@ -16,6 +20,7 @@ import {
   type ApiHealth,
   type ApiIssueDetail,
   type ApiIssueSummary,
+  type ApiPhaseModelsResponse,
 } from "@/lib/api";
 
 function summary(overrides: Partial<ApiIssueSummary> = {}): ApiIssueSummary {
@@ -220,5 +225,132 @@ describe("formatRelative", () => {
     expect(formatRelative("2026-06-12T11:30:00Z", now)).toBe("30分前");
     expect(formatRelative("2026-06-12T09:00:00Z", now)).toBe("3時間前");
     expect(formatRelative("2026-06-10T12:00:00Z", now)).toBe("2日前");
+  });
+});
+
+// ── フェーズ別モデル設定 API (#90) ──
+
+const PHASE_MODELS_RESPONSE: ApiPhaseModelsResponse = {
+  phases: [
+    { phase: "intake", model: "haiku", thinking: false, max_turns: null },
+    { phase: "clarify", model: "sonnet", thinking: false, max_turns: null },
+    { phase: "plan", model: "sonnet", thinking: false, max_turns: null },
+    { phase: "split", model: "sonnet", thinking: false, max_turns: null },
+    { phase: "implement", model: "sonnet", thinking: false, max_turns: null },
+    { phase: "revise", model: "sonnet", thinking: false, max_turns: null },
+  ],
+  allowed_models: ["haiku", "sonnet", "opus"],
+};
+
+describe("getPhaseModels", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("成功時にレスポンスを返す", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify(PHASE_MODELS_RESPONSE), { status: 200 }),
+    );
+    const result = await getPhaseModels();
+    expect(result.phases).toHaveLength(6);
+    expect(result.allowed_models).toContain("haiku");
+    const called = vi.mocked(fetch).mock.calls[0];
+    expect(called?.[0]).toBe("/api/config/phase-models");
+  });
+
+  it("非 200 は ApiError を throw する", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response("bad", { status: 400 }),
+    );
+    await expect(getPhaseModels()).rejects.toBeInstanceOf(ApiError);
+    await expect(getPhaseModels()).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("ネットワーク到達不可は ApiError(0) を throw する", async () => {
+    vi.mocked(fetch).mockRejectedValue(new TypeError("network"));
+    await expect(getPhaseModels()).rejects.toMatchObject({ status: 0 });
+  });
+
+  it("AbortError は素通しで throw される", async () => {
+    const abort = new DOMException("aborted", "AbortError");
+    vi.mocked(fetch).mockRejectedValue(abort);
+    await expect(getPhaseModels()).rejects.toBeInstanceOf(DOMException);
+  });
+});
+
+describe("putPhaseModels", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("PUT メソッドで body を { phases: rows } に包んで送る", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify(PHASE_MODELS_RESPONSE), { status: 200 }),
+    );
+    const rows = [{ phase: "plan", model: "opus", thinking: true, max_turns: 20 }];
+    await putPhaseModels(rows);
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(url).toBe("/api/config/phase-models");
+    expect((init as RequestInit).method).toBe("PUT");
+    const sent = JSON.parse((init as RequestInit).body as string) as unknown;
+    expect(sent).toEqual({ phases: rows });
+  });
+
+  it("非 200 は ApiError を throw する", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response("bad", { status: 422 }),
+    );
+    await expect(putPhaseModels([])).rejects.toBeInstanceOf(ApiError);
+    await expect(putPhaseModels([])).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("ネットワーク到達不可は ApiError(0) を throw する", async () => {
+    vi.mocked(fetch).mockRejectedValue(new TypeError("network"));
+    await expect(putPhaseModels([])).rejects.toMatchObject({ status: 0 });
+  });
+
+  it("AbortError は素通しで throw される", async () => {
+    const abort = new DOMException("aborted", "AbortError");
+    vi.mocked(fetch).mockRejectedValue(abort);
+    await expect(putPhaseModels([])).rejects.toBeInstanceOf(DOMException);
+  });
+
+  it("成功時にレスポンスを返す", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify(PHASE_MODELS_RESPONSE), { status: 200 }),
+    );
+    const result = await putPhaseModels([{ phase: "plan", model: "opus", thinking: true, max_turns: 20 }]);
+    expect(result.phases).toHaveLength(6);
+  });
+});
+
+describe("api オブジェクト経由 (カバレッジ補完)", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("api.getPhaseModels は getPhaseModels に委譲する", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify(PHASE_MODELS_RESPONSE), { status: 200 }),
+    );
+    const result = await api.getPhaseModels();
+    expect(result.phases).toHaveLength(6);
+  });
+
+  it("api.putPhaseModels は putPhaseModels に委譲する", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify(PHASE_MODELS_RESPONSE), { status: 200 }),
+    );
+    const result = await api.putPhaseModels([{ phase: "plan", model: "opus", thinking: true, max_turns: 20 }]);
+    expect(result.phases).toHaveLength(6);
   });
 });
