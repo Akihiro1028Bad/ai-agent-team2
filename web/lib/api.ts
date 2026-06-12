@@ -256,6 +256,20 @@ export function adaptEvent(a: ApiEventRecord): IssueEvent {
   };
 }
 
+/**
+ * 同一 (issue,ts,event) で id が重複した場合に決定的な接尾辞で一意化する。
+ * 入力リストの順序はポーリング間で安定なので、付与する接尾辞も安定し、
+ * React の key 衝突と通知既読の取り違えを防ぐ (adaptEvent の id は内容由来)。
+ */
+function ensureUniqueIds(events: IssueEvent[]): IssueEvent[] {
+  const seen = new Map<string, number>();
+  return events.map((e) => {
+    const n = seen.get(e.id) ?? 0;
+    seen.set(e.id, n + 1);
+    return n === 0 ? e : { ...e, id: `${e.id}#${n}` };
+  });
+}
+
 export function adaptIssueDetail(a: ApiIssueDetail, events: ApiEventRecord[]): IssueDetail {
   const summary = adaptIssueSummary(a);
   const planSubtasks = extractSubtasks(a.plan_json);
@@ -265,7 +279,7 @@ export function adaptIssueDetail(a: ApiIssueDetail, events: ApiEventRecord[]): I
     body: "",
     designDoc: undefined,
     subtasks: planSubtasks,
-    events: events.map(adaptEvent),
+    events: ensureUniqueIds(events.map(adaptEvent)),
   };
 }
 
@@ -427,7 +441,7 @@ export const api = {
   },
 
   getActivity: (limit = 100, signal?: AbortSignal) =>
-    apiGet<ApiEventRecord[]>(`/api/activity?limit=${limit}`, signal).then((rows) => rows.map(adaptEvent)),
+    apiGet<ApiEventRecord[]>(`/api/activity?limit=${limit}`, signal).then((rows) => ensureUniqueIds(rows.map(adaptEvent))),
 
   getHealth: (signal?: AbortSignal) => apiGet<ApiHealth>("/api/health", signal),
 

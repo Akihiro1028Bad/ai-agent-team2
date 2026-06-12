@@ -5,6 +5,7 @@ import {
   adaptDiff,
   adaptEvent,
   adaptHealth,
+  adaptIssueDetail,
   adaptIssueSummary,
   formatRelative,
   normalizePhase,
@@ -13,6 +14,7 @@ import {
   type ApiDiffResponse,
   type ApiEventRecord,
   type ApiHealth,
+  type ApiIssueDetail,
   type ApiIssueSummary,
 } from "@/lib/api";
 
@@ -101,6 +103,17 @@ describe("adaptEvent", () => {
     expect(adaptEvent(ev("phase_completed", { title: "実装完了" })).title).toBe("実装完了");
     expect(adaptEvent(ev("phase_completed")).title).toBe("phase completed");
     expect(adaptEvent(ev("phase_completed", { cost_usd: 0.5 })).cost).toBe(0.5);
+  });
+});
+
+describe("adaptIssueDetail", () => {
+  it("同一 (issue,ts,event) のイベントでも id を一意化する", () => {
+    const detail: ApiIssueDetail = { ...summary(), plan_json: null, session_id: null, impl_iteration: 0 };
+    const dup: ApiEventRecord = { ts: "2026-06-12T00:00:00+00:00", issue: 42, phase: "implement", event: "phase_completed", data: null };
+    const result = adaptIssueDetail(detail, [dup, dup, dup]);
+    const ids = result.events.map((e) => e.id);
+    expect(new Set(ids).size).toBe(3); // 重複なし
+    expect(ids[0]).not.toContain("#"); // 先頭は素の id（既読の安定性を維持）
   });
 });
 

@@ -36,7 +36,7 @@ export default function TimelinePage() {
           <div className="flex flex-col gap-2.5">
             {issues.map((issue: IssueSummary) => (
               <Link
-                key={issue.number}
+                key={`${issue.repo}#${issue.number}`}
                 href={`/issues/${issue.number}`}
                 className="group flex items-center gap-3"
               >
