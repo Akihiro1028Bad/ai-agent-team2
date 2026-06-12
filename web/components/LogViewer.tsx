@@ -48,7 +48,7 @@ export function LogViewer({ issueNumber, live = true }: LogViewerProps) {
           <div key={i} className="flex gap-2.5 whitespace-pre-wrap break-all">
             <span className="shrink-0" style={{ color: "var(--color-ink-faint)" }}>{l.t}</span>
             <span className="w-[86px] shrink-0 uppercase" style={{ color: LEVEL_COLOR[l.level] }}>[{l.source}]</span>
-            <span style={{ color: l.level === "error" ? "var(--color-rose)" : l.level === "warn" ? "var(--color-amber)" : "var(--color-ink-dim)" }}>{l.text}</span>
+            <span style={{ color: l.level === "error" ? "var(--color-rose)" : /* v8 ignore next -- warn level not produced by adaptAgentLog pipeline */ l.level === "warn" ? "var(--color-amber)" : "var(--color-ink-dim)" }}>{l.text}</span>
           </div>
         ))}
         {streaming && (

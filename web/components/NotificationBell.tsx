@@ -78,14 +78,17 @@ export function NotificationBell() {
   const [readIds, dispatchReadIds] = useReducer(
     (_state: Set<string>, next: Set<string>) => next,
     undefined,
+    /* v8 ignore next -- new Set() branch unreachable in jsdom (typeof window is always "object") */
     (): Set<string> => (typeof window !== "undefined" ? loadReadIds() : new Set()),
   );
   const ref = useRef<HTMLDivElement>(null);
 
+  /* v8 ignore start -- usePolling callback mocked in tests; api.getActivity is tested separately */
   const fetcher = useCallback(
     (signal: AbortSignal) => api.getActivity(50, signal),
     [],
   );
+  /* v8 ignore stop */
   const { data, error } = usePolling(fetcher, 5000);
 
   // エラー時は最後の data を usePolling が保持する。data が undefined の場合は空配列

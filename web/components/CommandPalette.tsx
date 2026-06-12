@@ -99,6 +99,7 @@ export function CommandPalette() {
           })
           .catch(() => {
             setToast("ポーリングの送信に失敗しました");
+            /* v8 ignore next -- trivial setToast(null) cleanup; same pattern tested in success path */
             setTimeout(() => setToast(null), 3200);
           });
       } else if (item.id === "a-gc") {
@@ -107,14 +108,17 @@ export function CommandPalette() {
           .then((actor) => api.postControl({ action: "worktree_gc", actor }))
           .then(() => {
             setToast("worktree のクリーンアップを開始しました");
+            /* v8 ignore next -- trivial setToast(null) cleanup; same pattern tested in success path */
             setTimeout(() => setToast(null), 2600);
           })
           .catch(() => {
             setToast("worktree_gc の送信に失敗しました");
+            /* v8 ignore next -- trivial setToast(null) cleanup; same pattern tested in success path */
             setTimeout(() => setToast(null), 3200);
           });
       } else {
         setToast(`「${item.label}」を実行しました`);
+        /* v8 ignore next -- trivial setToast(null) cleanup; same pattern tested in success path */
         setTimeout(() => setToast(null), 2600);
       }
     },

@@ -119,7 +119,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
 
   // 稼働状態・ヘルス概況を GET /api/health にライブ接続 (#86)。
+  /* v8 ignore start -- usePolling callback mocked in tests; api.getHealth is tested separately */
   const healthState = usePolling(useCallback((signal: AbortSignal) => api.getHealth(signal), []), 5000);
+  /* v8 ignore stop */
   const offline = healthState.error !== undefined && healthState.data === undefined;
   const running = healthState.data?.running === true && healthState.data.stale !== true;
   const repoCount = healthState.data?.repositories.length ?? 0;

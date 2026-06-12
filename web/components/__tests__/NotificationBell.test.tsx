@@ -104,6 +104,13 @@ describe("NotificationBell", () => {
     expect(screen.getByText("done 完了")).toBeDefined();
   });
 
+  it("通知がゼロかつエラーなしのとき「通知はありません」を表示する", async () => {
+    // data=[] error=undefined → hasError=false → open して "通知はありません" が出る
+    render(<NotificationBell />);
+    await userEvent.click(screen.getByRole("button", { name: /通知/ }));
+    expect(screen.getByText("通知はありません")).toBeDefined();
+  });
+
   it("エラー時かつ通知ゼロのとき取得失敗メッセージを出す", async () => {
     vi.mocked(usePolling).mockReturnValue({
       data: undefined,

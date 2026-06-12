@@ -89,4 +89,19 @@ describe("LogViewer", () => {
     expect(screen.getByText("行1")).toBeDefined();
     expect(screen.getByText("行2")).toBeDefined();
   });
+
+  it("error レベルのログ行が描画される (type=result, is_error=true)", async () => {
+    render(<LogViewer issueNumber={42} />);
+    const src = FakeEventSource.instances[0];
+
+    await act(async () => {
+      src.emit(
+        "agent",
+        JSON.stringify({ ts: "2026-06-12T01:00:00+00:00", phase: "implement", type: "result", is_error: true, text: "エラーが発生しました" }),
+      );
+    });
+
+    expect(screen.getByText("1 行")).toBeDefined();
+  });
+
 });
