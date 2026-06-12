@@ -49,6 +49,11 @@ class EventLogger:
         self._log_dir.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
 
+    @property
+    def log_dir(self) -> Path:
+        """イベントログの基底ディレクトリ。"""
+        return self._log_dir
+
     async def track(
         self,
         event: str,

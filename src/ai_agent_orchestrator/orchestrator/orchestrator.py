@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -34,6 +35,7 @@ from ai_agent_orchestrator.orchestrator.state_machine import (
     StateMachineManager,
 )
 from ai_agent_orchestrator.orchestrator.task_queue import (
+    Priority,
     TaskQueue,
     TaskRequest,
 )
@@ -49,6 +51,53 @@ if TYPE_CHECKING:
     from ai_agent_orchestrator.phases.dispatcher import PhaseExecutorLike
 
 logger = logging.getLogger(__name__)
+
+# worktree ディレクトリ名 (例: "feature-issue-42" / "docs-issue-42") から issue 番号を抽出する。
+_WORKTREE_ISSUE_RE = re.compile(r"-issue-(\d+)$")
+
+
+def _extract_worktree_issue_number(name: str) -> int | None:
+    """worktree ディレクトリ名から issue 番号を抽出する (#96 worktree_gc).
+
+    Args:
+        name: worktree ディレクトリ名 (``feature-issue-42`` 等)。
+
+    Returns:
+        抽出した issue 番号。命名規則に一致しなければ None。
+    """
+    match = _WORKTREE_ISSUE_RE.search(name)
+    return int(match.group(1)) if match else None
+
+
+# rewind の巻き戻し先として許可するフェーズ (state machine の resume_to_* と一致)。
+_REWIND_TARGETS: frozenset[Phase] = frozenset(
+    {
+        Phase.INTAKE,
+        Phase.CLARIFY,
+        Phase.CLARIFY_WAIT,
+        Phase.SPLIT,
+        Phase.PLAN,
+        Phase.APPROVE,
+        Phase.IMPLEMENT,
+        Phase.REVIEW,
+        Phase.REVISE,
+    }
+)
+# retry_with_analysis で現フェーズのまま再試行できる実行フェーズ。
+_RETRYABLE_PHASES: frozenset[Phase] = frozenset({Phase.PLAN, Phase.IMPLEMENT, Phase.REVISE})
+
+
+def _parse_rewind_target(target: str) -> Phase | None:
+    """rewind の target 文字列を、resume 可能な Phase へ変換する (#96).
+
+    Phase.value (例: "implement", "clarify-wait") に一致し、かつ resume 先として
+    許可された相のみ受理する。不正・未許可は None。
+    """
+    try:
+        phase = Phase(target)
+    except ValueError:
+        return None
+    return phase if phase in _REWIND_TARGETS else None
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +484,8 @@ class Orchestrator:
         )
         # offset は control_file と同じディレクトリに置く (custom パス時のズレ防止)。
         self._control_offset_file = self._control_file.with_name(self._control_file.name + ".offset")
+        # キュー可視化 (#96): TaskQueue 状態の書き出し先。
+        self._queue_file = workspace_path / "queue.json"
         self._persistence = persistence or StatePersistence(
             state_file=workspace_path / "state.json",
         )
@@ -765,15 +816,40 @@ class Orchestrator:
         return None
 
     async def _control_loop(self) -> None:
-        """control.jsonl をポーリングし、運用コマンドを適用する背景ループ."""
+        """control.jsonl をポーリングし、運用コマンドを適用する背景ループ.
+
+        併せて毎周回 queue.json を書き出す (#96。UI のキュー画面が ~2s で追従)。
+        """
         while self._running:
             try:
                 await self._consume_control_commands()
+                await self._write_queue_json()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.warning("control loop iteration failed: %s", exc)
             await asyncio.sleep(self._CONTROL_POLL_INTERVAL_SEC)
+
+    def build_queue_snapshot(self) -> dict[str, Any]:
+        """queue.json 用のスナップショットを構築する (#96)."""
+        snapshot = self._task_queue.get_queue_snapshot()
+        snapshot["ts"] = datetime.now(UTC).isoformat()
+        snapshot["running"] = self._running
+        return snapshot
+
+    async def _write_queue_json(self) -> None:
+        """queue.json を atomic (tmp + replace) に書き出す (#96。失敗は warning)."""
+        try:
+            await asyncio.to_thread(self._write_queue_json_sync, self.build_queue_snapshot())
+        except Exception as exc:
+            logger.warning("queue.json の書き出しに失敗: %s", exc)
+
+    def _write_queue_json_sync(self, snapshot: dict[str, Any]) -> None:
+        """queue.json の同期書き出し (tmp + replace)."""
+        self._queue_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp_file = self._queue_file.with_suffix(".tmp")
+        tmp_file.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_file.replace(self._queue_file)
 
     async def _consume_control_commands(self) -> None:
         """未処理の運用コマンドを読み取り、順に適用して offset を進める."""
@@ -800,6 +876,20 @@ class Orchestrator:
             await self._handle_resume(cmd)
         elif cmd.action == "abort":
             await self._handle_abort(cmd)
+        elif cmd.action == "poll_now":
+            await self._handle_poll_now(cmd)
+        elif cmd.action == "worktree_gc":
+            await self._handle_worktree_gc(cmd)
+        elif cmd.action == "enqueue_issue":
+            await self._handle_enqueue_issue(cmd)
+        elif cmd.action == "set_priority":
+            await self._handle_set_priority(cmd)
+        elif cmd.action == "reorder":
+            await self._handle_reorder(cmd)
+        elif cmd.action == "rewind":
+            await self._handle_rewind(cmd)
+        elif cmd.action == "retry_with_analysis":
+            await self._handle_retry_with_analysis(cmd)
 
     async def _audit_control(self, event: str, cmd: OperationalCommand) -> None:
         """運用コマンドの適用を events.jsonl に監査記録する."""
@@ -859,6 +949,226 @@ class Orchestrator:
             logger.warning("abort: SUSPENDED への遷移に失敗 (#%d): %s", cmd.issue_number, exc)
 
         await self._audit_control("issue_aborted", cmd)
+
+    async def _handle_poll_now(self, cmd: OperationalCommand) -> None:
+        """poll_now: poller の待機を起こし、次のポーリングを前倒しする (#96)."""
+        trigger = getattr(self._poller, "request_poll_now", None)
+        if callable(trigger):
+            trigger()
+        else:
+            logger.debug("poll_now: poller が request_poll_now 未対応のため無視")
+        await self._audit_control("poll_now_requested", cmd)
+
+    async def _handle_worktree_gc(self, cmd: OperationalCommand) -> None:
+        """worktree_gc: 全 repo の孤児 worktree (未登録 or DONE) を掃除する (#96)."""
+        removed = 0
+        for repo in self._settings.repositories:
+            repo_key = f"{repo.owner}/{repo.repo}"
+            try:
+                worktrees = await self._workspace_manager.list_worktrees(repo)
+            except Exception as exc:
+                logger.warning("worktree_gc: 一覧取得に失敗 (%s): %s", repo_key, exc)
+                continue
+            for path in worktrees:
+                issue_number = _extract_worktree_issue_number(path.name)
+                if issue_number is None or not self._is_orphan_worktree(repo_key, issue_number):
+                    continue
+                try:
+                    await self._workspace_manager.remove_worktree(repo, issue_number)
+                    removed += 1
+                except Exception as exc:
+                    logger.warning("worktree_gc: 削除に失敗 (%s #%d): %s", repo_key, issue_number, exc)
+        logger.info("worktree_gc: 孤児 worktree %d 件を削除", removed)
+        await self._audit_control("worktree_gc", cmd)
+
+    def _is_orphan_worktree(self, repo_key: str, issue_number: int) -> bool:
+        """worktree が孤児 (未登録 or DONE) かを判定する (#96 worktree_gc)."""
+        issue_key = make_issue_key(repo_key, issue_number)
+        if issue_key not in self._state_machine._states:
+            return True
+        return self._state_machine.get_phase(issue_key) is Phase.DONE
+
+    async def _handle_enqueue_issue(self, cmd: OperationalCommand) -> None:
+        """enqueue_issue: issue にトリガラベルを付与し、poller の検知フローへ載せる (#96).
+
+        control.jsonl から直接キューへ投入せず、既存の「ラベル → poller 検知」経路に
+        乗せることで、新規検知と再投入を同一フローへ集約する。
+        """
+        if cmd.issue_number is None:
+            return
+        repo_config = self._repo_for_enqueue(cmd.issue_number)
+        if repo_config is None:
+            logger.warning("enqueue_issue: repo を解決できません (#%d)", cmd.issue_number)
+            return
+        try:
+            client = await self._account_manager.get_client_for_repo(repo_config.owner, repo_config.repo)
+            await client.add_label(repo_config, cmd.issue_number, repo_config.label)
+        except Exception as exc:
+            logger.warning("enqueue_issue: ラベル付与に失敗 (#%d): %s", cmd.issue_number, exc)
+            return
+        await self._audit_control("issue_enqueued", cmd)
+
+    def _repo_for_enqueue(self, issue_number: int) -> RepositoryConfig | None:
+        """enqueue_issue 対象の repo を解決する (#96).
+
+        登録済み issue は state machine から repo を引く。未登録 (新規) でも、
+        設定リポジトリが 1 件なら一意に決まるためそれを使う。複数 repo で未登録の
+        場合は repo を特定できないため None (将来 #88 で repo 指定を追加予定)。
+        """
+        matches = [key for key in self._state_machine._states if key[1] == issue_number]
+        if len(matches) == 1:
+            return self._repo_config_for(matches[0][0])
+        if len(self._settings.repositories) == 1:
+            return self._settings.repositories[0]
+        return None
+
+    async def _handle_set_priority(self, cmd: OperationalCommand) -> None:
+        """set_priority: キュー待ちタスクの優先度を変更する (#96)."""
+        if cmd.issue_number is None or cmd.phase is None or cmd.priority is None:
+            return
+        issue_key = self._resolve_issue_key(cmd.issue_number)
+        if issue_key is None:
+            return
+        if self._task_queue.set_priority(issue_key, cmd.phase, cmd.priority):
+            await self._audit_control("priority_changed", cmd)
+        else:
+            logger.info("set_priority: 対象がキュー待ちにありません (#%d %s)", cmd.issue_number, cmd.phase)
+
+    async def _handle_reorder(self, cmd: OperationalCommand) -> None:
+        """reorder: 指定順にキュー待ちタスクの優先度を振り直す (#96)."""
+        if not cmd.order:
+            return
+        resolved: list[tuple[IssueKey, str]] = []
+        for issue_number, phase in cmd.order:
+            issue_key = self._resolve_issue_key(issue_number)
+            if issue_key is not None:
+                resolved.append((issue_key, phase))
+        if resolved:
+            self._task_queue.reorder(resolved)
+            await self._audit_control("queue_reordered", cmd)
+
+    async def _handle_rewind(self, cmd: OperationalCommand) -> None:
+        """rewind: 成果物を保持したまま target フェーズへ巻き戻し再エンキューする (#96).
+
+        abort と異なり worktree/PR は削除しない (成果物保持)。現フェーズ →
+        SUSPENDED → target の 2-hop で遷移し、target の TaskRequest を積み直す。
+        """
+        if cmd.issue_number is None or cmd.target is None:
+            return
+        issue_key = self._resolve_issue_key(cmd.issue_number)
+        if issue_key is None:
+            return
+        target_phase = _parse_rewind_target(cmd.target)
+        if target_phase is None:
+            logger.warning("rewind: 不正な target '%s' (#%d)", cmd.target, cmd.issue_number)
+            return
+
+        # 2-hop: current → SUSPENDED → target。成果物 (worktree/PR) は消さない。
+        try:
+            await self._state_machine.transition(issue_key, Phase.SUSPENDED)
+            await self._state_machine.transition(issue_key, target_phase)
+        except (InvalidTransitionError, KeyError) as exc:
+            logger.warning("rewind: 遷移に失敗 (#%d → %s): %s", cmd.issue_number, cmd.target, exc)
+            return
+
+        repo_config = self._repo_config_for(issue_key[0])
+        if repo_config is None:
+            logger.warning("rewind: repo を解決できません (#%d)", cmd.issue_number)
+            return
+        try:
+            client = await self._account_manager.get_client_for_repo(repo_config.owner, repo_config.repo)
+            await client.replace_phase_label(repo_config, cmd.issue_number, f"phase:{target_phase.value}")
+        except Exception as exc:
+            logger.warning("rewind: ラベル更新に失敗 (#%d): %s", cmd.issue_number, exc)
+        await self._task_queue.enqueue(
+            TaskRequest(issue_number=cmd.issue_number, repo=repo_config, phase=target_phase.value)
+        )
+        await self._audit_control("issue_rewound", cmd)
+
+    async def _handle_retry_with_analysis(self, cmd: OperationalCommand) -> None:
+        """retry_with_analysis: 直近エラーを要約し再実行プロンプトに添えて再試行する (#96).
+
+        abort と対で成果物を保持したまま再試行する。直近の phase_error イベントの
+        要約を ``extra["feedback"]`` に載せ、既存の再実行プロンプト経路 (feedback)
+        でエージェントへ渡す。
+
+        再試行フェーズと state machine の相を一致させる:
+        - 実行相 (PLAN/IMPLEMENT/REVISE) で滞留中ならそのフェーズを再試行。
+        - 失敗して SUSPENDED 済みなら IMPLEMENT へ resume してから積む
+          (state は SUSPENDED のまま IMPLEMENT を走らせる乖離を防ぐ)。
+        - それ以外の相は再試行対象外 (誤った相の実行を防ぐ)。
+        """
+        if cmd.issue_number is None:
+            return
+        issue_key = self._resolve_issue_key(cmd.issue_number)
+        if issue_key is None:
+            return
+        repo_config = self._repo_config_for(issue_key[0])
+        if repo_config is None:
+            logger.warning("retry_with_analysis: repo を解決できません (#%d)", cmd.issue_number)
+            return
+
+        current_phase = self._state_machine.get_phase(issue_key)
+        if current_phase in _RETRYABLE_PHASES:
+            retry_phase = current_phase
+        elif current_phase is Phase.SUSPENDED:
+            retry_phase = Phase.IMPLEMENT
+            try:
+                await self._state_machine.transition(issue_key, retry_phase)
+            except (InvalidTransitionError, KeyError) as exc:
+                logger.warning("retry_with_analysis: 再開遷移に失敗 (#%d): %s", cmd.issue_number, exc)
+                return
+            try:
+                client = await self._account_manager.get_client_for_repo(repo_config.owner, repo_config.repo)
+                await client.replace_phase_label(repo_config, cmd.issue_number, f"phase:{retry_phase.value}")
+            except Exception as exc:
+                logger.warning("retry_with_analysis: ラベル更新に失敗 (#%d): %s", cmd.issue_number, exc)
+        else:
+            logger.info(
+                "retry_with_analysis: 再試行できない相のため無視 (#%d %s)",
+                cmd.issue_number,
+                current_phase.value,
+            )
+            return
+
+        error_summary = self._read_last_error_summary(cmd.issue_number)
+        extra: dict[str, Any] = {"retry_with_analysis": True}
+        if error_summary:
+            extra["feedback"] = f"前回の失敗を踏まえて再実行してください。直近のエラー:\n{error_summary}"
+        await self._task_queue.enqueue(
+            TaskRequest(
+                issue_number=cmd.issue_number,
+                repo=repo_config,
+                phase=retry_phase.value,
+                priority=Priority.HIGH,
+                extra=extra,
+            )
+        )
+        await self._audit_control("issue_retry_with_analysis", cmd)
+
+    def _read_last_error_summary(self, issue_number: int, max_chars: int = 1000) -> str | None:
+        """Issue の events.jsonl から直近の phase_error 要約を best-effort で読む (#96).
+
+        失敗 (不在/壊れ) は None。詳細プロンプト整形は prompt_enhancer 側に委ねる。
+        """
+        events_file = self._event_logger.log_dir / f"issue-{issue_number}" / "events.jsonl"
+        try:
+            lines = events_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+        for line in reversed(lines):
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not isinstance(record, dict) or record.get("event") != "phase_error":
+                continue
+            data = record.get("data")
+            message = data.get("error") if isinstance(data, dict) else None
+            if isinstance(message, str) and message:
+                return message[:max_chars]
+            return None
+        return None
 
     async def _handle_shutdown(self, cmd: OperationalCommand) -> None:
         """shutdown: drain を要求し、in-flight 完了後に graceful stop する."""

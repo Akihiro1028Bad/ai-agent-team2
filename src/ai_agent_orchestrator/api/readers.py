@@ -24,6 +24,7 @@ from ai_agent_orchestrator.api.schemas import (
     IssueCost,
     IssueDetailResponse,
     IssueSummaryResponse,
+    QueueResponse,
     phase_to_status,
 )
 from ai_agent_orchestrator.state_persistence import StatePersistence
@@ -108,6 +109,38 @@ def read_health(workspace: Path, *, stale_after_sec: float = 900.0) -> HealthRes
         # 統計値はファイル内容を引き継ぎつつ、running=False / stale=True に倒す。
         return response.model_copy(update={"running": False, "stale": True, "reason": _HEALTH_STALE_REASON})
     return response.model_copy(update={"stale": False})
+
+
+_QUEUE_ABSENT_REASON = "queue.json が無い (orchestrator 未起動)"
+_QUEUE_CORRUPT_REASON = "queue.json が壊れている (型/内容不正)"
+
+
+def read_queue(workspace: Path) -> QueueResponse:
+    """queue.json を読み、実行キューの状態を返す (#96).
+
+    不在/壊れでも例外を投げず、空キュー + reason の停止中扱いで返す。
+
+    Args:
+        workspace: ワークスペースのルートパス。
+
+    Returns:
+        QueueResponse。
+    """
+    path = workspace / "queue.json"
+    if not path.exists():
+        return QueueResponse(running=False, reason=_QUEUE_ABSENT_REASON)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("queue.json の読み取り/パースに失敗: %s", path, exc_info=True)
+        return QueueResponse(running=False, reason=_QUEUE_CORRUPT_REASON)
+    if not isinstance(raw, dict):
+        return QueueResponse(running=False, reason=_QUEUE_CORRUPT_REASON)
+    try:
+        return QueueResponse.model_validate(raw)
+    except ValidationError:
+        logger.warning("queue.json の型検証に失敗: %s", path, exc_info=True)
+        return QueueResponse(running=False, reason=_QUEUE_CORRUPT_REASON)
 
 
 def _events_file(workspace: Path, issue_number: int) -> Path:

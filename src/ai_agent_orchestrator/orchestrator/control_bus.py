@@ -1,4 +1,8 @@
-"""ControlBus: control.jsonl の運用コマンド (shutdown/pause/resume/abort) (#87).
+"""ControlBus: control.jsonl の運用コマンド (#87 基盤 + #96 拡張).
+
+対応 action: pause / resume / abort / shutdown (#87)、
+poll_now / worktree_gc / enqueue_issue (#96)。
+poll_now / worktree_gc は issue 不要の全体コマンド、それ以外は issue-scoped。
 
 Web UI 等からの介入を、実行中の asyncio タスクに直接触れず安全に適用するための
 ファイルベースのコマンドキュー。control.jsonl は承認系 (approve/reject,
@@ -28,21 +32,59 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-OperationalAction = Literal["pause", "resume", "abort", "shutdown"]
-_OPERATIONAL_ACTIONS: frozenset[str] = frozenset({"pause", "resume", "abort", "shutdown"})
-# issue 番号を必要としない全体コマンド。
-_GLOBAL_ACTIONS: frozenset[str] = frozenset({"shutdown"})
+OperationalAction = Literal[
+    "pause",
+    "resume",
+    "abort",
+    "shutdown",
+    "poll_now",
+    "worktree_gc",
+    "enqueue_issue",
+    "set_priority",
+    "reorder",
+    "rewind",
+    "retry_with_analysis",
+]
+_OPERATIONAL_ACTIONS: frozenset[str] = frozenset(
+    {
+        "pause",
+        "resume",
+        "abort",
+        "shutdown",
+        "poll_now",
+        "worktree_gc",
+        "enqueue_issue",
+        "set_priority",
+        "reorder",
+        "rewind",
+        "retry_with_analysis",
+    }
+)
+# issue 番号を必要としない全体コマンド (shutdown と #96 の poll_now / worktree_gc)。
+# reorder も issue 単独では特定できないが order を取るため別途処理する。
+_GLOBAL_ACTIONS: frozenset[str] = frozenset({"shutdown", "poll_now", "worktree_gc"})
 # DoS 対策: control.jsonl の最大サイズ (10 MiB)。control_file.py と同値。
 _MAX_CONTROL_FILE_BYTES = 10 * 1024 * 1024
 
 
 @dataclass(frozen=True)
 class OperationalCommand:
-    """ControlBus の運用コマンド (shutdown/pause/resume/abort)."""
+    """ControlBus の運用コマンド (#87 基盤 + #96 拡張).
+
+    issue-scoped でないコマンド (shutdown/poll_now/worktree_gc/reorder) は
+    ``issue_number`` が None。``phase``/``priority`` は set_priority、``order`` は
+    reorder でのみ使用する。
+    """
 
     action: OperationalAction
     issue_number: int | None
     actor: str = ""
+    phase: str | None = None
+    priority: int | None = None
+    # reorder の希望順: (issue_number, phase) のタプル列 (frozen のため tuple)。
+    order: tuple[tuple[int, str], ...] | None = None
+    # rewind の巻き戻し先フェーズ (Phase.value 文字列)。
+    target: str | None = None
 
 
 def parse_operational_line(line: str) -> OperationalCommand | None:
@@ -78,12 +120,65 @@ def parse_operational_line(line: str) -> OperationalCommand | None:
     if action in _GLOBAL_ACTIONS:
         return OperationalCommand(action=validated_action, issue_number=None, actor=actor)
 
+    if action == "reorder":
+        order = _parse_order(data.get("order"))
+        if order is None:
+            logger.warning("reorder command missing/invalid order, skipping")
+            return None
+        return OperationalCommand(action="reorder", issue_number=None, actor=actor, order=order)
+
     issue = data.get("issue")
     # bool は int のサブクラス。issue は 1 以上の正整数のみ許可。
     if not isinstance(issue, int) or isinstance(issue, bool) or issue <= 0:
         logger.warning("operational command '%s' missing/invalid issue, skipping", action)
         return None
+
+    if action == "set_priority":
+        phase = data.get("phase")
+        priority = data.get("priority")
+        if not isinstance(phase, str) or not phase:
+            logger.warning("set_priority command missing/invalid phase, skipping")
+            return None
+        if not isinstance(priority, int) or isinstance(priority, bool):
+            logger.warning("set_priority command missing/invalid priority, skipping")
+            return None
+        return OperationalCommand(
+            action="set_priority",
+            issue_number=issue,
+            actor=actor,
+            phase=phase,
+            priority=priority,
+        )
+
+    if action == "rewind":
+        target = data.get("target")
+        if not isinstance(target, str) or not target:
+            logger.warning("rewind command missing/invalid target, skipping")
+            return None
+        return OperationalCommand(action="rewind", issue_number=issue, actor=actor, target=target)
+
     return OperationalCommand(action=validated_action, issue_number=issue, actor=actor)
+
+
+def _parse_order(raw: object) -> tuple[tuple[int, str], ...] | None:
+    """reorder の order フィールドを (issue_number, phase) タプル列にパースする。
+
+    各要素は ``{"issue": <正整数>, "phase": <非空 str>}``。1 つでも不正なら None。
+    """
+    if not isinstance(raw, list) or not raw:
+        return None
+    entries: list[tuple[int, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return None
+        issue = item.get("issue")
+        phase = item.get("phase")
+        if not isinstance(issue, int) or isinstance(issue, bool) or issue <= 0:
+            return None
+        if not isinstance(phase, str) or not phase:
+            return None
+        entries.append((issue, phase))
+    return tuple(entries)
 
 
 def read_new_operational_commands(

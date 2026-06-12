@@ -48,6 +48,69 @@ class TestParseOperationalLine:
         assert cmd is not None
         assert cmd.actor == ""
 
+    def test_global_simple_commands(self) -> None:
+        # poll_now / worktree_gc は issue 不要の全体コマンド (#96)
+        for action in ("poll_now", "worktree_gc"):
+            cmd = parse_operational_line(json.dumps({"action": action, "actor": "alice"}))
+            assert cmd == OperationalCommand(action=action, issue_number=None, actor="alice")
+
+    def test_enqueue_issue_is_issue_scoped(self) -> None:
+        # enqueue_issue は issue 番号必須 (#96)
+        cmd = parse_operational_line(json.dumps({"action": "enqueue_issue", "issue": 9, "actor": "alice"}))
+        assert cmd == OperationalCommand(action="enqueue_issue", issue_number=9, actor="alice")
+        assert parse_operational_line(json.dumps({"action": "enqueue_issue", "actor": "alice"})) is None
+        assert parse_operational_line(json.dumps({"action": "enqueue_issue", "issue": 0, "actor": "alice"})) is None
+
+    def test_set_priority_requires_phase_and_priority(self) -> None:
+        cmd = parse_operational_line(
+            json.dumps({"action": "set_priority", "issue": 5, "phase": "implement", "priority": 1, "actor": "a"})
+        )
+        assert cmd == OperationalCommand(
+            action="set_priority", issue_number=5, actor="a", phase="implement", priority=1
+        )
+        # phase 欠落 / priority 欠落 / 型不正 は None
+        assert parse_operational_line(json.dumps({"action": "set_priority", "issue": 5, "priority": 1})) is None
+        assert parse_operational_line(json.dumps({"action": "set_priority", "issue": 5, "phase": "x"})) is None
+        assert (
+            parse_operational_line(json.dumps({"action": "set_priority", "issue": 5, "phase": "x", "priority": True}))
+            is None
+        )
+
+    def test_reorder_parses_order_entries(self) -> None:
+        cmd = parse_operational_line(
+            json.dumps(
+                {
+                    "action": "reorder",
+                    "order": [{"issue": 3, "phase": "plan"}, {"issue": 1, "phase": "implement"}],
+                    "actor": "a",
+                }
+            )
+        )
+        assert cmd == OperationalCommand(
+            action="reorder",
+            issue_number=None,
+            actor="a",
+            order=((3, "plan"), (1, "implement")),
+        )
+
+    def test_reorder_invalid_order_returns_none(self) -> None:
+        assert parse_operational_line(json.dumps({"action": "reorder", "actor": "a"})) is None
+        assert parse_operational_line(json.dumps({"action": "reorder", "order": [], "actor": "a"})) is None
+        assert parse_operational_line(json.dumps({"action": "reorder", "order": [{"issue": 0, "phase": "p"}]})) is None
+        assert parse_operational_line(json.dumps({"action": "reorder", "order": [{"issue": 1}]})) is None
+
+    def test_rewind_requires_target(self) -> None:
+        cmd = parse_operational_line(json.dumps({"action": "rewind", "issue": 5, "target": "plan", "actor": "a"}))
+        assert cmd == OperationalCommand(action="rewind", issue_number=5, actor="a", target="plan")
+        # target 欠落 / 型不正 は None
+        assert parse_operational_line(json.dumps({"action": "rewind", "issue": 5})) is None
+        assert parse_operational_line(json.dumps({"action": "rewind", "issue": 5, "target": ""})) is None
+
+    def test_retry_with_analysis_is_issue_scoped(self) -> None:
+        cmd = parse_operational_line(json.dumps({"action": "retry_with_analysis", "issue": 5, "actor": "a"}))
+        assert cmd == OperationalCommand(action="retry_with_analysis", issue_number=5, actor="a")
+        assert parse_operational_line(json.dumps({"action": "retry_with_analysis", "actor": "a"})) is None
+
 
 class TestReadNewOperationalCommands:
     def test_returns_only_authorized_new_commands(self, tmp_path: Path) -> None:

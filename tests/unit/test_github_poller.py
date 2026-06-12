@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
@@ -1287,3 +1288,32 @@ class TestGetLastPollTimes:
         repo = _make_repo()
         poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
         assert poller.get_last_poll_times() == {}
+
+
+# ---------------------------------------------------------------------------
+# Tests: poll_now (request_poll_now / _wait_next_cycle) (#96)
+# ---------------------------------------------------------------------------
+
+
+class TestPollNow:
+    async def test_request_poll_now_wakes_wait(self) -> None:
+        """request_poll_now で待機が interval を待たず即時に返り、event はクリアされる."""
+        poller = GitHubPoller(
+            account_manager=_make_account_manager(_make_client()), repos=[_make_repo()], interval_sec=3600
+        )
+        poller.request_poll_now()
+
+        # interval=3600s だが poll_now 要求済みなので即座に返るはず
+        await asyncio.wait_for(poller._wait_next_cycle(), timeout=1.0)
+
+        # 次サイクルへ持ち越さないよう event はクリアされている
+        assert not poller._poll_now_event.is_set()
+
+    async def test_wait_blocks_without_request(self) -> None:
+        """poll_now 要求がなければ interval まで待機する (即時には返らない)."""
+        poller = GitHubPoller(
+            account_manager=_make_account_manager(_make_client()), repos=[_make_repo()], interval_sec=3600
+        )
+
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(poller._wait_next_cycle(), timeout=0.05)

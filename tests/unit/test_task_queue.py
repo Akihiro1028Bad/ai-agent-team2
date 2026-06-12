@@ -510,3 +510,98 @@ class TestPauseResumeDrain:
             assert [r.issue_number for r in ex.calls] == [14]
         finally:
             await _cancel(worker)
+
+
+# ---------------------------------------------------------------------------
+# キュー可視化スナップショット (#96)
+# ---------------------------------------------------------------------------
+
+
+class TestQueueSnapshot:
+    """get_queue_snapshot のメタデータと並び順。"""
+
+    async def test_snapshot_lists_queued_sorted_with_metadata(self) -> None:
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        await tq.enqueue(TaskRequest(issue_number=1, repo=repo, phase="implement", priority=Priority.NORMAL))
+        await tq.enqueue(TaskRequest(issue_number=2, repo=repo, phase="plan", priority=Priority.CRITICAL))
+
+        snap = tq.get_queue_snapshot()
+        assert snap["max_total"] == 2
+        assert snap["max_per_repo"] == 1
+        q = snap["queued"]
+        assert len(q) == 2
+        # CRITICAL(1) が先頭
+        assert q[0]["issue_number"] == 2
+        assert q[0]["phase"] == "plan"
+        assert q[1]["issue_number"] == 1
+        for entry in q:
+            assert {"repo", "issue_number", "phase", "priority", "enqueued_at", "wait_reason"} <= set(entry)
+            assert entry["wait_reason"] == "queued"
+
+    async def test_dequeue_removes_from_snapshot(self) -> None:
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        await tq.enqueue(TaskRequest(issue_number=7, repo=repo, phase="implement"))
+        assert len(tq.get_queue_snapshot()["queued"]) == 1
+        await tq.dequeue()
+        assert tq.get_queue_snapshot()["queued"] == []
+
+    async def test_abort_removes_queued_meta(self) -> None:
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        req = TaskRequest(issue_number=8, repo=repo, phase="implement")
+        await tq.enqueue(req)
+        tq.mark_aborted(req.issue_key)
+        assert tq.get_queue_snapshot()["queued"] == []
+
+
+# ---------------------------------------------------------------------------
+# set_priority / reorder (#96 Unit C)
+# ---------------------------------------------------------------------------
+
+
+class TestSetPriorityReorder:
+    async def test_set_priority_changes_dequeue_order(self) -> None:
+        tq = TaskQueue(max_total=1, max_per_repo=1)
+        repo = _make_repo()
+        await tq.enqueue(TaskRequest(issue_number=1, repo=repo, phase="a", priority=Priority.NORMAL))
+        await tq.enqueue(TaskRequest(issue_number=2, repo=repo, phase="b", priority=Priority.NORMAL))
+        # 同 priority → FIFO で #1 が先。#2 を CRITICAL に引き上げる
+        changed = tq.set_priority(("org/app", 2), "b", Priority.CRITICAL)
+        assert changed
+        first = await tq.dequeue()
+        assert first.issue_number == 2
+        assert first.priority == Priority.CRITICAL
+
+    async def test_set_priority_updates_snapshot(self) -> None:
+        tq = TaskQueue(max_total=1, max_per_repo=1)
+        repo = _make_repo()
+        await tq.enqueue(TaskRequest(issue_number=5, repo=repo, phase="implement", priority=Priority.NORMAL))
+        tq.set_priority(("org/app", 5), "implement", Priority.HIGH)
+        entry = tq.get_queue_snapshot()["queued"][0]
+        assert entry["priority"] == Priority.HIGH
+
+    async def test_set_priority_unknown_returns_false(self) -> None:
+        tq = TaskQueue(max_total=1, max_per_repo=1)
+        assert tq.set_priority(("org/app", 99), "x", Priority.CRITICAL) is False
+
+    async def test_reorder_assigns_sequential_priority(self) -> None:
+        tq = TaskQueue(max_total=1, max_per_repo=1)
+        repo = _make_repo()
+        await tq.enqueue(TaskRequest(issue_number=1, repo=repo, phase="a", priority=Priority.NORMAL))
+        await tq.enqueue(TaskRequest(issue_number=2, repo=repo, phase="b", priority=Priority.NORMAL))
+        await tq.enqueue(TaskRequest(issue_number=3, repo=repo, phase="c", priority=Priority.NORMAL))
+        # 希望順: 3 → 1 → 2
+        tq.reorder([(("org/app", 3), "c"), (("org/app", 1), "a"), (("org/app", 2), "b")])
+        order = [(await tq.dequeue()).issue_number for _ in range(3)]
+        assert order == [3, 1, 2]
+
+    async def test_reorder_ignores_unknown_entries(self) -> None:
+        tq = TaskQueue(max_total=1, max_per_repo=1)
+        repo = _make_repo()
+        await tq.enqueue(TaskRequest(issue_number=1, repo=repo, phase="a", priority=Priority.NORMAL))
+        # 未知エントリのみ → 何もしない (例外を出さない)
+        tq.reorder([(("org/app", 99), "z")])
+        first = await tq.dequeue()
+        assert first.issue_number == 1
