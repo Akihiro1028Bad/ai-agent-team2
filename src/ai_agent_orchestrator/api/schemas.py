@@ -368,3 +368,47 @@ class DesignResponse(BaseModel):
     architecture: list[DesignAnchor] = Field(default_factory=list)
     subtasks: list[DesignSubtask] = Field(default_factory=list)
     reason: str | None = None
+
+
+class PhaseModelRow(BaseModel):
+    """GET /api/config/phase-models の 1 行 (#90).
+
+    max_turns は既定 (上書きなし) では None になり得る (SDK デフォルト委任)。
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    phase: str
+    model: str
+    thinking: bool
+    max_turns: int | None = None
+
+
+class PhaseModelsResponse(BaseModel):
+    """GET/PUT /api/config/phase-models のレスポンス (#90)."""
+
+    phases: list[PhaseModelRow] = Field(default_factory=list)
+    allowed_models: list[str] = Field(default_factory=list)
+
+
+class PhaseModelInput(BaseModel):
+    """PUT /api/config/phase-models の 1 行 (#90).
+
+    max_turns は None 許容で「上書きなし (SDK デフォルト)」を表す。GET レスポンス
+    (PhaseModelRow) と対称で、GET 値をそのまま PUT へ往復できる。
+    """
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    phase: str
+    model: str
+    thinking: bool
+    max_turns: int | None = None
+
+
+class PhaseModelsRequest(BaseModel):
+    """PUT /api/config/phase-models のリクエストボディ (#90)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    phases: list[PhaseModelInput] = Field(default_factory=list, max_length=50)

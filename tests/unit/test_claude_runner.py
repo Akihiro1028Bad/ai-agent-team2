@@ -278,6 +278,91 @@ async def test_run_explicit_budget_overrides_phase_config(
 
 
 # ---------------------------------------------------------------------------
+# TC-CR-04b: run -- フェーズ設定 (#90) の thinking / max_turns / provider 反映
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("ai_agent_orchestrator.agents.claude_runner.query")
+async def test_run_default_passes_no_thinking_no_max_turns(
+    mock_query: MagicMock,
+    runner: ClaudeAgentRunner,
+) -> None:
+    """provider 無し (既定 PHASE_CONFIG) では thinking/max_turns は SDK デフォルト委任 (None)."""
+    messages = [_make_result_message(session_id="sess-001")]
+    captured: list[dict[str, Any]] = []
+    mock_query.side_effect = lambda **kw: _make_fake_query(messages, captured)(**kw)
+
+    await runner.run(prompt="x", cwd="/tmp/wt", phase="plan")
+
+    opts = captured[0]["options"]
+    assert opts.thinking is None
+    assert opts.max_turns is None
+
+
+@pytest.mark.asyncio
+@patch("ai_agent_orchestrator.agents.claude_runner.query")
+async def test_run_provider_reflects_thinking_model_max_turns(
+    mock_query: MagicMock,
+    mock_tracker: AsyncMock,
+) -> None:
+    """phase_config_provider の値 (model/thinking/max_turns) が options へ反映される (#90)."""
+    overridden = {
+        "plan": PhaseConfig(
+            max_budget_usd=3.0,
+            timeout_sec=1800,
+            permission_mode="bypassPermissions",
+            model="opus",
+            thinking=True,
+            max_turns=25,
+        )
+    }
+    runner = ClaudeAgentRunner(tracker=mock_tracker, phase_config_provider=lambda: overridden)
+    messages = [_make_result_message(session_id="sess-001")]
+    captured: list[dict[str, Any]] = []
+    mock_query.side_effect = lambda **kw: _make_fake_query(messages, captured)(**kw)
+
+    await runner.run(prompt="x", cwd="/tmp/wt", phase="plan")
+
+    opts = captured[0]["options"]
+    assert opts.model == "opus"
+    assert opts.max_turns == 25
+    assert opts.thinking == {"type": "enabled", "budget_tokens": 10000}
+
+
+@pytest.mark.asyncio
+@patch("ai_agent_orchestrator.agents.claude_runner.query")
+async def test_run_provider_called_each_run_for_live_reload(
+    mock_query: MagicMock,
+    mock_tracker: AsyncMock,
+) -> None:
+    """provider は run() ごとに呼ばれ、設定変更が次の実行へ反映される (#90)."""
+    state = {"model": "sonnet"}
+
+    def provider() -> dict[str, PhaseConfig]:
+        return {
+            "plan": PhaseConfig(
+                max_budget_usd=3.0,
+                timeout_sec=1800,
+                permission_mode="bypassPermissions",
+                model=state["model"],
+            )
+        }
+
+    runner = ClaudeAgentRunner(tracker=mock_tracker, phase_config_provider=provider)
+    messages = [_make_result_message(session_id="s")]
+    captured: list[dict[str, Any]] = []
+    mock_query.side_effect = lambda **kw: _make_fake_query(messages, captured)(**kw)
+
+    await runner.run(prompt="x", cwd="/tmp/wt", phase="plan")
+    state["model"] = "opus"  # UI で変更されたと想定
+    await runner.run(prompt="x", cwd="/tmp/wt", phase="plan")
+
+    assert captured[0]["options"].model == "sonnet"
+    assert captured[1]["options"].model == "opus"
+
+
+# ---------------------------------------------------------------------------
 # TC-CR-05: run -- 実装フェーズでサブエージェント情報が追加される
 # ---------------------------------------------------------------------------
 

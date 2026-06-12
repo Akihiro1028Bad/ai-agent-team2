@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -21,6 +22,8 @@ from claude_agent_sdk.types import (
     AssistantMessage,
     ResultMessage,
     TextBlock,
+    ThinkingConfig,
+    ThinkingConfigEnabled,
     ToolUseBlock,
 )
 
@@ -105,6 +108,10 @@ PHASE_CONFIG: dict[str, PhaseConfig] = {
 }
 
 _DEFAULT_PHASE_CONFIG = PhaseConfig(max_budget_usd=1.0, timeout_sec=600, permission_mode="bypassPermissions")
+
+# 拡張思考を有効化したフェーズに割り当てる既定の思考トークン上限 (#90)。
+# UI/設定は thinking を bool で扱い、有効時にこの budget で SDK へ渡す。
+_DEFAULT_THINKING_BUDGET_TOKENS = 10000
 
 _BYPASS_ALLOWED_TOOLS = [
     "Read",
@@ -294,6 +301,7 @@ class ClaudeAgentRunner:
         self,
         tracker: Tracker,
         agent_log_writer: AgentLogWriterProtocol | None = None,
+        phase_config_provider: Callable[[], Mapping[str, PhaseConfig]] | None = None,
     ) -> None:
         """ClaudeAgentRunner を初期化する.
 
@@ -301,10 +309,22 @@ class ClaudeAgentRunner:
             tracker: ツール使用ログの記録に使用する Tracker。
             agent_log_writer: agent.jsonl への書き込みライター (#85)。
                 None の場合は従来どおりエージェントログを出力しない (後方互換)。
+            phase_config_provider: フェーズ設定の現在値を返すコールバック (#90)。
+                run() ごとに呼び出すため、UI 設定 (settings.ui.yaml) の変更が
+                次のフェーズ実行から反映される。None の場合はモジュール定数
+                PHASE_CONFIG を使う (後方互換)。
         """
         self._tracker = tracker
         self._agent_log_writer = agent_log_writer
+        self._phase_config_provider = phase_config_provider
         self._active_sessions: dict[str, ClaudeSDKClient] = {}
+
+    def _resolve_phase_config(self, phase: str) -> PhaseConfig:
+        """フェーズ設定を解決する。provider 指定時はその現在値を優先する (#90)."""
+        phase_map: Mapping[str, PhaseConfig] = (
+            self._phase_config_provider() if self._phase_config_provider is not None else PHASE_CONFIG
+        )
+        return phase_map.get(phase, _DEFAULT_PHASE_CONFIG)
 
     # ------------------------------------------------------------------
     # Public API
@@ -341,7 +361,7 @@ class ClaudeAgentRunner:
             ClaudeSDKError: SDK レベルのエラー。
             MaxTurnsExceededError: max_turns 到達時。
         """
-        cfg = PHASE_CONFIG.get(phase, _DEFAULT_PHASE_CONFIG)
+        cfg = self._resolve_phase_config(phase)
         budget = max_budget_usd if max_budget_usd is not None else cfg.max_budget_usd
         effective_timeout = timeout_sec if timeout_sec > 0 else cfg.timeout_sec
 
@@ -360,14 +380,22 @@ class ClaudeAgentRunner:
         # 下記のポリシー配線 (disallowed_tools / env 遮断) を素通りする経路になる。
         # resume を実装する場合は必ず options 構築パスを通すこと。
 
-        # Build options (max_turns はSDKデフォルトに委任)
+        # Build options。thinking / max_turns はフェーズ設定 (#90) から反映する。
+        # thinking=False / max_turns=None の場合は渡さず SDK デフォルトに委任 (後方互換)。
         mcp_servers, mcp_tools = get_phase_mcp_config(phase)
+        thinking: ThinkingConfig | None = (
+            ThinkingConfigEnabled(type="enabled", budget_tokens=_DEFAULT_THINKING_BUDGET_TOKENS)
+            if cfg.thinking
+            else None
+        )
         options = ClaudeAgentOptions(
             cwd=cwd,
             permission_mode=cfg.permission_mode,  # type: ignore[arg-type]
             hooks=hooks,  # type: ignore[arg-type]
             max_budget_usd=budget,
             model=cfg.model,
+            max_turns=cfg.max_turns,
+            thinking=thinking,
             # 権限絞り込み (#101): deny ルールは bypassPermissions 下でも強制される
             disallowed_tools=tool_policy_for(phase),
             # 機微 env の継承遮断 (#101)

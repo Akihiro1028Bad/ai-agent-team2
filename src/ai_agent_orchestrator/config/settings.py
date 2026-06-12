@@ -110,6 +110,10 @@ class AppSettings(BaseSettings):
     # Web UI 等からの承認/差し戻しを受け付ける control.jsonl のパス (#82 Phase4)。
     # 未設定なら control ファイル経由の承認は無効。
     control_file: str | None = None
+    # UI から書き込む非機密設定 (フェーズ別モデル等) のオーバーレイファイル (#90)。
+    # config.yaml とは分離し、API の GET/PUT 対象はこちらのみ (機密非露出)。既定は
+    # config.yaml と同様 CWD 相対で、両ファイルを同じ作業ディレクトリに同居させる。
+    ui_settings_file: str = "settings.ui.yaml"
 
     # Env vars (secrets)
     slack_webhook_url: str | None = Field(default=None, alias="SLACK_WEBHOOK_URL")

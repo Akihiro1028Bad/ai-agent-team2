@@ -17,13 +17,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ai_agent_orchestrator.agents.agent_log import AgentLogWriter
-from ai_agent_orchestrator.agents.claude_runner import ClaudeAgentRunner
+from ai_agent_orchestrator.agents.claude_runner import PHASE_CONFIG, ClaudeAgentRunner
+from ai_agent_orchestrator.config.ui_settings import load_ui_settings, merge_phase_configs
 from ai_agent_orchestrator.context.engine import ContextEngine
 from ai_agent_orchestrator.credential import CredentialResolver
 from ai_agent_orchestrator.event_logger import EventLogger
 from ai_agent_orchestrator.github.client import AccountManager
 from ai_agent_orchestrator.io_safety import atomic_write_text
-from ai_agent_orchestrator.models import ErrorCategory, IssueKey, Phase, make_issue_key
+from ai_agent_orchestrator.models import (
+    ErrorCategory,
+    IssueKey,
+    Phase,
+    PhaseConfig,
+    make_issue_key,
+)
 from ai_agent_orchestrator.notifications.slack import SlackNotifier
 from ai_agent_orchestrator.orchestrator.approval import resolve_approvers
 from ai_agent_orchestrator.orchestrator.control_bus import (
@@ -512,10 +519,17 @@ class Orchestrator:
                 repo_configs=settings.repositories,
             )
 
-        # Agent runner
+        # Agent runner。フェーズ設定は UI 設定 (settings.ui.yaml) の上書きを
+        # run() ごとに反映する provider 経由で渡す (#90)。
+        ui_settings_path = Path(settings.ui_settings_file).expanduser()
+
+        def _phase_config_provider() -> dict[str, PhaseConfig]:
+            return merge_phase_configs(PHASE_CONFIG, load_ui_settings(ui_settings_path))
+
         self._agent_runner = agent_runner or ClaudeAgentRunner(
             tracker=_AgentTrackerAdapter(self._event_logger),
             agent_log_writer=AgentLogWriter(log_dir=workspace_path / "logs"),
+            phase_config_provider=_phase_config_provider,
         )
 
         # Context engine
