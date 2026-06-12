@@ -332,6 +332,10 @@ class PhaseConfig:
     model: str = "sonnet"
     mcp_servers: dict[str, Any] | None = None
     mcp_allowed_tools: list[str] | None = None
+    # 拡張思考の有効化 (#90)。True なら既定 budget で ClaudeAgentOptions.thinking を有効化。
+    thinking: bool = False
+    # 1 実行あたりの最大ターン数 (#90)。None は SDK デフォルトに委任。
+    max_turns: int | None = None
 
 
 # ---------------------------------------------------------------------------

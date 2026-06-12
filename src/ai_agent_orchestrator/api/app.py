@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from ai_agent_orchestrator.agents.claude_runner import PHASE_CONFIG
 from ai_agent_orchestrator.api.design import build_design_response
 from ai_agent_orchestrator.api.middleware import AuthMiddleware
 from ai_agent_orchestrator.api.readers import (
@@ -44,6 +45,9 @@ from ai_agent_orchestrator.api.schemas import (
     HealthResponse,
     IssueDetailResponse,
     IssueSummaryResponse,
+    PhaseModelRow,
+    PhaseModelsRequest,
+    PhaseModelsResponse,
     QueueResponse,
     ReplyRequest,
     ReplyResponse,
@@ -58,6 +62,17 @@ from ai_agent_orchestrator.api.stream import (
     format_sse,
     parse_last_event_id,
     tail_issue_streams,
+)
+from ai_agent_orchestrator.config.ui_settings import (
+    ALLOWED_MODELS,
+    effective_phase_models,
+    load_ui_settings,
+    save_ui_settings,
+    ui_settings_from_rows,
+    validate_phase_models,
+)
+from ai_agent_orchestrator.config.ui_settings import (
+    ValidationError as UiValidationError,
 )
 
 if TYPE_CHECKING:
@@ -212,6 +227,8 @@ def create_app(settings: AppSettings) -> FastAPI:
     app.add_middleware(AuthMiddleware)
 
     app.state.workspace = workspace
+    # UI 可変設定 (フェーズ別モデル等) のオーバーレイファイル (#90)。config.yaml とは分離。
+    app.state.ui_settings_path = Path(settings.ui_settings_file).expanduser()
     app.state.github_client_factory = _build_default_factory(settings)
     app.state.systemd = SystemctlControl()
     # SSE 同時接続のリミッタ (#113 DoS 対策)。テストは app.state 経由で参照できる。
@@ -363,6 +380,41 @@ def create_app(settings: AppSettings) -> FastAPI:
         control_path: Path = app.state.workspace / "control.jsonl"
         await asyncio.to_thread(_append_control_line, control_path, record)
         return ReviewResponse(outcome=outcome, accepted=True)
+
+    def _phase_models_payload() -> PhaseModelsResponse:
+        ui = load_ui_settings(app.state.ui_settings_path)
+        rows = effective_phase_models(PHASE_CONFIG, ui)
+        return PhaseModelsResponse(
+            phases=[PhaseModelRow(**row) for row in rows],
+            allowed_models=sorted(ALLOWED_MODELS),
+        )
+
+    @app.get("/api/config/phase-models", response_model=PhaseModelsResponse)
+    async def get_phase_models() -> PhaseModelsResponse:
+        """フェーズ別モデル設定 (既定 + settings.ui.yaml 上書き) を返す (#90).
+
+        機密 (config.yaml) は一切含まない。effective な model/thinking/max_turns のみ。
+        """
+        return _phase_models_payload()
+
+    @app.put("/api/config/phase-models", response_model=PhaseModelsResponse)
+    async def put_phase_models(body: PhaseModelsRequest) -> PhaseModelsResponse:
+        """フェーズ別モデル設定を settings.ui.yaml へ保存する (#90).
+
+        全置換セマンティクス: 送られたフェーズのみが overlay に残り、未送フェーズは
+        既定値へ戻る (UI は GET の全フェーズを編集して送る前提)。非機密のみ。未知
+        フェーズ/モデル・範囲外 max_turns・重複フェーズは 400。max_turns=null は
+        「上書きなし (SDK デフォルト)」。保存後は次のフェーズ実行から反映される
+        (orchestrator は run() ごとに overlay を再読込)。
+        """
+        rows = [row.model_dump() for row in body.phases]
+        try:
+            validate_phase_models(rows)
+        except UiValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        ui = ui_settings_from_rows(rows)
+        await asyncio.to_thread(save_ui_settings, app.state.ui_settings_path, ui)
+        return _phase_models_payload()
 
     @app.get("/api/approvals", response_model=list[ApprovalEntry])
     async def get_approvals() -> list[ApprovalEntry]:
