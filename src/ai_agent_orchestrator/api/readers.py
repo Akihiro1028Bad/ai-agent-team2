@@ -48,6 +48,9 @@ def _health_file(workspace: Path) -> Path:
 
 _HEALTH_ABSENT_REASON = "health.json が無い (orchestrator 未起動)"
 _HEALTH_STALE_REASON = "health.json が古い (orchestrator 停止/ハングの可能性)"
+# ファイルは存在するが中身が壊れている (壊れ JSON / 非 dict / 型不正)。
+# 「未起動」と区別し、運用者の切り分けを助ける。
+_HEALTH_CORRUPT_REASON = "health.json が壊れている (型/内容不正)"
 
 
 def _parse_health_ts(raw: dict[str, Any]) -> datetime | None:
@@ -86,10 +89,10 @@ def read_health(workspace: Path, *, stale_after_sec: float = 900.0) -> HealthRes
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         logger.warning("health.json の読み取り/パースに失敗: %s", path, exc_info=True)
-        return HealthResponse(running=False, stale=False, reason=_HEALTH_ABSENT_REASON)
+        return HealthResponse(running=False, stale=False, reason=_HEALTH_CORRUPT_REASON)
 
     if not isinstance(raw, dict):
-        return HealthResponse(running=False, stale=False, reason=_HEALTH_ABSENT_REASON)
+        return HealthResponse(running=False, stale=False, reason=_HEALTH_CORRUPT_REASON)
 
     parsed_ts = _parse_health_ts(raw)
     is_stale = parsed_ts is None or (datetime.now(UTC) - parsed_ts).total_seconds() > stale_after_sec
@@ -100,7 +103,7 @@ def read_health(workspace: Path, *, stale_after_sec: float = 900.0) -> HealthRes
         # 有効な JSON dict だが型が壊れている (running 欠落・queue が dict でない等)。
         # file content は信頼しない方針に従い、500 ではなく「停止中」に倒す。
         logger.warning("health.json の型検証に失敗: %s", path, exc_info=True)
-        return HealthResponse(running=False, stale=False, reason=_HEALTH_ABSENT_REASON)
+        return HealthResponse(running=False, stale=False, reason=_HEALTH_CORRUPT_REASON)
     if is_stale:
         # 統計値はファイル内容を引き継ぎつつ、running=False / stale=True に倒す。
         return response.model_copy(update={"running": False, "stale": True, "reason": _HEALTH_STALE_REASON})

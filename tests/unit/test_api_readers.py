@@ -372,10 +372,13 @@ def test_read_health_stale(tmp_path: Path) -> None:
 
 
 def test_read_health_broken_json(tmp_path: Path) -> None:
-    """壊れ JSON → running=False."""
+    """壊れ JSON → running=False。reason は不在(未起動)と区別される."""
     (tmp_path / "health.json").write_text("{not json", encoding="utf-8")
     result = read_health(tmp_path)
     assert result.running is False
+    # ファイルは存在するので「未起動」とは別の reason（破損）になる。
+    assert result.reason is not None
+    assert "未起動" not in result.reason
 
 
 def test_read_health_unparseable_ts_is_stale(tmp_path: Path) -> None:
@@ -431,3 +434,5 @@ def test_read_health_type_corrupted_dict(tmp_path: Path) -> None:
     result = read_health(tmp_path)
     assert result.running is False
     assert result.reason is not None
+    # ファイルは存在するので「未起動」ではなく破損として報告する。
+    assert "未起動" not in result.reason
