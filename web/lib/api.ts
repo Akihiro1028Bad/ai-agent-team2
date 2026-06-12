@@ -504,6 +504,7 @@ export function adaptQueue(q: ApiQueueResponse): QueueView {
  * #115 で実認証導入までの暫定実装。
  */
 export function actorForRepo(repo: string): string {
+  /* v8 ignore next -- split always returns at least one element; ?? "" is a defensive fallback that can never be reached */
   return repo.split("/")[0] ?? "";
 }
 

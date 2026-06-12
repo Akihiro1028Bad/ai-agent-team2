@@ -45,6 +45,7 @@ export function AddIssueButton() {
           return;
         }
         // URL から repo を導出する (例: github.com/owner/repo/issues/123)
+        /* v8 ignore next -- validation requires github.com + path, so regex always matches; ?? fallback is unreachable */
         const repoFromUrl = url.match(/github\.com\/([^/]+\/[^/]+)\/issues/)?.[1] ?? repos[0].repo;
         const actor = actorForRepo(repoFromUrl);
         await api.postControl({ action: "enqueue_issue", issue: issueNum, actor });

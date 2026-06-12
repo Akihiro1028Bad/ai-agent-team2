@@ -201,6 +201,7 @@ export function IssueControls({ issue, status, phase, repo }: IssueControlsProps
                 void sendControl(
                   "rewind",
                   { action: "rewind", issue, target: rewindTo, actor },
+                  /* v8 ignore next -- rewindTo is always initialized from REWIND_TARGETS; label lookup will never be undefined */
                   `#${issue} を「${REWIND_TARGETS.find((t) => t.value === rewindTo)?.label ?? rewindTo}」フェーズへ巻き戻しました（成果物は保持）`,
                 );
               }}

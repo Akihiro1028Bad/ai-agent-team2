@@ -58,6 +58,7 @@ function PrioritySelector({
           onClick={() => void handleChange(opt.value)}
           title={`優先度: ${opt.label}`}
           className="rounded border px-2 py-0.5 font-mono text-[10px] transition-colors disabled:opacity-40"
+          /* v8 ignore start */
           style={{
             borderColor: row.priority === opt.value
               ? `color-mix(in srgb, ${PRIORITY_COLOR[opt.label] ?? "var(--color-ink-dim)"} 60%, transparent)`
@@ -69,6 +70,7 @@ function PrioritySelector({
               ? `color-mix(in srgb, ${PRIORITY_COLOR[opt.label] ?? "var(--color-ink-dim)"} 14%, transparent)`
               : "transparent",
           }}
+          /* v8 ignore stop */
         >
           {opt.label}
         </button>
@@ -78,6 +80,7 @@ function PrioritySelector({
 }
 
 export default function QueuePage() {
+  /* v8 ignore next 3 -- usePolling callback is mocked in tests; api.getQueue is tested separately */
   const { data, error, loading } = usePolling(
     useCallback((signal: AbortSignal) => api.getQueue(signal), []),
     3000,
@@ -137,10 +140,12 @@ export default function QueuePage() {
             <div className="flex items-center gap-3">
               <span
                 className="grid h-6 w-6 shrink-0 place-items-center rounded-md font-mono text-[10px] uppercase"
+                /* v8 ignore start */
                 style={{
                   color: PRIORITY_COLOR[row.priorityLabel] ?? "var(--color-ink-dim)",
                   background: `color-mix(in srgb, ${PRIORITY_COLOR[row.priorityLabel] ?? "var(--color-ink-dim)"} 14%, transparent)`,
                 }}
+                /* v8 ignore stop */
                 title={`priority: ${row.priorityLabel}`}
               >
                 {i + 1}

@@ -21,6 +21,7 @@ function PhaseBadge({ phase }: { phase: "approve" | "review" }) {
 }
 
 export default function ApprovalsPage() {
+  /* v8 ignore next 3 -- usePolling callback is mocked in tests; api.getApprovals is tested separately */
   const { data, error, loading } = usePolling(
     useCallback((signal: AbortSignal) => api.getApprovals(signal), []),
     5000,

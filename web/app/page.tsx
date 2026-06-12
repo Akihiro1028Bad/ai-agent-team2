@@ -23,7 +23,9 @@ function Stat({ label, value, accent, sub }: { label: string; value: string; acc
 }
 
 export default function Dashboard() {
+  /* v8 ignore next -- usePolling callback is mocked in tests; api.listIssues is tested separately */
   const issuesState = usePolling(useCallback((signal: AbortSignal) => api.listIssues(signal), []), 5000);
+  /* v8 ignore next -- usePolling callback is mocked in tests; api.getActivity is tested separately */
   const activityState = usePolling(useCallback((signal: AbortSignal) => api.getActivity(40, signal), []), 5000);
 
   const issues = issuesState.data ?? [];

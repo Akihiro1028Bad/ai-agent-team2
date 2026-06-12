@@ -19,6 +19,7 @@ export default function IssueDetailPage() {
   const params = useParams();
   const id = Number(params.id);
 
+  /* v8 ignore next 3 -- usePolling callback is mocked in tests; api.getIssue is tested separately */
   const fetcher = useCallback(
     (signal: AbortSignal) => api.getIssue(id, signal),
     [id],
@@ -54,6 +55,7 @@ export default function IssueDetailPage() {
     );
   }
 
+  /* v8 ignore next 7 -- defensive guard: unreachable because the two preceding checks exhaust all !issue states */
   if (!issue) {
     return (
       <div className="mx-auto max-w-[1100px]">
@@ -128,6 +130,7 @@ export default function IssueDetailPage() {
                 disabled={replySending || replyText.trim().length === 0}
                 onClick={() => {
                   const text = replyText.trim();
+                  /* v8 ignore next -- button is disabled when replyText is empty; this guard is unreachable via UI */
                   if (!text) return;
                   setReplySending(true);
                   setReplyMessage(null);
