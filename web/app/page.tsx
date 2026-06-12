@@ -1,8 +1,13 @@
+"use client";
+
+import { useCallback } from "react";
 import Link from "next/link";
-import { issues, recentActivity, stats } from "@/lib/mock";
+import { api } from "@/lib/api";
+import { usePolling } from "@/lib/hooks";
 import { Money, StatusPill, TypeTag, eventIcon, phaseAccent } from "@/components/ui";
 import { PhaseRail } from "@/components/PhaseRail";
 import { AddIssueButton } from "@/components/AddIssueButton";
+import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { IconArrow } from "@/components/icons";
 
 function Stat({ label, value, accent, sub }: { label: string; value: string; accent: string; sub?: string }) {
@@ -18,8 +23,26 @@ function Stat({ label, value, accent, sub }: { label: string; value: string; acc
 }
 
 export default function Dashboard() {
+  const issuesState = usePolling(useCallback((signal: AbortSignal) => api.listIssues(signal), []), 5000);
+  const activityState = usePolling(useCallback((signal: AbortSignal) => api.getActivity(40, signal), []), 5000);
+
+  const issues = issuesState.data ?? [];
+  const activity = activityState.data ?? [];
+  const error = issuesState.error ?? activityState.error;
+  const initialLoading = issuesState.loading && issuesState.data === undefined;
+
+  const repoCount = new Set(issues.map((i) => i.repo)).size;
+  const stats = {
+    active: issues.filter((i) => i.status === "running").length,
+    waiting: issues.filter((i) => i.status === "waiting").length,
+    suspended: issues.filter((i) => i.status === "suspended").length,
+    cost: issues.reduce((sum, i) => sum + i.costUsd, 0),
+  };
+
   return (
     <div className="mx-auto max-w-[1280px]">
+      <ConnectionBanner error={error} />
+
       <div className="rise flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="eyebrow">overview</div>
@@ -27,7 +50,7 @@ export default function Dashboard() {
         </div>
         <div className="flex items-center gap-3">
           <p className="font-mono text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
-            {issues.length} issues · 4 repos · {stats.doneToday} done today
+            {issues.length} issues · {repoCount} repos
           </p>
           <AddIssueButton />
         </div>
@@ -38,7 +61,7 @@ export default function Dashboard() {
         <Stat label="稼働中" value={String(stats.active)} accent="var(--color-signal)" sub="agents" />
         <Stat label="人間待ち" value={String(stats.waiting)} accent="var(--color-amber)" sub="gates" />
         <Stat label="中断" value={String(stats.suspended)} accent="var(--color-rose)" />
-        <Stat label="本日コスト" value={`$${stats.costToday.toFixed(2)}`} accent="var(--color-cyan)" />
+        <Stat label="実行中コスト" value={`$${stats.cost.toFixed(2)}`} accent="var(--color-cyan)" />
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-[1fr_320px]">
@@ -49,9 +72,19 @@ export default function Dashboard() {
             <span className="eyebrow">live</span>
           </div>
           <div className="flex flex-col gap-3">
+            {initialLoading && (
+              <div className="panel p-4 text-[13px]" style={{ color: "var(--color-ink-faint)" }}>
+                読み込み中…
+              </div>
+            )}
+            {!initialLoading && issues.length === 0 && (
+              <div className="panel p-4 text-[13px]" style={{ color: "var(--color-ink-faint)" }}>
+                処理中の Issue はありません。
+              </div>
+            )}
             {issues.map((issue, i) => (
               <Link
-                key={issue.number}
+                key={`${issue.repo}#${issue.number}`}
                 href={`/issues/${issue.number}`}
                 className="panel panel-hover group block p-4 rise"
                 style={{ animationDelay: `${140 + i * 45}ms` }}
@@ -105,23 +138,29 @@ export default function Dashboard() {
             <span className="eyebrow">events</span>
           </div>
           <div className="panel p-2">
-            <ol className="flex flex-col">
-              {recentActivity.map((ev) => {
-                const { icon: Icon, color } = eventIcon(ev.kind);
-                return (
-                  <li key={ev.id} className="flex gap-3 rounded-lg px-2.5 py-2.5 transition-colors hover:bg-[var(--color-panel-2)]">
-                    <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md" style={{ color, background: `color-mix(in srgb, ${color} 12%, transparent)` }}>
-                      <Icon width={13} height={13} />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[13px] leading-snug">{ev.title}</p>
-                      {ev.detail && <p className="truncate text-[12px]" style={{ color: "var(--color-ink-faint)" }}>{ev.detail}</p>}
-                    </div>
-                    <span className="shrink-0 font-mono text-[10px]" style={{ color: "var(--color-ink-faint)" }}>{ev.at}</span>
-                  </li>
-                );
-              })}
-            </ol>
+            {!initialLoading && activity.length === 0 ? (
+              <p className="px-2.5 py-3 text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+                イベントはまだありません。
+              </p>
+            ) : (
+              <ol className="flex flex-col">
+                {activity.map((ev) => {
+                  const { icon: Icon, color } = eventIcon(ev.kind);
+                  return (
+                    <li key={ev.id} className="flex gap-3 rounded-lg px-2.5 py-2.5 transition-colors hover:bg-[var(--color-panel-2)]">
+                      <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md" style={{ color, background: `color-mix(in srgb, ${color} 12%, transparent)` }}>
+                        <Icon width={13} height={13} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[13px] leading-snug">{ev.title}</p>
+                        {ev.detail && <p className="truncate text-[12px]" style={{ color: "var(--color-ink-faint)" }}>{ev.detail}</p>}
+                      </div>
+                      <span className="shrink-0 font-mono text-[10px]" style={{ color: "var(--color-ink-faint)" }}>{ev.at}</span>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
           </div>
         </section>
       </div>
