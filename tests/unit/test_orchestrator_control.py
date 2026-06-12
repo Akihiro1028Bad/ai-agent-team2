@@ -1,0 +1,123 @@
+"""Orchestrator の ControlBus 消費ループ関連テスト (#87)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from unittest.mock import AsyncMock
+
+from ai_agent_orchestrator.config.settings import (
+    AppSettings,
+    ConcurrencyConfig,
+    RepositoryConfig,
+)
+from ai_agent_orchestrator.models import Phase, make_issue_key
+from ai_agent_orchestrator.orchestrator.orchestrator import (
+    NullEventRouter,
+    NullNotifier,
+    NullPhaseDispatcher,
+    NullPoller,
+    Orchestrator,
+)
+
+REPO = "test-owner/test-repo"
+
+
+def _make_settings(tmp_path: Path) -> AppSettings:
+    return AppSettings(
+        repositories=[RepositoryConfig(owner="test-owner", repo="test-repo")],
+        concurrency=ConcurrencyConfig(max_total=2, max_per_repo=1),
+        workspace_dir=str(tmp_path / "workspaces"),
+    )
+
+
+def _make_orchestrator(tmp_path: Path, **kwargs: object) -> Orchestrator:
+    settings = _make_settings(tmp_path)
+    defaults: dict[str, object] = {
+        "notifier": NullNotifier(),
+        "poller": NullPoller(),
+        "event_router": NullEventRouter(),
+        "phase_dispatcher": NullPhaseDispatcher(),
+    }
+    defaults.update(kwargs)
+    return Orchestrator(settings, **defaults)  # type: ignore[arg-type]
+
+
+def _write_control(orch: Orchestrator, *lines: dict[str, object]) -> None:
+    path = orch._control_file
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+
+
+class TestControlConsume:
+    async def test_pause_marks_issue_paused(self, tmp_path: Path) -> None:
+        orch = _make_orchestrator(tmp_path)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.IMPLEMENT)
+        _write_control(orch, {"action": "pause", "issue": 5, "actor": "test-owner"})
+
+        await orch._consume_control_commands()
+
+        assert orch._task_queue.is_paused(make_issue_key(REPO, 5))
+        assert orch._control_offset == 1
+
+    async def test_resume_clears_pause(self, tmp_path: Path) -> None:
+        orch = _make_orchestrator(tmp_path)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.IMPLEMENT)
+        _write_control(
+            orch,
+            {"action": "pause", "issue": 5, "actor": "test-owner"},
+            {"action": "resume", "issue": 5, "actor": "test-owner"},
+        )
+
+        await orch._consume_control_commands()
+
+        assert not orch._task_queue.is_paused(make_issue_key(REPO, 5))
+
+    async def test_unauthorized_actor_ignored(self, tmp_path: Path) -> None:
+        orch = _make_orchestrator(tmp_path)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.IMPLEMENT)
+        _write_control(orch, {"action": "pause", "issue": 5, "actor": "mallory"})
+
+        await orch._consume_control_commands()
+
+        # 認可外 actor は無視されるが offset は進む (再処理しない)
+        assert not orch._task_queue.is_paused(make_issue_key(REPO, 5))
+        assert orch._control_offset == 1
+
+    async def test_abort_cancels_cleans_and_suspends(self, tmp_path: Path) -> None:
+        workspace = AsyncMock()
+        account_mgr = AsyncMock()
+        client = AsyncMock()
+        account_mgr.get_client_for_repo = AsyncMock(return_value=client)
+        orch = _make_orchestrator(tmp_path, workspace_manager=workspace, account_manager=account_mgr)
+        orch._state_machine.register_issue(7, REPO, initial_phase=Phase.IMPLEMENT)
+        _write_control(orch, {"action": "abort", "issue": 7, "actor": "test-owner"})
+
+        await orch._consume_control_commands()
+
+        workspace.remove_worktree.assert_awaited_once()
+        client.replace_phase_label.assert_awaited_once()
+        assert orch._state_machine.get_phase(make_issue_key(REPO, 7)) is Phase.SUSPENDED
+
+    async def test_shutdown_requests_drain(self, tmp_path: Path) -> None:
+        orch = _make_orchestrator(tmp_path)
+        _write_control(orch, {"action": "shutdown", "actor": "test-owner"})
+
+        await orch._consume_control_commands()
+
+        assert orch._task_queue.is_draining
+        # detached の停止タスクは後始末する (テスト環境で stop を完走させない)
+        if orch._shutdown_task is not None:
+            orch._shutdown_task.cancel()
+
+    async def test_offset_persisted_across_instances(self, tmp_path: Path) -> None:
+        orch = _make_orchestrator(tmp_path)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.IMPLEMENT)
+        _write_control(orch, {"action": "pause", "issue": 5, "actor": "test-owner"})
+
+        await orch._consume_control_commands()
+        assert orch._control_offset == 1
+
+        # 同じ workspace の新インスタンスは offset を引き継ぐ (処理済みを再適用しない)
+        orch2 = _make_orchestrator(tmp_path)
+        assert orch2._load_control_offset() == 1

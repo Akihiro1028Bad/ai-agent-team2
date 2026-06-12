@@ -23,8 +23,14 @@ from ai_agent_orchestrator.event_logger import EventLogger
 from ai_agent_orchestrator.github.client import AccountManager
 from ai_agent_orchestrator.models import ErrorCategory, IssueKey, Phase, make_issue_key
 from ai_agent_orchestrator.notifications.slack import SlackNotifier
+from ai_agent_orchestrator.orchestrator.approval import resolve_approvers
+from ai_agent_orchestrator.orchestrator.control_bus import (
+    OperationalCommand,
+    read_new_operational_commands,
+)
 from ai_agent_orchestrator.orchestrator.execution_guard import ExecutionGuard
 from ai_agent_orchestrator.orchestrator.state_machine import (
+    InvalidTransitionError,
     StateMachineManager,
 )
 from ai_agent_orchestrator.orchestrator.task_queue import (
@@ -35,7 +41,7 @@ from ai_agent_orchestrator.state_persistence import StatePersistence
 from ai_agent_orchestrator.workspace_manager import WorkspaceManager
 
 if TYPE_CHECKING:
-    from ai_agent_orchestrator.config.settings import AppSettings
+    from ai_agent_orchestrator.config.settings import AppSettings, RepositoryConfig
     from ai_agent_orchestrator.phases.base import PhaseExecutor as PhaseExecutorBase  # noqa: F401
     from ai_agent_orchestrator.phases.dispatcher import (
         PhaseDispatcher as ConcretePhaseDispatcher,
@@ -407,6 +413,10 @@ class Orchestrator:
         self._health_task: asyncio.Task[None] | None = None
         self._route_task: asyncio.Task[None] | None = None
         self._poller_task: asyncio.Task[None] | None = None
+        # ControlBus (#87): control.jsonl 消費ループと shutdown 用の detached タスク
+        self._control_task: asyncio.Task[None] | None = None
+        self._shutdown_task: asyncio.Task[None] | None = None
+        self._control_offset = 0
 
         # Event queue for poller -> router communication
         self._event_queue: asyncio.Queue[object] = asyncio.Queue()
@@ -419,6 +429,11 @@ class Orchestrator:
         # Persistence
         workspace_path = Path(settings.workspace_dir).expanduser()
         self._health_file = workspace_path / "health.json"
+        # ControlBus (#87): control.jsonl と消費済み offset の永続化先。
+        self._control_file = (
+            Path(settings.control_file).expanduser() if settings.control_file else workspace_path / "control.jsonl"
+        )
+        self._control_offset_file = workspace_path / "control.offset"
         self._persistence = persistence or StatePersistence(
             state_file=workspace_path / "state.json",
         )
@@ -601,6 +616,11 @@ class Orchestrator:
         # 2. Start health checker
         self._health_task = asyncio.create_task(self._health_check_loop(), name="health-checker")
 
+        # ControlBus 消費ループ (#87)。停止中に積まれたコマンドを起動時から消費する
+        # ため、永続化した offset を復元する (処理済みは再適用しない)。
+        self._control_offset = self._load_control_offset()
+        self._control_task = asyncio.create_task(self._control_loop(), name="control-bus")
+
         # 3. Start poller
         self._poller_task = asyncio.create_task(self._poller.start(self._event_queue), name="poller")
 
@@ -665,6 +685,8 @@ class Orchestrator:
             tasks_to_cancel.append(self._route_task)
         if self._health_task is not None:
             tasks_to_cancel.append(self._health_task)
+        if self._control_task is not None:
+            tasks_to_cancel.append(self._control_task)
         tasks_to_cancel.extend(self._worker_tasks)
 
         for task in tasks_to_cancel:
@@ -678,6 +700,7 @@ class Orchestrator:
         self._poller_task = None
         self._route_task = None
         self._health_task = None
+        self._control_task = None
 
         # Flush persistence
         await self._persistence.flush(self._state_machine._states)
@@ -692,6 +715,159 @@ class Orchestrator:
         )
 
         logger.info("Orchestrator stopped")
+
+    # ------------------------------------------------------------------
+    # ControlBus (#87): control.jsonl の運用コマンド消費
+    # ------------------------------------------------------------------
+
+    _CONTROL_POLL_INTERVAL_SEC = 2.0
+    _SHUTDOWN_DRAIN_TIMEOUT_SEC = 600.0
+
+    def _load_control_offset(self) -> int:
+        """永続化済みの control.jsonl 消費 offset を読む (失敗時 0)."""
+        try:
+            return int(self._control_offset_file.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return 0
+
+    def _save_control_offset(self) -> None:
+        """消費済み offset を永続化する (再起動時の重複適用防止)."""
+        try:
+            self._control_offset_file.write_text(str(self._control_offset), encoding="utf-8")
+        except OSError:
+            logger.warning("failed to persist control offset", exc_info=True)
+
+    def _control_authorized_actors(self) -> list[str]:
+        """運用コマンドを発行できる actor の許可集合 (全リポの承認者和集合)."""
+        actors: set[str] = set()
+        for repo in self._settings.repositories:
+            actors.update(resolve_approvers(repo.owner, repo.approvers))
+        return list(actors)
+
+    def _resolve_issue_key(self, issue_number: int) -> IssueKey | None:
+        """issue 番号から一意な IssueKey を解決する (複数一致/不在は None)."""
+        matches = [key for key in self._state_machine._states if key[1] == issue_number]
+        if len(matches) != 1:
+            logger.warning(
+                "control: issue #%d は %d 件一致のため解決できません",
+                issue_number,
+                len(matches),
+            )
+            return None
+        return matches[0]
+
+    def _repo_config_for(self, repo_key: str) -> RepositoryConfig | None:
+        """repo_key ("owner/repo") に対応する RepositoryConfig を返す."""
+        for repo in self._settings.repositories:
+            if f"{repo.owner}/{repo.repo}" == repo_key:
+                return repo
+        return None
+
+    async def _control_loop(self) -> None:
+        """control.jsonl をポーリングし、運用コマンドを適用する背景ループ."""
+        while self._running:
+            try:
+                await self._consume_control_commands()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("control loop iteration failed: %s", exc)
+            await asyncio.sleep(self._CONTROL_POLL_INTERVAL_SEC)
+
+    async def _consume_control_commands(self) -> None:
+        """未処理の運用コマンドを読み取り、順に適用して offset を進める."""
+        commands, new_offset = read_new_operational_commands(
+            self._control_file,
+            self._control_offset,
+            self._control_authorized_actors(),
+        )
+        if new_offset != self._control_offset:
+            self._control_offset = new_offset
+            self._save_control_offset()
+        for cmd in commands:
+            await self._apply_control_command(cmd)
+
+    async def _apply_control_command(self, cmd: OperationalCommand) -> None:
+        """1 件の運用コマンドを適用する."""
+        if cmd.action == "shutdown":
+            await self._handle_shutdown(cmd)
+        elif cmd.action == "pause":
+            await self._handle_pause(cmd)
+        elif cmd.action == "resume":
+            await self._handle_resume(cmd)
+        elif cmd.action == "abort":
+            await self._handle_abort(cmd)
+
+    async def _audit_control(self, event: str, cmd: OperationalCommand) -> None:
+        """運用コマンドの適用を events.jsonl に監査記録する."""
+        await self._event_logger.track(
+            event,
+            issue_number=cmd.issue_number or 0,
+            phase="system",
+            data={"action": cmd.action, "actor": cmd.actor},
+        )
+
+    async def _handle_pause(self, cmd: OperationalCommand) -> None:
+        if cmd.issue_number is None:
+            return
+        issue_key = self._resolve_issue_key(cmd.issue_number)
+        if issue_key is None:
+            return
+        self._task_queue.pause(issue_key)
+        await self._audit_control("issue_paused", cmd)
+
+    async def _handle_resume(self, cmd: OperationalCommand) -> None:
+        if cmd.issue_number is None:
+            return
+        issue_key = self._resolve_issue_key(cmd.issue_number)
+        if issue_key is None:
+            return
+        await self._task_queue.resume(issue_key)
+        await self._audit_control("issue_resumed", cmd)
+
+    async def _handle_abort(self, cmd: OperationalCommand) -> None:
+        """abort: 実行中タスクを即時キャンセルし、worktree 掃除・SUSPENDED・ラベル付与."""
+        if cmd.issue_number is None:
+            return
+        issue_key = self._resolve_issue_key(cmd.issue_number)
+        if issue_key is None:
+            return
+
+        await self._task_queue.cancel_task(issue_key)
+
+        repo_config = self._repo_config_for(issue_key[0])
+        if repo_config is not None:
+            try:
+                await self._workspace_manager.remove_worktree(repo_config, cmd.issue_number)
+            except Exception as exc:
+                logger.warning("abort: worktree 掃除に失敗 (#%d): %s", cmd.issue_number, exc)
+            try:
+                client = await self._account_manager.get_client_for_repo(repo_config.owner, repo_config.repo)
+                await client.replace_phase_label(repo_config, cmd.issue_number, "phase:suspended")
+            except Exception as exc:
+                logger.warning("abort: ラベル付与に失敗 (#%d): %s", cmd.issue_number, exc)
+
+        try:
+            await self._state_machine.transition(issue_key, Phase.SUSPENDED)
+        except (InvalidTransitionError, KeyError) as exc:
+            logger.warning("abort: SUSPENDED への遷移に失敗 (#%d): %s", cmd.issue_number, exc)
+
+        await self._audit_control("issue_aborted", cmd)
+
+    async def _handle_shutdown(self, cmd: OperationalCommand) -> None:
+        """shutdown: drain を要求し、in-flight 完了後に graceful stop する."""
+        await self._audit_control("orchestrator_shutdown_requested", cmd)
+        self._task_queue.request_drain()
+        # stop() は control ループ自身を cancel するため、detached タスクで実行する。
+        self._shutdown_task = asyncio.create_task(self._drain_then_stop(), name="control-shutdown")
+
+    async def _drain_then_stop(self) -> None:
+        """in-flight タスクの完了を待ってから (上限付き) 停止する."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._SHUTDOWN_DRAIN_TIMEOUT_SEC
+        while self._task_queue.get_status()["active"] > 0 and loop.time() < deadline:
+            await asyncio.sleep(1.0)
+        await self.stop()
 
     # ------------------------------------------------------------------
     async def _reenqueue_pending_tasks(self) -> None:
