@@ -924,12 +924,10 @@ class Orchestrator:
             logger.warning("review: %s への遷移に失敗 (#%d): %s", next_phase.value, cmd.issue_number, exc)
             return
 
-        try:
-            client = await self._account_manager.get_client_for_repo(repo_config.owner, repo_config.repo)
-            await client.replace_phase_label(repo_config, cmd.issue_number, f"phase:{next_phase.value}")
-        except Exception as exc:
-            logger.warning("review: ラベル更新に失敗 (#%d): %s", cmd.issue_number, exc)
-
+        # 遷移と再エンキューは await を挟まず連続させる: 間に GitHub 呼び出し等の
+        # await を置くと、その途中でクラッシュした場合に「遷移済みだがキューに無い」
+        # 状態 (再適用時は APPROVE 相でないため再エンキューがスキップ) を招く。
+        # ラベル更新 (best-effort) はキュー投入後に行う。
         extra: dict[str, Any] = {}
         if cmd.action == "reject" and cmd.feedback:
             extra["feedback"] = cmd.feedback
@@ -942,6 +940,13 @@ class Orchestrator:
                 extra=extra,
             )
         )
+        # ラベル更新は best-effort (失敗しても状態+キューは確定済み)。
+        try:
+            client = await self._account_manager.get_client_for_repo(repo_config.owner, repo_config.repo)
+            await client.replace_phase_label(repo_config, cmd.issue_number, f"phase:{next_phase.value}")
+        except Exception as exc:
+            logger.warning("review: ラベル更新に失敗 (#%d): %s", cmd.issue_number, exc)
+
         await self._event_logger.track(
             "plan_approved" if cmd.action == "approve" else "plan_rejected",
             issue_number=cmd.issue_number,
