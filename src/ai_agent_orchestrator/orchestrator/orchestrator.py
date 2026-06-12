@@ -1088,9 +1088,15 @@ class Orchestrator:
     async def _handle_retry_with_analysis(self, cmd: OperationalCommand) -> None:
         """retry_with_analysis: 直近エラーを要約し再実行プロンプトに添えて再試行する (#96).
 
-        abort と対で成果物を保持したまま、現フェーズを高優先で積み直す。直近の
-        phase_error イベントの要約を ``extra["feedback"]`` に載せ、既存の再実行
-        プロンプト経路 (feedback) でエージェントへ渡す。
+        abort と対で成果物を保持したまま再試行する。直近の phase_error イベントの
+        要約を ``extra["feedback"]`` に載せ、既存の再実行プロンプト経路 (feedback)
+        でエージェントへ渡す。
+
+        再試行フェーズと state machine の相を一致させる:
+        - 実行相 (PLAN/IMPLEMENT/REVISE) で滞留中ならそのフェーズを再試行。
+        - 失敗して SUSPENDED 済みなら IMPLEMENT へ resume してから積む
+          (state は SUSPENDED のまま IMPLEMENT を走らせる乖離を防ぐ)。
+        - それ以外の相は再試行対象外 (誤った相の実行を防ぐ)。
         """
         if cmd.issue_number is None:
             return
@@ -1101,8 +1107,30 @@ class Orchestrator:
         if repo_config is None:
             logger.warning("retry_with_analysis: repo を解決できません (#%d)", cmd.issue_number)
             return
+
         current_phase = self._state_machine.get_phase(issue_key)
-        retry_phase = current_phase if current_phase in _RETRYABLE_PHASES else Phase.IMPLEMENT
+        if current_phase in _RETRYABLE_PHASES:
+            retry_phase = current_phase
+        elif current_phase is Phase.SUSPENDED:
+            retry_phase = Phase.IMPLEMENT
+            try:
+                await self._state_machine.transition(issue_key, retry_phase)
+            except (InvalidTransitionError, KeyError) as exc:
+                logger.warning("retry_with_analysis: 再開遷移に失敗 (#%d): %s", cmd.issue_number, exc)
+                return
+            try:
+                client = await self._account_manager.get_client_for_repo(repo_config.owner, repo_config.repo)
+                await client.replace_phase_label(repo_config, cmd.issue_number, f"phase:{retry_phase.value}")
+            except Exception as exc:
+                logger.warning("retry_with_analysis: ラベル更新に失敗 (#%d): %s", cmd.issue_number, exc)
+        else:
+            logger.info(
+                "retry_with_analysis: 再試行できない相のため無視 (#%d %s)",
+                cmd.issue_number,
+                current_phase.value,
+            )
+            return
+
         error_summary = self._read_last_error_summary(cmd.issue_number)
         extra: dict[str, Any] = {"retry_with_analysis": True}
         if error_summary:

@@ -272,6 +272,35 @@ class TestRewind:
         assert req.extra.get("retry_with_analysis") is True
         assert "boom failure" in req.extra["feedback"]
 
+    async def test_retry_with_analysis_resumes_suspended_issue(self, tmp_path: Path) -> None:
+        # 失敗して SUSPENDED 済みの Issue は IMPLEMENT へ resume してから積む
+        account_mgr = AsyncMock()
+        client = AsyncMock()
+        account_mgr.get_client_for_repo = AsyncMock(return_value=client)
+        orch = _make_orchestrator(tmp_path, account_manager=account_mgr)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.IMPLEMENT)
+        await orch._state_machine.transition(make_issue_key(REPO, 5), Phase.SUSPENDED)
+        _write_control(orch, {"action": "retry_with_analysis", "issue": 5, "actor": "test-owner"})
+
+        await orch._consume_control_commands()
+
+        # state machine も IMPLEMENT へ戻り、キューと相が一致する
+        assert orch._state_machine.get_phase(make_issue_key(REPO, 5)) is Phase.IMPLEMENT
+        client.replace_phase_label.assert_awaited_once()
+        req = await orch._task_queue.dequeue()
+        assert req.phase == "implement"
+
+    async def test_retry_with_analysis_ignores_non_retryable_phase(self, tmp_path: Path) -> None:
+        # APPROVE のような実行相でない/SUSPENDED でもない相は再試行対象外
+        orch = _make_orchestrator(tmp_path)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.APPROVE)
+        _write_control(orch, {"action": "retry_with_analysis", "issue": 5, "actor": "test-owner"})
+
+        await orch._consume_control_commands()
+
+        assert orch._state_machine.get_phase(make_issue_key(REPO, 5)) is Phase.APPROVE
+        assert orch._task_queue.get_queue_snapshot()["queued"] == []
+
 
 class TestQueueJson:
     async def test_build_and_write_queue_json(self, tmp_path: Path) -> None:
