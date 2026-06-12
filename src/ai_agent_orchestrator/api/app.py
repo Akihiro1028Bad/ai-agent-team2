@@ -23,6 +23,7 @@ from ai_agent_orchestrator.api.readers import (
     load_states,
     merge_activity,
     read_agent_logs,
+    read_approvals,
     read_health,
     read_issue_events,
     read_issue_summaries,
@@ -30,6 +31,7 @@ from ai_agent_orchestrator.api.readers import (
 )
 from ai_agent_orchestrator.api.schemas import (
     AgentLogPage,
+    ApprovalEntry,
     ControlAcceptedResponse,
     ControlRequest,
     CostsResponse,
@@ -40,6 +42,8 @@ from ai_agent_orchestrator.api.schemas import (
     IssueDetailResponse,
     IssueSummaryResponse,
     QueueResponse,
+    ReplyRequest,
+    ReplyResponse,
 )
 from ai_agent_orchestrator.api.stream import (
     KEEPALIVE_INTERVAL_SEC,
@@ -61,6 +65,12 @@ class _DiffClient(Protocol):
     """diff 取得に必要な最小インターフェース (GitHubClient 互換)."""
 
     async def get_pull_request_files(self, owner: str, repo: str, pr_number: int) -> list[dict[str, object]]: ...
+
+
+class _CommentClient(Protocol):
+    """Issue コメント投稿に必要な最小インターフェース (GitHubClient 互換)."""
+
+    async def create_comment(self, repo: object, issue_number: int, body: str, mark_as_bot: bool = True) -> object: ...
 
 
 class ControlSystemd(Protocol):
@@ -292,6 +302,53 @@ def create_app(settings: AppSettings) -> FastAPI:
         (#84 の「停止中でも応答」方針)。
         """
         return read_queue(workspace)
+
+    @app.get("/api/approvals", response_model=list[ApprovalEntry])
+    async def get_approvals() -> list[ApprovalEntry]:
+        """人間の承認/レビュー待ち Issue (approve / review 相) を返す (#88)."""
+        return read_approvals(workspace)
+
+    @app.post("/api/issues/{issue_number}/reply", response_model=ReplyResponse, status_code=201)
+    async def post_issue_reply(
+        issue_number: int,
+        body: ReplyRequest,
+        repo: str | None = Query(default=None),
+    ) -> ReplyResponse:
+        """ヒアリング回答を GitHub Issue コメントとして投稿する (#88).
+
+        bot マーカーを付けずに投稿し、poller の人間コメント検知フローに乗せる
+        (control.jsonl は経由しない)。不在 404、GitHub 障害 502。
+        """
+        states = load_states(workspace)
+        state_repo, _state = _resolve_issue(states, issue_number, repo)
+        owner, _, name = state_repo.partition("/")
+        factory: Callable[[str, str], Awaitable[_CommentClient]] = app.state.github_client_factory
+        from ai_agent_orchestrator.config.settings import RepositoryConfig
+        from ai_agent_orchestrator.github.client import ConfigError
+
+        try:
+            client = await factory(owner, name)
+            await client.create_comment(
+                RepositoryConfig(owner=owner, repo=name),
+                issue_number,
+                body.text,
+                mark_as_bot=False,
+            )
+        except ConfigError as e:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository {state_repo} is not configured in config.yaml",
+            ) from e
+        except HTTPException:
+            raise
+        except Exception as e:
+            # detail に内部例外の文字列を含めない (情報漏えい防止)。詳細はログのみ。
+            logger.warning("ヒアリング回答の投稿に失敗: repo=%s issue=%d", state_repo, issue_number, exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to post reply comment to GitHub",
+            ) from e
+        return ReplyResponse(posted=True)
 
     @app.get("/api/costs", response_model=CostsResponse)
     async def get_costs() -> CostsResponse:

@@ -496,6 +496,101 @@ def test_post_control_unknown_action_returns_422(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
+# ──────────────────────────────────────
+# GET /api/approvals (#88 Unit B: 承認待ち一覧)
+# ──────────────────────────────────────
+def test_approvals_empty_workspace_returns_200(client: TestClient) -> None:
+    """state.json 不在でも 200 空リスト (停止中でも応答)."""
+    resp = client.get("/api/approvals")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_approvals_returns_only_waiting_phases(client: TestClient, workspace: Path) -> None:
+    """approve / review 相のみ返し、実行中・完了は含まない."""
+    _write_state(
+        workspace,
+        {
+            "o/r:1": _state_entry(number=1, repo="o/r", phase="approve"),
+            "o/r:2": _state_entry(number=2, repo="o/r", phase="review", pr_number=42),
+            "o/r:3": _state_entry(number=3, repo="o/r", phase="implement"),
+            "o/r:4": _state_entry(number=4, repo="o/r", phase="done"),
+        },
+    )
+    resp = client.get("/api/approvals")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {(e["issue_number"], e["phase"]) for e in body} == {(1, "approve"), (2, "review")}
+    review_entry = next(e for e in body if e["phase"] == "review")
+    assert review_entry["pr_number"] == 42
+    assert all(e["repo"] == "o/r" for e in body)
+    assert all("updated_at" in e for e in body)
+
+
+# ──────────────────────────────────────
+# POST /api/issues/{n}/reply (#88 Unit B: ヒアリング回答送信)
+# ──────────────────────────────────────
+class _FakeCommentClient:
+    """create_comment を捕捉する Fake クライアント."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[Any, int, str, bool]] = []
+
+    async def create_comment(self, repo: Any, issue_number: int, body: str, mark_as_bot: bool = True) -> None:
+        self.calls.append((repo, issue_number, body, mark_as_bot))
+
+
+def test_reply_posts_comment_without_bot_marker(client: TestClient, workspace: Path) -> None:
+    """回答コメントは bot マーカー無しで投稿される (poller の人間回答検知に乗せる)."""
+    _write_state(workspace, {"o/r:1": _state_entry(number=1, repo="o/r", phase="clarify-wait")})
+    fake = _FakeCommentClient()
+
+    async def factory(owner: str, repo: str) -> _FakeCommentClient:
+        assert (owner, repo) == ("o", "r")
+        return fake
+
+    client.app.state.github_client_factory = factory  # type: ignore[attr-defined]
+
+    resp = client.post("/api/issues/1/reply", json={"text": "回答です"})
+    assert resp.status_code == 201
+    assert resp.json()["posted"] is True
+    assert len(fake.calls) == 1
+    repo_arg, issue_arg, body_arg, mark_as_bot = fake.calls[0]
+    assert (repo_arg.owner, repo_arg.repo) == ("o", "r")
+    assert issue_arg == 1
+    assert body_arg == "回答です"
+    assert mark_as_bot is False
+
+
+def test_reply_unknown_issue_returns_404(client: TestClient) -> None:
+    resp = client.post("/api/issues/99/reply", json={"text": "x"})
+    assert resp.status_code == 404
+
+
+def test_reply_empty_text_returns_422(client: TestClient, workspace: Path) -> None:
+    _write_state(workspace, {"o/r:1": _state_entry(number=1, repo="o/r", phase="clarify-wait")})
+    assert client.post("/api/issues/1/reply", json={"text": ""}).status_code == 422
+    assert client.post("/api/issues/1/reply", json={}).status_code == 422
+
+
+def test_reply_github_error_returns_502_without_leak(client: TestClient, workspace: Path) -> None:
+    """GitHub 障害は 502。detail に内部例外文字列を含めない."""
+    _write_state(workspace, {"o/r:1": _state_entry(number=1, repo="o/r", phase="clarify-wait")})
+
+    class _FailingClient:
+        async def create_comment(self, repo: Any, issue_number: int, body: str, mark_as_bot: bool = True) -> None:
+            raise RuntimeError("secret-internal-detail")
+
+    async def factory(owner: str, repo: str) -> _FailingClient:
+        return _FailingClient()
+
+    client.app.state.github_client_factory = factory  # type: ignore[attr-defined]
+
+    resp = client.post("/api/issues/1/reply", json={"text": "x"})
+    assert resp.status_code == 502
+    assert "secret-internal-detail" not in resp.json()["detail"]
+
+
 def test_post_control_roundtrip_parses_in_control_bus(client: TestClient, workspace: Path) -> None:
     """API が受理した全 action の行を parse_operational_line が読める (語彙 drift 防止)."""
     from ai_agent_orchestrator.orchestrator.control_bus import parse_operational_line

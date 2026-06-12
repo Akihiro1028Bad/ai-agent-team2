@@ -125,6 +125,7 @@ class GitHubClient:
         repo: RepositoryConfig,
         issue_number: int,
         body: str,
+        mark_as_bot: bool = True,
     ) -> IssueComment:
         """Issue にコメントを投稿する.
 
@@ -132,15 +133,19 @@ class GitHubClient:
             repo: リポジトリ設定.
             issue_number: Issue 番号.
             body: コメント本文 (Markdown).
+            mark_as_bot: True なら bot マーカーを付与する (既定)。
+                ヒアリング回答の中継 (#88) など、poller に人間コメントとして
+                検知させたい場合のみ False を指定する。
 
         Returns:
             作成された IssueComment オブジェクト.
         """
+        text = f"{body}\n\n<!-- ai-agent-bot -->" if mark_as_bot else body
         response = await self._github.rest.issues.async_create_comment(
             owner=repo.owner,
             repo=repo.repo,
             issue_number=issue_number,
-            data={"body": f"{body}\n\n<!-- ai-agent-bot -->"},
+            data={"body": text},
         )
         return response.parsed_data
 

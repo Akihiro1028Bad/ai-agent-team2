@@ -278,3 +278,27 @@ class ControlAcceptedResponse(BaseModel):
     """POST /api/control のレスポンスボディ."""
 
     accepted: bool
+
+
+class ApprovalEntry(BaseModel):
+    """GET /api/approvals の 1 エントリ (人間の承認/レビュー待ち Issue)."""
+
+    repo: str
+    issue_number: int
+    phase: str
+    pr_number: int | None = None
+    updated_at: str = ""
+
+
+class ReplyRequest(BaseModel):
+    """POST /api/issues/{n}/reply のリクエストボディ (ヒアリング回答)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=65536)
+
+
+class ReplyResponse(BaseModel):
+    """POST /api/issues/{n}/reply のレスポンスボディ."""
+
+    posted: bool
