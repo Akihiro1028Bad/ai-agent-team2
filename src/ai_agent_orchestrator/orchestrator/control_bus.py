@@ -7,10 +7,10 @@ offset** で消費する (承認系の行は無視する)。
 
 JSONL の 1 行フォーマット::
 
-    {"action": "pause",    "issue": 5, "actor": "alice"}
-    {"action": "resume",   "issue": 5, "actor": "alice"}
-    {"action": "abort",    "issue": 6, "actor": "alice"}
-    {"action": "shutdown",             "actor": "alice"}
+    {"action": "pause", "issue": 5, "actor": "alice"}
+    {"action": "resume", "issue": 5, "actor": "alice"}
+    {"action": "abort", "issue": 6, "actor": "alice"}
+    {"action": "shutdown", "actor": "alice"}
 
 承認系コマンド (approve/reject) は本パーサでは ``None`` として読み飛ばす。
 """
