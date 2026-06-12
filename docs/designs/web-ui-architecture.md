@@ -109,9 +109,36 @@ UI → POST /api/control → state/control.jsonl に追記
 ## 4. 認証（将来の差し込み口）
 
 - フェーズ1: なし（localhost のみ・リモートデスクトップ経由）
-- FastAPI には `AuthMiddleware`(no-op) を最初から入れておき、昇格時に実装を差し替えるだけにする
+- FastAPI には `AuthMiddleware` を最初から入れておき、昇格時に実装を差し替えるだけにする
   - Tailscale 昇格時: listen を tailscale0 インターフェースに拡張（認証は Tailscale 任せ）
   - Vercel 昇格時: Bearer トークン + CORS 設定を有効化
+
+### 4.1 loopback ガード（#115 Unit C2, 2026-06-12 決定）
+
+読み取り API ハードニング（#115）の「項目1: 認証プロファイルの分離」について、
+**対応案 A（localhost バインド強制 + 明記）** を採用した。判断と実装:
+
+- 起動バインドは `ai-agent api` が 127.0.0.1 に固定済み（`commands/api.py`、変更不可）。
+- `AuthMiddleware` を no-op から **loopback ガード**へ変更。実ネットワーク経由の
+  非 loopback peer（数値 IP かつ非 loopback）のみ 403 で拒否し、read/write/control を
+  区別せず全エンドポイントへ一律適用する（多層防御）。万一の外部公開（bind 変更 /
+  プロキシ誤設定 / ポートフォワード）でも health 詳細や pause/abort/shutdown を外部から
+  直接叩けない。
+- `X-Forwarded-For` 等の転送ヘッダは信用せず、TCP peer（実 peername）のみで判定。
+  同一ホスト上のリバースプロキシ / SSH ポートフォワードは peer が 127.0.0.1 となるため
+  通過する（= 意図的公開はプロキシ側が認証責任を負う）。
+- **対応案 B（公開/認証プロファイル分離 + Bearer トークン）は非採用**。単一ユーザー
+  localhost ツールにはトークン生成・保管・配布の運用過剰。多人数化・外部公開時に
+  本ミドルウェアへ Bearer 認証を差し込む（将来の昇格パス）。
+
+> 項目2（ファイル権限 0o600）/ 項目3（read サイズ上限）/ 項目4（rate_limit.reset 除外）は
+> Unit C1（PR #126）で対応済み。
+
+**重要な限界**: loopback ガードは同一ホスト上のリバースプロキシ（peer=127.0.0.1）を
+通過させる。したがって将来 nginx/caddy 等を前段に置いて外部公開する場合、本ガードは
+write/control 系を保護しない。その時点で `AuthMiddleware` に Bearer トークン等の
+追加認証を必ず差し込むこと（§4 の昇格パス参照）。loopback ガードは「localhost 単一
+ユーザー前提」専用の多層防御であり、認証の代替ではない。
 
 ## 5. 常駐・運用（WSL2）
 
