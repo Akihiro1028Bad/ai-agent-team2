@@ -21,6 +21,8 @@ from ai_agent_orchestrator.api.schemas import (
     ApprovalEntry,
     CostsResponse,
     EventRecord,
+    EvidenceItemResponse,
+    EvidenceResponse,
     HealthResponse,
     IssueCost,
     IssueDetailResponse,
@@ -28,6 +30,7 @@ from ai_agent_orchestrator.api.schemas import (
     QueueResponse,
     phase_to_status,
 )
+from ai_agent_orchestrator.evidence.paths import evidence_dir
 from ai_agent_orchestrator.io_safety import (
     MAX_LOG_FILE_BYTES,
     MAX_STATUS_FILE_BYTES,
@@ -154,6 +157,56 @@ def read_queue(workspace: Path) -> QueueResponse:
     except ValidationError:
         logger.warning("queue.json の型検証に失敗: %s", path, exc_info=True)
         return QueueResponse(running=False, reason=_QUEUE_CORRUPT_REASON)
+
+
+def read_evidence(workspace: Path, issue_number: int) -> EvidenceResponse:
+    """Issue の evidence manifest.json を読み EvidenceResponse へ変換する (#91).
+
+    manifest が不在/壊れでも例外を投げず、空の EvidenceResponse を返す。各
+    item には配信エンドポイント (/api/issues/{n}/evidence/{file}) への url を組む。
+
+    Args:
+        workspace: ワークスペースのルートパス。
+        issue_number: Issue 番号。
+
+    Returns:
+        EvidenceResponse。
+    """
+    manifest_path = evidence_dir(workspace, issue_number) / "manifest.json"
+    if not manifest_path.exists():
+        return EvidenceResponse()
+    try:
+        raw = json.loads(read_text_capped(manifest_path, MAX_STATUS_FILE_BYTES))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("evidence manifest の読み取り/パースに失敗: %s", manifest_path, exc_info=True)
+        return EvidenceResponse()
+    if not isinstance(raw, dict):
+        return EvidenceResponse()
+
+    items: list[EvidenceItemResponse] = []
+    for entry in raw.get("items", []):
+        if not isinstance(entry, dict):
+            continue
+        file = str(entry.get("file", ""))
+        if not file:
+            continue
+        items.append(
+            EvidenceItemResponse(
+                id=str(entry.get("id", "")),
+                kind=str(entry.get("kind", "")),
+                title=str(entry.get("title", "")),
+                url=f"/api/issues/{issue_number}/evidence/{file}",
+                viewport=entry.get("viewport"),
+                created_at=entry.get("created_at") or None,
+            )
+        )
+    notes = [str(n) for n in raw.get("notes", []) if isinstance(n, str)]
+    generated_at = raw.get("generated_at")
+    return EvidenceResponse(
+        generated_at=generated_at if isinstance(generated_at, str) else None,
+        items=items,
+        notes=notes,
+    )
 
 
 # 人間の承認/レビュー待ちとして扱うフェーズ (#88 承認待ち一覧)。

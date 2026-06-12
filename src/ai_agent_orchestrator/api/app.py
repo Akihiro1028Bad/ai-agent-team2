@@ -26,6 +26,7 @@ from ai_agent_orchestrator.api.readers import (
     merge_activity,
     read_agent_logs,
     read_approvals,
+    read_evidence,
     read_health,
     read_issue_events,
     read_issue_summaries,
@@ -42,6 +43,7 @@ from ai_agent_orchestrator.api.schemas import (
     DiffFile,
     DiffResponse,
     EventRecord,
+    EvidenceResponse,
     HealthResponse,
     IssueDetailResponse,
     IssueSummaryResponse,
@@ -82,6 +84,13 @@ if TYPE_CHECKING:
     from ai_agent_orchestrator.models import IssueState
 
 logger = logging.getLogger(__name__)
+
+# エビデンスファイルの拡張子 → media_type マッピング (#91)。未知は octet-stream。
+_EVIDENCE_MEDIA_TYPES: dict[str, str] = {
+    ".png": "image/png",
+    ".webm": "video/webm",
+    ".txt": "text/plain; charset=utf-8",
+}
 
 
 class _DiffClient(Protocol):
@@ -361,6 +370,39 @@ def create_app(settings: AppSettings) -> FastAPI:
         states = load_states(workspace)
         _state_repo, state = _resolve_issue(states, issue_number, repo)
         return build_design_response(state.plan_json)
+
+    @app.get("/api/issues/{issue_number}/evidence", response_model=EvidenceResponse)
+    async def get_issue_evidence(issue_number: int) -> EvidenceResponse:
+        """Issue のエビデンス manifest を返す (#91).
+
+        manifest が不在/壊れでも 200 で空の EvidenceResponse を返す。各 item の
+        url はファイル配信エンドポイントへの相対 URL。
+        """
+        return read_evidence(workspace, issue_number)
+
+    @app.get("/api/issues/{issue_number}/evidence/{filename}")
+    async def get_issue_evidence_file(issue_number: int, filename: str) -> Response:
+        """エビデンスファイル (スクショ/録画/ログ) を配信する (#91).
+
+        パストラバーサルを多層で防ぐ: ベース名以外/``..`` 含みは 404、resolve 後に
+        evidence ディレクトリ配下にあることを確認する。不在も 404。
+        """
+        from fastapi.responses import FileResponse
+
+        from ai_agent_orchestrator.evidence.paths import evidence_dir
+
+        # ベース名のみ許可 (サブディレクトリ・トラバーサルを拒否)
+        if filename != Path(filename).name or ".." in filename:
+            raise HTTPException(status_code=404, detail="Evidence file not found")
+        ev_dir = evidence_dir(workspace, issue_number).resolve()
+        target = (ev_dir / filename).resolve()
+        if ev_dir not in target.parents:
+            raise HTTPException(status_code=404, detail="Evidence file not found")
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="Evidence file not found")
+
+        media_type = _EVIDENCE_MEDIA_TYPES.get(target.suffix.lower(), "application/octet-stream")
+        return FileResponse(path=str(target), media_type=media_type)
 
     @app.post("/api/issues/{issue_number}/review", response_model=ReviewResponse)
     async def post_issue_review(

@@ -19,6 +19,10 @@ dependencies = [
     "uvicorn>=0.34",
 ]
 
+[project.optional-dependencies]
+# エビデンス生成 (#91)。UI スクショ・録画を取得する場合のみ導入する。
+evidence = ["playwright>=1.49"]
+
 [project.scripts]
 ai-agent = "ai_agent_orchestrator.cli:app"
 

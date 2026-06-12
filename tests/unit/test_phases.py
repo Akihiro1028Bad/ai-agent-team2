@@ -787,6 +787,72 @@ class TestImplementExecutor:
         state = mock_sm.get_state(1)
         assert state.pr_number == 42
 
+    async def test_collect_evidence_called_in_finalize(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """_finalize から注入された evidence_collector.collect が呼ばれる。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="PR #42 を作成しました",
+            tool_uses=[],
+            cost_usd=3.0,
+            duration_sec=120.0,
+        )
+        mock_context._read_impl_plan = AsyncMock(return_value=None)
+
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
+
+        executor = ImplementExecutor(
+            mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+        )
+        collector = AsyncMock()
+        executor.evidence_collector = collector
+
+        await executor.execute(_make_request(phase="implement"))
+
+        collector.collect.assert_awaited_once()
+
+    async def test_finalize_continues_when_evidence_fails(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """evidence_collector が例外を投げても PR 作成・遷移は継続する。"""
+        mock_runner.run.return_value = AgentResult(
+            session_id="s1",
+            output="PR #42 を作成しました",
+            tool_uses=[],
+            cost_usd=3.0,
+            duration_sec=120.0,
+        )
+        mock_context._read_impl_plan = AsyncMock(return_value=None)
+
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
+
+        executor = ImplementExecutor(
+            mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+        )
+        collector = AsyncMock()
+        collector.collect.side_effect = RuntimeError("boom")
+        executor.evidence_collector = collector
+
+        await executor.execute(_make_request(phase="implement"))
+
+        # エビデンス失敗を握り潰し review へ遷移する
+        mock_sm.transition.assert_called_with(("org/app", 1), "review")
+
 
 # ---------------------------------------------------------------------------
 # FixExecutor
