@@ -40,6 +40,14 @@ export function CommandPalette() {
   const [q, setQ] = useState("");
   const [cursor, setCursor] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
+
+  // 検索語 q が変わったらハイライト位置をリセットする
+  // (effect 内 setState を避ける set-state-during-render パターン)。
+  const [cursorResetKey, setCursorResetKey] = useState(q);
+  if (cursorResetKey !== q) {
+    setCursorResetKey(q);
+    setCursor(0);
+  }
   const inputRef = useRef<HTMLInputElement>(null);
 
   const allItems = useMemo<PaletteItem[]>(
@@ -100,8 +108,6 @@ export function CommandPalette() {
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
-
-  useEffect(() => setCursor(0), [q]);
 
   return (
     <>

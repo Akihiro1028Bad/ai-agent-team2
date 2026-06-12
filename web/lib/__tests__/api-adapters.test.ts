@@ -90,17 +90,17 @@ describe("adaptEvent", () => {
   });
 
   it("event 文字列から kind を判定する", () => {
-    expect(adaptEvent(ev("ci_result"), 0).kind).toBe("ci");
-    expect(adaptEvent(ev("phase_completed"), 0).kind).toBe("phase");
-    expect(adaptEvent(ev("plan_comment_added"), 0).kind).toBe("comment");
-    expect(adaptEvent(ev("impl_pr_approved"), 0).kind).toBe("gate");
-    expect(adaptEvent(ev("ci_failure"), 0).kind).toBe("error");
+    expect(adaptEvent(ev("ci_result")).kind).toBe("ci");
+    expect(adaptEvent(ev("phase_completed")).kind).toBe("phase");
+    expect(adaptEvent(ev("plan_comment_added")).kind).toBe("comment");
+    expect(adaptEvent(ev("impl_pr_approved")).kind).toBe("gate");
+    expect(adaptEvent(ev("ci_failure")).kind).toBe("error");
   });
 
   it("data.title 優先・無ければ event を人間表記化、cost を拾う", () => {
-    expect(adaptEvent(ev("phase_completed", { title: "実装完了" }), 0).title).toBe("実装完了");
-    expect(adaptEvent(ev("phase_completed"), 0).title).toBe("phase completed");
-    expect(adaptEvent(ev("phase_completed", { cost_usd: 0.5 }), 0).cost).toBe(0.5);
+    expect(adaptEvent(ev("phase_completed", { title: "実装完了" })).title).toBe("実装完了");
+    expect(adaptEvent(ev("phase_completed")).title).toBe("phase completed");
+    expect(adaptEvent(ev("phase_completed", { cost_usd: 0.5 })).cost).toBe(0.5);
   });
 });
 

@@ -205,6 +205,7 @@ export function adaptIssueSummary(a: ApiIssueSummary): IssueSummary {
     status: a.status,
     costUsd: a.cost_usd,
     prNumber: a.pr_number ?? undefined,
+    designPrNumber: a.design_pr_number ?? undefined,
     branch: a.branch_head_sha ? a.branch_head_sha.slice(0, 7) : undefined,
     updated: formatRelative(a.updated_at),
     needsHuman: a.status === "waiting" ? "承認・回答待ち" : undefined,
@@ -241,10 +242,12 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-export function adaptEvent(a: ApiEventRecord, index: number): IssueEvent {
+export function adaptEvent(a: ApiEventRecord): IssueEvent {
   const data = a.data ?? {};
   return {
-    id: `${a.ts}-${index}`,
+    // ポーリングごとに安定する内容由来の id (既読状態の保持に必要)。
+    // index 由来だと新着で順序がずれて id が変わってしまう。
+    id: `${a.issue ?? ""}:${a.ts}:${a.event}`,
     at: formatRelative(a.ts),
     kind: eventKind(a.event),
     title: asString(data.title) ?? humanizeEvent(a.event),

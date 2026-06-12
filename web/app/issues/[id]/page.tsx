@@ -1,26 +1,69 @@
+"use client";
+
+import { useCallback } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
-import { getIssue } from "@/lib/mock";
-import { getDesignReview } from "@/lib/design-review";
-import { getPrDiff } from "@/lib/diff";
-import { getErrorInfo } from "@/lib/errors";
-import { getLogs } from "@/lib/logs";
+import { api } from "@/lib/api";
+import { usePolling } from "@/lib/hooks";
 import { Money, StatusPill, TypeTag, eventIcon, phaseAccent } from "@/components/ui";
 import { PhaseRail } from "@/components/PhaseRail";
 import { ErrorPanel } from "@/components/ErrorPanel";
 import { IssueControls } from "@/components/IssueControls";
 import { LogViewer } from "@/components/LogViewer";
+import { ConnectionBanner } from "@/components/ConnectionBanner";
+import { ComingSoon } from "@/components/ComingSoon";
 import { IconArrow, IconCheck, IconDiff, IconExternal, IconGate } from "@/components/icons";
+import type { ApiError } from "@/lib/api";
 
-export default async function IssueDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const issue = getIssue(Number(id));
-  const hasReview = getDesignReview(Number(id)) !== null;
-  const prDiff = getPrDiff(Number(id));
-  const logs = getLogs(Number(id));
-  const errorInfo = getErrorInfo(Number(id));
+export default function IssueDetailPage() {
+  const params = useParams();
+  const id = Number(params.id);
+
+  const fetcher = useCallback(
+    (signal: AbortSignal) => api.getIssue(id, signal),
+    [id],
+  );
+
+  const { data: issue, error, loading } = usePolling(fetcher, 5000);
+
+  // 実 API の PR 番号で導線の表示を判定する (差分/設計レビューへのリンク)。
+  const hasPr = issue?.prNumber != null;
+  const hasReview = issue?.designPrNumber != null;
+
+  if (loading && !issue) {
+    return (
+      <div className="mx-auto max-w-[1100px]">
+        <ConnectionBanner error={error} />
+        <p style={{ color: "var(--color-ink-faint)" }}>読み込み中…</p>
+      </div>
+    );
+  }
+
+  const is404 = (error as ApiError | undefined)?.status === 404;
+  if (is404 || (!issue && !loading)) {
+    return (
+      <div className="mx-auto max-w-[1100px]">
+        <ConnectionBanner error={error} />
+        <p style={{ color: "var(--color-ink-dim)" }}>Issue が見つかりません</p>
+      </div>
+    );
+  }
+
+  if (!issue) {
+    return (
+      <div className="mx-auto max-w-[1100px]">
+        <ConnectionBanner error={error} />
+        <p style={{ color: "var(--color-ink-faint)" }}>読み込み中…</p>
+      </div>
+    );
+  }
+
+  const errorEvents = issue.events.filter((ev) => ev.kind === "error");
 
   return (
     <div className="mx-auto max-w-[1100px]">
+      <ConnectionBanner error={error} />
+
       <Link href="/" className="inline-flex items-center gap-1.5 text-[12.5px]" style={{ color: "var(--color-ink-dim)" }}>
         <IconArrow width={13} height={13} className="rotate-180" /> ダッシュボード
       </Link>
@@ -32,14 +75,15 @@ export default async function IssueDetailPage({ params }: { params: Promise<{ id
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-[12px]" style={{ color: "var(--color-ink-faint)" }}>{issue.repo}#{issue.number}</span>
               <TypeTag type={issue.type} />
-              {issue.prNumber && (
+              {issue.prNumber != null && (
                 <a href="#" className="inline-flex items-center gap-1 font-mono text-[11px]" style={{ color: "var(--color-cyan)" }}>
                   PR #{issue.prNumber} <IconExternal width={11} height={11} />
                 </a>
               )}
             </div>
             <h1 className="mt-2 text-xl font-semibold tracking-tight sm:text-2xl">{issue.title}</h1>
-            <p className="mt-2 max-w-2xl text-[13.5px] leading-relaxed" style={{ color: "var(--color-ink-dim)" }}>{issue.body}</p>
+            {/* Issue 本文は読み取り API 非提供 */}
+            <ComingSoon title="Issue 本文" note="読み取り API 未提供（GitHub 本文は別途）" />
           </div>
           <div className="flex flex-col items-end gap-2">
             <StatusPill status={issue.status} />
@@ -56,10 +100,10 @@ export default async function IssueDetailPage({ params }: { params: Promise<{ id
 
         <IssueControls issue={issue.number} status={issue.status} phase={issue.phase} />
 
-        {prDiff && (
+        {hasPr && (
           <Link href={`/issues/${id}/diff`} className="mt-4 flex items-center justify-between rounded-xl border px-4 py-3 transition-colors" style={{ borderColor: "color-mix(in srgb, var(--color-cyan) 32%, transparent)", background: "color-mix(in srgb, var(--color-cyan) 7%, transparent)" }}>
             <span className="inline-flex items-center gap-2 text-[13px]" style={{ color: "var(--color-cyan)" }}>
-              <IconDiff width={15} height={15} /> PR #{prDiff.pr} の差分を見る（{prDiff.files.length} files, +{prDiff.files.reduce((s, f) => s + f.add, 0)} −{prDiff.files.reduce((s, f) => s + f.del, 0)}）
+              <IconDiff width={15} height={15} /> PR #{issue.prNumber} の差分を見る
             </span>
             <IconArrow width={14} height={14} style={{ color: "var(--color-cyan)" }} />
           </Link>
@@ -74,7 +118,7 @@ export default async function IssueDetailPage({ params }: { params: Promise<{ id
           </Link>
         )}
 
-        {issue.needsHuman && (
+        {issue.needsHuman != null && (
           <Link href="/approvals" className="mt-4 flex items-center justify-between rounded-xl border px-4 py-3" style={{ borderColor: "color-mix(in srgb, var(--color-amber) 35%, transparent)", background: "color-mix(in srgb, var(--color-amber) 8%, transparent)" }}>
             <span className="inline-flex items-center gap-2 text-[13px]" style={{ color: "var(--color-amber)" }}>
               <span className="block h-1.5 w-1.5 rounded-full" style={{ background: "var(--color-amber)" }} /> {issue.needsHuman}
@@ -84,43 +128,45 @@ export default async function IssueDetailPage({ params }: { params: Promise<{ id
         )}
       </div>
 
-      {errorInfo && <ErrorPanel info={errorInfo} />}
+      {errorEvents.length > 0 && <ErrorPanel events={errorEvents} />}
 
-      {logs.length > 0 && (
-        <section className="rise mt-5" style={{ animationDelay: "60ms" }}>
-          <h2 className="mb-3 text-[13px] font-semibold">ライブ実行ログ</h2>
-          <LogViewer lines={logs} live={issue.status === "running"} />
-        </section>
-      )}
+      <section className="rise mt-5" style={{ animationDelay: "60ms" }}>
+        <h2 className="mb-3 text-[13px] font-semibold">ライブ実行ログ</h2>
+        <LogViewer issueNumber={id} live={issue.status === "running"} />
+      </section>
 
       <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-[1fr_360px]">
         {/* timeline */}
         <section className="rise" style={{ animationDelay: "80ms" }}>
           <h2 className="mb-3 text-[13px] font-semibold">タイムライン</h2>
           <div className="panel p-4">
-            <ol className="relative ml-1 flex flex-col gap-0.5 border-l pl-5" style={{ borderColor: "var(--color-line)" }}>
-              {issue.events.map((ev) => {
-                const { icon: Icon, color } = eventIcon(ev.kind);
-                return (
-                  <li key={ev.id} className="relative py-2.5">
-                    <span className="absolute -left-[27px] top-3 grid h-5 w-5 place-items-center rounded-full border" style={{ color, borderColor: "var(--color-line-2)", background: "var(--color-panel)" }}>
-                      <Icon width={11} height={11} />
-                    </span>
-                    <div className="flex items-baseline justify-between gap-3">
-                      <p className="text-[13.5px]">{ev.title}</p>
-                      <span className="shrink-0 font-mono text-[10px]" style={{ color: "var(--color-ink-faint)" }}>{ev.at}</span>
-                    </div>
-                    {ev.detail && <p className="mt-0.5 text-[12.5px]" style={{ color: "var(--color-ink-faint)" }}>{ev.detail}</p>}
-                  </li>
-                );
-              })}
-            </ol>
+            {issue.events.length === 0 ? (
+              <p className="text-[13px]" style={{ color: "var(--color-ink-faint)" }}>イベントはまだありません。</p>
+            ) : (
+              <ol className="relative ml-1 flex flex-col gap-0.5 border-l pl-5" style={{ borderColor: "var(--color-line)" }}>
+                {issue.events.map((ev) => {
+                  const { icon: Icon, color } = eventIcon(ev.kind);
+                  return (
+                    <li key={ev.id} className="relative py-2.5">
+                      <span className="absolute -left-[27px] top-3 grid h-5 w-5 place-items-center rounded-full border" style={{ color, borderColor: "var(--color-line-2)", background: "var(--color-panel)" }}>
+                        <Icon width={11} height={11} />
+                      </span>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <p className="text-[13.5px]">{ev.title}</p>
+                        <span className="shrink-0 font-mono text-[10px]" style={{ color: "var(--color-ink-faint)" }}>{ev.at}</span>
+                      </div>
+                      {ev.detail != null && <p className="mt-0.5 text-[12.5px]" style={{ color: "var(--color-ink-faint)" }}>{ev.detail}</p>}
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
           </div>
         </section>
 
-        {/* right: subtasks + design */}
+        {/* right: subtasks */}
         <section className="rise flex flex-col gap-5" style={{ animationDelay: "140ms" }}>
-          {issue.subtasks && (
+          {issue.subtasks != null && issue.subtasks.length > 0 && (
             <div>
               <h2 className="mb-3 text-[13px] font-semibold">サブタスク</h2>
               <div className="panel p-2">
@@ -136,7 +182,6 @@ export default async function IssueDetailPage({ params }: { params: Promise<{ id
               </div>
             </div>
           )}
-
         </section>
       </div>
     </div>

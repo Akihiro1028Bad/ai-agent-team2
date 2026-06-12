@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, type SVGProps } from "react";
-import { gates, orchestrator } from "@/lib/mock";
-import { healthItems } from "@/lib/health";
-import { queueEntries } from "@/lib/queue";
+import { useCallback, useState, type SVGProps } from "react";
+import { api, adaptHealth } from "@/lib/api";
+import { usePolling } from "@/lib/hooks";
+import type { HealthItem } from "@/lib/health";
 import { CommandPalette } from "./CommandPalette";
 import { NotificationBell } from "./NotificationBell";
 import {
@@ -26,19 +26,34 @@ interface NavItem {
   label: string;
   icon: (p: SVGProps<SVGSVGElement>) => React.ReactElement;
   exact?: boolean;
-  badge?: number;
 }
 
 const NAV: NavItem[] = [
   { href: "/", label: "ダッシュボード", icon: IconGrid, exact: true },
-  { href: "/approvals", label: "承認待ち", icon: IconInbox, badge: gates.length },
-  { href: "/queue", label: "実行キュー", icon: IconLayers, badge: queueEntries.length },
+  { href: "/approvals", label: "承認待ち", icon: IconInbox },
+  { href: "/queue", label: "実行キュー", icon: IconLayers },
   { href: "/timeline", label: "タイムライン", icon: IconGantt },
   { href: "/costs", label: "コスト", icon: IconDollar },
   { href: "/knowledge", label: "ナレッジ", icon: IconBrain },
   { href: "/health", label: "ヘルスモニタ", icon: IconHeart },
   { href: "/settings", label: "制御・設定", icon: IconSliders },
 ];
+
+interface HealthSummary {
+  color: string;
+  label: string;
+}
+
+/** ヘルス項目から最悪ステータスの概況 (色・ラベル) を導く。 */
+function summarizeHealth(items: HealthItem[], offline: boolean): HealthSummary {
+  if (offline) return { color: "var(--color-rose)", label: "OFFLINE" };
+  if (items.length === 0) return { color: "var(--color-ink-faint)", label: "…" };
+  const errors = items.filter((h) => h.status === "error").length;
+  const warns = items.filter((h) => h.status === "warn").length;
+  if (errors > 0) return { color: "var(--color-rose)", label: `${errors} ERROR` };
+  if (warns > 0) return { color: "var(--color-amber)", label: `${warns} WARN` };
+  return { color: "var(--color-signal)", label: "ALL GO" };
+}
 
 function Brand() {
   return (
@@ -73,11 +88,6 @@ function NavList({ pathname, onNav }: { pathname: string; onNav?: () => void }) 
             {active && <span className="absolute left-0 top-1/2 h-5 -translate-y-1/2 w-[3px] rounded-r bg-signal" />}
             <item.icon style={{ color: active ? "var(--color-signal)" : "currentColor" }} />
             <span>{item.label}</span>
-            {"badge" in item && item.badge ? (
-              <span className="ml-auto rounded-full bg-amber/15 px-1.5 py-0.5 font-mono text-[10px] text-amber" style={{ color: "var(--color-amber)", background: "color-mix(in srgb, var(--color-amber) 15%, transparent)" }}>
-                {item.badge}
-              </span>
-            ) : null}
           </Link>
         );
       })}
@@ -85,21 +95,7 @@ function NavList({ pathname, onNav }: { pathname: string; onNav?: () => void }) 
   );
 }
 
-const worstHealth = healthItems.some((h) => h.status === "error")
-  ? "error"
-  : healthItems.some((h) => h.status === "warn")
-    ? "warn"
-    : "ok";
-const healthColor =
-  worstHealth === "error" ? "var(--color-rose)" : worstHealth === "warn" ? "var(--color-amber)" : "var(--color-signal)";
-const healthLabel =
-  worstHealth === "error"
-    ? `${healthItems.filter((h) => h.status === "error").length} ERROR`
-    : worstHealth === "warn"
-      ? `${healthItems.filter((h) => h.status === "warn").length} WARN`
-      : "ALL GO";
-
-function SidebarInner({ pathname, onNav }: { pathname: string; onNav?: () => void }) {
+function SidebarInner({ pathname, health, onNav }: { pathname: string; health: HealthSummary; onNav?: () => void }) {
   return (
     <div className="flex h-full flex-col gap-6 p-5">
       <Brand />
@@ -108,8 +104,8 @@ function SidebarInner({ pathname, onNav }: { pathname: string; onNav?: () => voi
         <Link href="/health" onClick={onNav} className="panel block p-3 transition-colors hover:border-[var(--color-line-2)]">
           <div className="eyebrow mb-2">system health</div>
           <div className="flex items-center gap-2">
-            <span className="block h-2 w-2 rounded-full" style={{ background: healthColor }} />
-            <span className="font-mono text-[11.5px]" style={{ color: healthColor }}>{healthLabel}</span>
+            <span className="block h-2 w-2 rounded-full" style={{ background: health.color }} />
+            <span className="font-mono text-[11.5px]" style={{ color: health.color }}>{health.label}</span>
             <span className="ml-auto font-mono text-[10px]" style={{ color: "var(--color-ink-faint)" }}>詳細 →</span>
           </div>
         </Link>
@@ -121,13 +117,20 @@ function SidebarInner({ pathname, onNav }: { pathname: string; onNav?: () => voi
 export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const running = orchestrator.running;
+
+  // 稼働状態・ヘルス概況を GET /api/health にライブ接続 (#86)。
+  const healthState = usePolling(useCallback((signal: AbortSignal) => api.getHealth(signal), []), 5000);
+  const offline = healthState.error !== undefined && healthState.data === undefined;
+  const running = healthState.data?.running === true && healthState.data.stale !== true;
+  const repoCount = healthState.data?.repositories.length ?? 0;
+  const healthItems = healthState.data ? adaptHealth(healthState.data) : [];
+  const healthSummary = summarizeHealth(healthItems, offline);
 
   return (
     <div className="flex min-h-dvh">
       {/* desktop sidebar */}
       <aside className="sticky top-0 hidden h-dvh w-[248px] shrink-0 border-r lg:block" style={{ borderColor: "var(--color-line)" }}>
-        <SidebarInner pathname={pathname} />
+        <SidebarInner pathname={pathname} health={healthSummary} />
       </aside>
 
       {/* mobile slide-over */}
@@ -138,7 +141,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <button onClick={() => setOpen(false)} className="absolute right-3 top-4 text-ink-dim" aria-label="閉じる">
               <IconX />
             </button>
-            <SidebarInner pathname={pathname} onNav={() => setOpen(false)} />
+            <SidebarInner pathname={pathname} health={healthSummary} onNav={() => setOpen(false)} />
           </aside>
         </div>
       )}
@@ -155,10 +158,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <span className="block h-2 w-2 rounded-full" style={{ background: running ? "var(--color-signal)" : "var(--color-ink-faint)" }} />
             </span>
             <span className="font-mono text-[12px]" style={{ color: running ? "var(--color-ink)" : "var(--color-ink-dim)" }}>
-              {running ? "RUNNING" : "STOPPED"}
+              {offline ? "OFFLINE" : running ? "RUNNING" : "STOPPED"}
             </span>
             <span className="hidden font-mono text-[11px] text-ink-faint sm:inline" style={{ color: "var(--color-ink-faint)" }}>
-              · {orchestrator.account} · poll {orchestrator.pollingIntervalSec}s
+              · {repoCount} repos
             </span>
           </div>
 

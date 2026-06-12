@@ -1,7 +1,13 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+
+// クライアントマウント検出 (SSR では false、ハイドレーション後 true)。
+// effect 内 setState を避けるため useSyncExternalStore を使う。
+const subscribe = () => () => {};
+const getClientSnapshot = () => true;
+const getServerSnapshot = () => false;
 
 /**
  * body 直下へポータルする。
@@ -10,8 +16,7 @@ import { createPortal } from "react-dom";
  * オーバーレイ（モーダル・トースト）は必ずこれを経由する。
  */
 export function Portal({ children }: { children: ReactNode }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useSyncExternalStore(subscribe, getClientSnapshot, getServerSnapshot);
   if (!mounted) return null;
   return createPortal(children, document.body);
 }
