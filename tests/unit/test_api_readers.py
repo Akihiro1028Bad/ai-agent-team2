@@ -415,3 +415,19 @@ def test_read_health_non_dict_json(tmp_path: Path) -> None:
     result = read_health(tmp_path)
     assert result.running is False
     assert result.reason is not None
+
+
+def test_read_health_type_corrupted_dict(tmp_path: Path) -> None:
+    """有効な JSON dict だが型が壊れている → 例外を投げず running=False に倒す.
+
+    `running` キー欠落や `queue` が dict でない等、model_validate が
+    ValidationError を投げ得るケースでも、500 ではなく「停止中」を返す
+    (#97 受け入れ条件「停止中でも 200 で応答」/ 規約「file content を信頼しない」)。
+    """
+    now = datetime.now(UTC).isoformat()
+    # running 欠落 + queue が dict でない (本来 ValidationError)。
+    payload: dict[str, object] = {"ts": now, "queue": "broken"}
+    _write_health(tmp_path, payload)
+    result = read_health(tmp_path)
+    assert result.running is False
+    assert result.reason is not None

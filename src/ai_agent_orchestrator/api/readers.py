@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from ai_agent_orchestrator.api.schemas import (
     AgentLogPage,
     AgentLogRecord,
@@ -92,7 +94,13 @@ def read_health(workspace: Path, *, stale_after_sec: float = 900.0) -> HealthRes
     parsed_ts = _parse_health_ts(raw)
     is_stale = parsed_ts is None or (datetime.now(UTC) - parsed_ts).total_seconds() > stale_after_sec
 
-    response = HealthResponse.model_validate(raw)
+    try:
+        response = HealthResponse.model_validate(raw)
+    except ValidationError:
+        # 有効な JSON dict だが型が壊れている (running 欠落・queue が dict でない等)。
+        # file content は信頼しない方針に従い、500 ではなく「停止中」に倒す。
+        logger.warning("health.json の型検証に失敗: %s", path, exc_info=True)
+        return HealthResponse(running=False, stale=False, reason=_HEALTH_ABSENT_REASON)
     if is_stale:
         # 統計値はファイル内容を引き継ぎつつ、running=False / stale=True に倒す。
         return response.model_copy(update={"running": False, "stale": True, "reason": _HEALTH_STALE_REASON})
