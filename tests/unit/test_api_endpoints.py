@@ -567,6 +567,32 @@ def test_reply_unknown_issue_returns_404(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+def test_reply_non_hearing_phase_returns_409(client: TestClient, workspace: Path) -> None:
+    """ヒアリング以外の相 (review 等) への回答投稿は 409 で拒否する.
+
+    bot アカウント名義の非マーカーコメントは承認者コメントとして検知されるため、
+    review 相への投稿を許すと LGTM 偽装で承認ゲートを素通りできてしまう (#102 の
+    承認者検証の迂回防止)。
+    """
+    _write_state(
+        workspace,
+        {
+            "o/r:1": _state_entry(number=1, repo="o/r", phase="review", pr_number=42),
+            "o/r:2": _state_entry(number=2, repo="o/r", phase="implement"),
+        },
+    )
+    fake = _FakeCommentClient()
+
+    async def factory(owner: str, repo: str) -> _FakeCommentClient:
+        return fake
+
+    client.app.state.github_client_factory = factory  # type: ignore[attr-defined]
+
+    assert client.post("/api/issues/1/reply", json={"text": "LGTM"}).status_code == 409
+    assert client.post("/api/issues/2/reply", json={"text": "x"}).status_code == 409
+    assert fake.calls == []
+
+
 def test_reply_empty_text_returns_422(client: TestClient, workspace: Path) -> None:
     _write_state(workspace, {"o/r:1": _state_entry(number=1, repo="o/r", phase="clarify-wait")})
     assert client.post("/api/issues/1/reply", json={"text": ""}).status_code == 422

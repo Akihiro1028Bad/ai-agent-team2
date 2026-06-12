@@ -318,9 +318,21 @@ def create_app(settings: AppSettings) -> FastAPI:
 
         bot マーカーを付けずに投稿し、poller の人間コメント検知フローに乗せる
         (control.jsonl は経由しない)。不在 404、GitHub 障害 502。
+
+        ヒアリング相 (clarify / clarify-wait) 以外は 409 で拒否する: bot アカウント
+        名義の非マーカーコメントは承認者コメントとして検知され得るため、review 相へ
+        の投稿を許すと LGTM 偽装で承認ゲートを迂回できてしまう (#102 の承認者検証
+        と整合させる)。
         """
+        from ai_agent_orchestrator.models import Phase
+
         states = load_states(workspace)
-        state_repo, _state = _resolve_issue(states, issue_number, repo)
+        state_repo, state = _resolve_issue(states, issue_number, repo)
+        if state.phase not in (Phase.CLARIFY, Phase.CLARIFY_WAIT):
+            raise HTTPException(
+                status_code=409,
+                detail="Reply is only allowed while the issue is awaiting hearing answers",
+            )
         owner, _, name = state_repo.partition("/")
         factory: Callable[[str, str], Awaitable[_CommentClient]] = app.state.github_client_factory
         from ai_agent_orchestrator.config.settings import RepositoryConfig
