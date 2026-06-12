@@ -242,12 +242,15 @@ export function CommentableMarkdown({ children, prefix }: { children: string; pr
   const base = useId().replace(/[:]/g, "");
   let i = 0;
   const wrap = (tag: keyof HTMLElementTagNameMap, label: string) =>
-    function Block({ node: _node, ...props }: { node?: unknown; children?: ReactNode }) {
+    function Block(props: { node?: unknown; children?: ReactNode }) {
       const id = `${prefix}-${base}-${i++}`;
       const El = tag as "p";
+      // react-markdown が渡す `node` は DOM 属性ではないため除外する。
+      const elementProps = { ...props };
+      delete elementProps.node;
       return (
         <Commentable anchor={id} label={label}>
-          <El {...props} />
+          <El {...elementProps} />
         </Commentable>
       );
     };

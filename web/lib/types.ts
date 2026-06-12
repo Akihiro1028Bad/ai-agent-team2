@@ -49,6 +49,7 @@ export interface IssueSummary {
   status: RunStatus;
   costUsd: number;
   prNumber?: number;
+  designPrNumber?: number;
   branch?: string;
   updated: string;
   needsHuman?: string; // 人間アクションの要約（あれば）
