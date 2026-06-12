@@ -5,6 +5,7 @@ import type { DesignReview } from "@/lib/design-review";
 import { getDesignRevision } from "@/lib/diff";
 import { getEvidences } from "@/lib/evidence";
 import type { IssueType } from "@/lib/types";
+import { api, type ReviewCommentInput } from "@/lib/api";
 import { EvidenceGallery } from "./EvidenceGallery";
 import { TypeTag } from "@/components/ui";
 import { Mermaid } from "@/components/Mermaid";
@@ -33,22 +34,39 @@ function SubmitBar({ issue }: { issue: number }) {
   const points = comments.filter((c) => c.tag === "指摘").length;
   const questions = comments.filter((c) => c.tag === "質問").length;
   const [done, setDone] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
 
-  const submitReturn = () => {
-    setLocked(true);
-    setDone(
-      `レビューを提出しました → 指摘 ${points} 件で差し戻し（PLAN で再設計）` +
-        (questions ? `。質問 ${questions} 件にも回答します。` : "。"),
-    );
+  // POST /api/issues/{n}/review に実接続 (#89)。
+  // backend が comments の有無/種別で承認/差し戻し/質問を分類するため、
+  // 送信内容（全コメント or 空）だけ渡し、結果メッセージは outcome で出し分ける。
+  const OUTCOME_MESSAGE: Record<string, string> = {
+    approved: `#${issue} の設計を承認しました → 実装を開始します。`,
+    changes_requested: `指摘で差し戻しました → PLAN で再設計します（指摘 ${points} 件）。`,
+    questions: `質問を送信しました → エージェントが回答します（質問 ${questions} 件）。`,
   };
-  const submitQuestions = () => {
-    setLocked(true);
-    setDone(`質問 ${questions} 件を送信しました → エージェントが回答します。回答後に再レビュー。`);
+
+  const submit = async (toSend: ReviewCommentInput[]) => {
+    setSending(true);
+    setError(null);
+    try {
+      const actor = await api.getDefaultActor();
+      const outcome = await api.postReview(issue, toSend, actor);
+      setLocked(true);
+      setDone(OUTCOME_MESSAGE[outcome] ?? "レビューを提出しました。");
+    } catch {
+      setError("提出に失敗しました。少し待ってから再試行してください。");
+    } finally {
+      setSending(false);
+    }
   };
-  const approve = () => {
-    setLocked(true);
-    setDone(`#${issue} の設計を承認しました → 実装を開始`);
-  };
+
+  const toInput = (): ReviewCommentInput[] =>
+    comments.map((c) => ({ anchor: c.anchor, anchorLabel: c.anchorLabel, tag: c.tag, body: c.body }));
+
+  const submitReturn = () => void submit(toInput());
+  const submitQuestions = () => void submit(toInput());
+  const approve = () => void submit([]);
 
   return (
     <div className="sticky bottom-4 z-20 mt-6">
@@ -64,17 +82,20 @@ function SubmitBar({ issue }: { issue: number }) {
               <span className="font-mono" style={{ color: points ? "var(--color-rose)" : "var(--color-ink-faint)" }}>指摘 {points}</span>
               <span className="font-mono" style={{ color: questions ? "var(--color-cyan)" : "var(--color-ink-faint)" }}>質問 {questions}</span>
             </div>
-            <div className="ml-auto flex flex-wrap gap-2.5">
+            <div className="ml-auto flex flex-wrap items-center gap-2.5">
+              {error && (
+                <span className="self-center text-[12px]" style={{ color: "var(--color-rose)" }}>{error}</span>
+              )}
               {points > 0 ? (
-                <button onClick={submitReturn} className="inline-flex items-center gap-1.5 rounded-lg px-5 py-2 text-[13px] font-semibold" style={{ color: "#0b0d10", background: "var(--color-rose)" }}>
-                  <IconArrow width={14} height={14} /> 差し戻して提出（{points + questions}）
+                <button disabled={sending} onClick={submitReturn} className="inline-flex items-center gap-1.5 rounded-lg px-5 py-2 text-[13px] font-semibold disabled:opacity-40" style={{ color: "#0b0d10", background: "var(--color-rose)" }}>
+                  <IconArrow width={14} height={14} /> {sending ? "提出中…" : `差し戻して提出（${points + questions}）`}
                 </button>
               ) : questions > 0 ? (
                 <>
-                  <button onClick={submitQuestions} className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium" style={{ color: "#0b0d10", background: "var(--color-cyan)" }}>
-                    <IconArrow width={14} height={14} /> 質問を送信（{questions}）
+                  <button disabled={sending} onClick={submitQuestions} className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium disabled:opacity-40" style={{ color: "#0b0d10", background: "var(--color-cyan)" }}>
+                    <IconArrow width={14} height={14} /> {sending ? "送信中…" : `質問を送信（${questions}）`}
                   </button>
-                  <button onClick={approve} className="inline-flex items-center gap-1.5 rounded-lg px-5 py-2 text-[13px] font-semibold" style={{ color: "#0b0d10", background: "var(--color-signal)" }}>
+                  <button disabled={sending} onClick={approve} className="inline-flex items-center gap-1.5 rounded-lg px-5 py-2 text-[13px] font-semibold disabled:opacity-40" style={{ color: "#0b0d10", background: "var(--color-signal)" }}>
                     <IconCheck width={15} height={15} /> 承認
                   </button>
                 </>
@@ -83,8 +104,8 @@ function SubmitBar({ issue }: { issue: number }) {
                   <span className="hidden self-center text-[12px] sm:inline" style={{ color: "var(--color-ink-faint)" }}>
                     各部分にホバーして指摘/質問を追加できます
                   </span>
-                  <button onClick={approve} className="inline-flex items-center gap-1.5 rounded-lg px-5 py-2 text-[13px] font-semibold" style={{ color: "#0b0d10", background: "var(--color-signal)" }}>
-                    <IconCheck width={15} height={15} /> 承認
+                  <button disabled={sending} onClick={approve} className="inline-flex items-center gap-1.5 rounded-lg px-5 py-2 text-[13px] font-semibold disabled:opacity-40" style={{ color: "#0b0d10", background: "var(--color-signal)" }}>
+                    <IconCheck width={15} height={15} /> {sending ? "送信中…" : "承認"}
                   </button>
                 </>
               )}

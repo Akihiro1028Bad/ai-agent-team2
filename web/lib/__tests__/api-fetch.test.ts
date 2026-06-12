@@ -847,3 +847,98 @@ describe("eventKind 全ルール", () => {
     expect(adaptEvent({ ts: "t", issue: 1, phase: "p", event: "claude_response", data: null }).kind).toBe("agent");
   });
 });
+
+// ── 設計レビュー: getDesign / adaptDesign / postReview (#89) ──────────
+
+describe("getDesign / adaptDesign", () => {
+  it("snake_case の DesignResponse を camelCase の DesignView へ写す", async () => {
+    const { getDesign } = await import("@/lib/api");
+    const payload = {
+      present: true,
+      plan_depth: "full",
+      ui_impact: true,
+      summary: { anchor: "sum-1", text: "概要" },
+      test_cases: [{ anchor: "tc-01", text: "T1" }],
+      architecture: [{ anchor: "arch-1", text: "A1" }],
+      subtasks: [{ anchor: "st-1", id: 5, title: "ST" }],
+      reason: null,
+    };
+    vi.stubGlobal("fetch", mockFetch(true, payload));
+    const view = await getDesign(7);
+    expect(view.present).toBe(true);
+    expect(view.planDepth).toBe("full");
+    expect(view.uiImpact).toBe(true);
+    expect(view.summary).toEqual({ anchor: "sum-1", text: "概要" });
+    expect(view.testCases).toEqual([{ anchor: "tc-01", text: "T1" }]);
+    expect(view.architecture).toEqual([{ anchor: "arch-1", text: "A1" }]);
+    expect(view.subtasks).toEqual([{ anchor: "st-1", id: 5, title: "ST" }]);
+    expect(view.reason).toBeNull();
+  });
+
+  it("present=false (reason 付き) も写す", async () => {
+    const { adaptDesign } = await import("@/lib/api");
+    const view = adaptDesign({
+      present: false,
+      plan_depth: null,
+      ui_impact: null,
+      summary: null,
+      test_cases: [],
+      architecture: [],
+      subtasks: [],
+      reason: "未生成",
+    });
+    expect(view.present).toBe(false);
+    expect(view.reason).toBe("未生成");
+    expect(view.summary).toBeNull();
+  });
+});
+
+describe("postReview", () => {
+  it("DraftComment を snake_case の payload へ写して送り、outcome を返す", async () => {
+    const { postReview } = await import("@/lib/api");
+    const fetchMock = mockFetch(true, { outcome: "changes_requested", accepted: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await postReview(
+      7,
+      [{ anchor: "tc-01", anchorLabel: "ケース", tag: "指摘", body: "誤り" }],
+      "alice",
+    );
+    expect(outcome).toBe("changes_requested");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/issues/7/review");
+    const sent = JSON.parse((init as RequestInit).body as string);
+    expect(sent.actor).toBe("alice");
+    expect(sent.comments).toEqual([{ anchor: "tc-01", anchor_label: "ケース", tag: "指摘", body: "誤り" }]);
+  });
+
+  it("空コメントの承認提出で approved を返す", async () => {
+    const { postReview } = await import("@/lib/api");
+    vi.stubGlobal("fetch", mockFetch(true, { outcome: "approved", accepted: true }));
+    expect(await postReview(7, [], "alice")).toBe("approved");
+  });
+
+  it("API エラーは ApiError を投げる", async () => {
+    const { postReview } = await import("@/lib/api");
+    vi.stubGlobal("fetch", mockFetch(false, null, 404));
+    await expect(postReview(99, [], "a")).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("api.getDesign / api.postReview デリゲート", () => {
+  it("api.getDesign は getDesign に委譲する", async () => {
+    vi.stubGlobal("fetch", mockFetch(true, {
+      present: true, plan_depth: "light", ui_impact: null,
+      summary: null, test_cases: [], architecture: [], subtasks: [], reason: null,
+    }));
+    const view = await api.getDesign(3);
+    expect(view.present).toBe(true);
+    expect(view.planDepth).toBe("light");
+  });
+
+  it("api.postReview は postReview に委譲する", async () => {
+    vi.stubGlobal("fetch", mockFetch(true, { outcome: "questions", accepted: true }));
+    const outcome = await api.postReview(3, [{ anchor: "sum-1", anchorLabel: "", tag: "質問", body: "?" }], "a");
+    expect(outcome).toBe("questions");
+  });
+});
