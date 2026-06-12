@@ -426,6 +426,76 @@ export function adaptDiff(d: ApiDiffResponse): PrDiff {
   };
 }
 
+// ── キュー (#96) ──
+
+export interface ApiQueueEntry {
+  repo: string;
+  issue_number: number;
+  phase: string;
+  priority: number;
+  enqueued_at: string;
+  wait_reason: string;
+}
+
+export interface ApiQueueResponse {
+  running: boolean;
+  ts: string | null;
+  reason: string | null;
+  queued: ApiQueueEntry[];
+  active: ApiQueueEntry[];
+  paused: ApiQueueEntry[];
+  max_total: number;
+  max_per_repo: number;
+}
+
+export interface QueueRow {
+  repo: string;
+  issue: number;
+  phase: string;
+  priority: number;
+  priorityLabel: string;
+  enqueued: string;
+  reason: string;
+}
+
+export interface QueueView {
+  running: boolean;
+  reason: string | null;
+  queued: QueueRow[];
+  activeCount: number;
+  pausedCount: number;
+  maxTotal: number;
+}
+
+const PRIORITY_LABEL: Record<number, string> = { 1: "critical", 2: "high", 5: "normal", 10: "low" };
+
+function priorityLabel(priority: number): string {
+  return PRIORITY_LABEL[priority] ?? `p${priority}`;
+}
+
+function adaptQueueRow(entry: ApiQueueEntry): QueueRow {
+  return {
+    repo: entry.repo,
+    issue: entry.issue_number,
+    phase: entry.phase,
+    priority: entry.priority,
+    priorityLabel: priorityLabel(entry.priority),
+    enqueued: entry.enqueued_at ? formatRelative(entry.enqueued_at) : "",
+    reason: entry.wait_reason,
+  };
+}
+
+export function adaptQueue(q: ApiQueueResponse): QueueView {
+  return {
+    running: q.running,
+    reason: q.reason,
+    queued: q.queued.map(adaptQueueRow),
+    activeCount: q.active.length,
+    pausedCount: q.paused.length,
+    maxTotal: q.max_total,
+  };
+}
+
 // ── エンドポイント ──
 
 export const api = {
@@ -449,6 +519,8 @@ export const api = {
 
   getDiff: (n: number, signal?: AbortSignal) =>
     apiGet<ApiDiffResponse>(`/api/issues/${n}/diff`, signal).then(adaptDiff),
+
+  getQueue: (signal?: AbortSignal) => apiGet<ApiQueueResponse>("/api/queue", signal).then(adaptQueue),
 };
 
 /** SSE ストリームの URL を組み立てる (EventSource 用、相対パス)。 */
