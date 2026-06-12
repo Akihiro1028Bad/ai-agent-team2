@@ -168,6 +168,16 @@ class GitHubPoller:
         # 1サイクル内で list_pull_requests の結果をキャッシュ (state ごと)
         self._pr_cache: dict[tuple[str, str], list[PullRequestSimple]] = {}
 
+    def get_last_poll_times(self) -> dict[str, str]:
+        """各リポジトリの最終ポーリング時刻を ISO8601 文字列の辞書で返す.
+
+        内部状態 ``self._last_poll`` は変更せず、新しい dict を返す。
+
+        Returns:
+            ``{repo_key: dt.isoformat()}`` 形式の辞書。
+        """
+        return {repo_key: dt.isoformat() for repo_key, dt in self._last_poll.items()}
+
     async def start(self, event_queue: asyncio.Queue[PollEvent]) -> None:
         """ポーリングループを開始する.
 

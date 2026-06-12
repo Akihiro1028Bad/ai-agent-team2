@@ -311,3 +311,40 @@ def test_diff_github_error_detail_hides_internal_message(client: TestClient, wor
     resp = client.get("/api/issues/1/diff")
     assert resp.status_code == 502
     assert "secret-internal-url" not in resp.json()["detail"]
+
+
+# ──────────────────────────────────────
+# GET /api/health (#97)
+# ──────────────────────────────────────
+def test_get_health_absent_returns_200_stopped(client: TestClient) -> None:
+    """health.json 不在でも 200 で running=False を返す."""
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["running"] is False
+    assert body["reason"] is not None
+
+
+def test_get_health_normal_shape(client: TestClient, workspace: Path) -> None:
+    """新鮮な health.json → 200, HealthResponse 形状で running=True."""
+    from datetime import UTC, datetime
+
+    payload = {
+        "ts": datetime.now(UTC).isoformat(),
+        "running": True,
+        "queue": {"active": 0, "queued": 0, "max_total": 2},
+        "repositories": ["o/r"],
+        "rate_limit": {"remaining": 5000, "limit": 5000, "reset": 0},
+        "worktrees": 0,
+        "last_poll": {},
+        "accounts": {"github/default": True},
+    }
+    (workspace / "health.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["running"] is True
+    assert body["stale"] is False
+    assert body["queue"] == {"active": 0, "queued": 0, "max_total": 2}
+    assert body["accounts"] == {"github/default": True}

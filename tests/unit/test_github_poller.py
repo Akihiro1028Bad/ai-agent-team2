@@ -1247,3 +1247,43 @@ class TestGetIssuesWithPhaseLabelDedup:
 
         result = await poller._get_issues_with_phase_label(client, repo, "approve", ["plan-review"])
         assert [i.number for i in result] == [11]
+
+
+# ---------------------------------------------------------------------------
+# Tests: get_last_poll_times (#97)
+# ---------------------------------------------------------------------------
+
+
+class TestGetLastPollTimes:
+    """get_last_poll_times のテスト."""
+
+    def test_returns_isoformat_dict(self) -> None:
+        """_last_poll を isoformat 文字列の dict に変換して返す."""
+        client = _make_client()
+        repo = _make_repo()
+        poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
+
+        dt = datetime(2026, 6, 11, 9, 59, 30, tzinfo=UTC)
+        poller._last_poll["test-owner/test-repo"] = dt
+
+        result = poller.get_last_poll_times()
+        assert result == {"test-owner/test-repo": dt.isoformat()}
+        assert all(isinstance(v, str) for v in result.values())
+
+    def test_returns_new_dict_without_mutating_internal(self) -> None:
+        """新しい dict を返し、内部状態は変更しない."""
+        client = _make_client()
+        repo = _make_repo()
+        poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
+        poller._last_poll["a/b"] = datetime(2026, 1, 1, tzinfo=UTC)
+
+        result = poller.get_last_poll_times()
+        result["x/y"] = "tampered"
+        assert "x/y" not in poller._last_poll
+
+    def test_empty_when_no_polls(self) -> None:
+        """ポーリング履歴がなければ空 dict."""
+        client = _make_client()
+        repo = _make_repo()
+        poller = GitHubPoller(account_manager=_make_account_manager(client), repos=[repo], interval_sec=60)
+        assert poller.get_last_poll_times() == {}

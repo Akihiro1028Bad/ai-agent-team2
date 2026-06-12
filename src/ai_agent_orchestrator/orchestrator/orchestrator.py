@@ -9,7 +9,9 @@ Issue の自動処理パイプラインを駆動する。
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -416,6 +418,7 @@ class Orchestrator:
 
         # Persistence
         workspace_path = Path(settings.workspace_dir).expanduser()
+        self._health_file = workspace_path / "health.json"
         self._persistence = persistence or StatePersistence(
             state_file=workspace_path / "state.json",
         )
@@ -1058,31 +1061,171 @@ class Orchestrator:
 
         return results
 
+    async def build_health_snapshot(
+        self,
+        accounts: dict[str, bool] | None = None,
+        *,
+        lightweight: bool = False,
+    ) -> dict[str, Any]:
+        """health.json に書き出す稼働統計を構築する (#97).
+
+        各ソースは best-effort で収集し、失敗したものは None/空に倒す。
+        health.json の書き出し自体は必ず成功させるため、ここで例外は投げない。
+
+        Args:
+            accounts: health_check() の結果 (コンポーネント名→健全性)。None なら {}。
+            lightweight: True の場合、ネットワーク (rate_limit) / subprocess
+                (worktrees) の収集をスキップして None にする。停止経路で graceful
+                stop を GitHub 応答待ちでブロックさせないために使う。
+
+        Returns:
+            health.json のスキーマに沿った dict。
+        """
+        queue_status = self._task_queue.get_status()
+        snapshot: dict[str, Any] = {
+            "ts": datetime.now(UTC).isoformat(),
+            "running": self._running,
+            "queue": {
+                "active": queue_status.get("active", 0),
+                "queued": queue_status.get("queued", 0),
+                "max_total": queue_status.get("max_total", 0),
+            },
+            "repositories": [f"{r.owner}/{r.repo}" for r in self._settings.repositories],
+            "accounts": accounts or {},
+            # lightweight 時はネットワーク/subprocess を呼ばない (in-memory のみ)。
+            "rate_limit": None if lightweight else await self._collect_rate_limit(),
+            "worktrees": None if lightweight else await self._collect_worktree_count(),
+            "last_poll": self._collect_last_poll(),
+        }
+        return snapshot
+
+    async def _collect_rate_limit(self) -> dict[str, int] | None:
+        """最初の repo のレート制限を best-effort で取得する (失敗時 None)."""
+        repos = self._settings.repositories
+        if not repos:
+            return None
+        try:
+            repo = repos[0]
+            client = await self._account_manager.get_client_for_repo(repo.owner, repo.repo)
+            status = await client.get_rate_limit()
+            return {
+                "remaining": status.remaining,
+                "limit": status.limit,
+                "reset": status.reset,
+            }
+        except Exception as exc:
+            logger.warning("health snapshot: rate_limit 取得に失敗: %s", exc)
+            return None
+
+    async def _collect_worktree_count(self) -> int | None:
+        """全 repo の worktree 件数を best-effort で合算する (失敗時 None)."""
+        try:
+            total = 0
+            for repo in self._settings.repositories:
+                worktrees = await self._workspace_manager.list_worktrees(repo)
+                total += len(worktrees)
+            return total
+        except Exception as exc:
+            logger.warning("health snapshot: worktrees 取得に失敗: %s", exc)
+            return None
+
+    def _collect_last_poll(self) -> dict[str, str]:
+        """poller の最終ポーリング時刻を best-effort で取得する (失敗/未対応で {})."""
+        getter = getattr(self._poller, "get_last_poll_times", None)
+        if not callable(getter):
+            return {}
+        try:
+            result = getter()
+            if isinstance(result, dict):
+                return result
+        except Exception as exc:
+            logger.warning("health snapshot: last_poll 取得に失敗: %s", exc)
+        return {}
+
+    async def _write_health_json(self, snapshot: dict[str, Any]) -> None:
+        """health.json を atomic (tmp + replace) に書き出す (#97).
+
+        書き出し失敗は warning ログのみ。ループ/停止処理を止めない。
+
+        Args:
+            snapshot: build_health_snapshot() が返した dict。
+        """
+        try:
+            await asyncio.to_thread(self._write_health_json_sync, snapshot)
+        except Exception as exc:
+            logger.warning("health.json の書き出しに失敗: %s", exc)
+
+    def _write_health_json_sync(self, snapshot: dict[str, Any]) -> None:
+        """health.json の同期書き出し (tmp + replace)."""
+        self._health_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp_file = self._health_file.with_suffix(".tmp")
+        tmp_file.write_text(
+            json.dumps(snapshot, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tmp_file.replace(self._health_file)  # atomic rename
+
+    async def _emit_health_snapshot(self, *, running: bool | None = None, lightweight: bool = False) -> None:
+        """health_check 実行 → snapshot 構築 → health.json 書き出し (best-effort).
+
+        Args:
+            running: True/False を渡すと snapshot の running を上書きする
+                (停止直前の running=False 書き出し用)。None なら現在値。
+            lightweight: True の場合、health_check (アカウント検証ネットワーク) も
+                rate_limit / worktrees の収集もスキップする。停止経路で graceful
+                stop を GitHub 応答待ちでブロックさせないために使う。
+        """
+        if lightweight:
+            results: dict[str, bool] = {}
+        else:
+            try:
+                results = await self.health_check()
+            except Exception as exc:
+                logger.warning("health snapshot: health_check に失敗: %s", exc)
+                results = {}
+        snapshot = await self.build_health_snapshot(results, lightweight=lightweight)
+        if running is not None:
+            snapshot["running"] = running
+        await self._write_health_json(snapshot)
+
     async def _health_check_loop(self) -> None:
         """定期的なヘルスチェックループ.
 
-        5分間隔で health_check() を実行し、失敗時は通知する。
+        起動直後に1回 health.json を出し、以降 5分間隔で health_check() を
+        実行する。失敗時は通知し、毎周回 health.json を書き出す。ループを
+        抜ける直前に running=False の snapshot を best-effort で書き出す。
         """
         interval_sec = 300  # 5 minutes
-        while self._running:
-            try:
-                await asyncio.sleep(interval_sec)
-                if not self._running:
-                    break
-                results = await self.health_check()
-                unhealthy = [k for k, v in results.items() if not v]
-                if unhealthy:
-                    await self._notifier.notify(
-                        f"Health check failures: {', '.join(unhealthy)}",
-                        level="error",
-                        metadata={
-                            "notification_type": "health_check",
-                        },
-                    )
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                logger.error("Health check loop error: %s", exc, exc_info=True)
+        try:
+            # 起動直後 (sleep 前) に 1 回 health.json を出す。
+            await self._emit_health_snapshot()
+            while self._running:
+                try:
+                    await asyncio.sleep(interval_sec)
+                    if not self._running:
+                        break
+                    results = await self.health_check()
+                    unhealthy = [k for k, v in results.items() if not v]
+                    if unhealthy:
+                        await self._notifier.notify(
+                            f"Health check failures: {', '.join(unhealthy)}",
+                            level="error",
+                            metadata={
+                                "notification_type": "health_check",
+                            },
+                        )
+                    # 毎周回 health.json を書き出す (health_check 結果を引き継ぐ)。
+                    snapshot = await self.build_health_snapshot(results)
+                    await self._write_health_json(snapshot)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.error("Health check loop error: %s", exc, exc_info=True)
+        finally:
+            # graceful stop / CancelledError 経路でも running=False を書き出す。
+            # lightweight: 停止時にネットワーク/subprocess を呼ばず、GitHub 応答待ちで
+            # stop() の gather (タイムアウトなし) をブロックさせない。
+            await self._emit_health_snapshot(running=False, lightweight=True)
 
     # ------------------------------------------------------------------
     # Status

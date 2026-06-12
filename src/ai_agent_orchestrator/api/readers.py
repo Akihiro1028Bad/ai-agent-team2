@@ -9,14 +9,18 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from pydantic import ValidationError
 
 from ai_agent_orchestrator.api.schemas import (
     AgentLogPage,
     AgentLogRecord,
     CostsResponse,
     EventRecord,
+    HealthResponse,
     IssueCost,
     IssueDetailResponse,
     IssueSummaryResponse,
@@ -35,6 +39,75 @@ _PHASE_COMPLETED_EVENT = "phase_completed"
 def _state_file(workspace: Path) -> Path:
     """state.json のパスを返す."""
     return workspace / "state.json"
+
+
+def _health_file(workspace: Path) -> Path:
+    """health.json のパスを返す."""
+    return workspace / "health.json"
+
+
+_HEALTH_ABSENT_REASON = "health.json が無い (orchestrator 未起動)"
+_HEALTH_STALE_REASON = "health.json が古い (orchestrator 停止/ハングの可能性)"
+# ファイルは存在するが中身が壊れている (壊れ JSON / 非 dict / 型不正)。
+# 「未起動」と区別し、運用者の切り分けを助ける。
+_HEALTH_CORRUPT_REASON = "health.json が壊れている (型/内容不正)"
+
+
+def _parse_health_ts(raw: dict[str, Any]) -> datetime | None:
+    """health.json の ts を UTC datetime にパースする (失敗時 None)."""
+    ts = raw.get("ts")
+    if not isinstance(ts, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+    # naive な場合は UTC とみなす (#85 と同じ UTC ISO8601 前提)。
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def read_health(workspace: Path, *, stale_after_sec: float = 900.0) -> HealthResponse:
+    """health.json を読み、orchestrator の稼働状態を返す (#97).
+
+    health.json が不在/壊れ/古い場合は「停止中」として返す。常に例外を投げず、
+    安全側 (running=False) に倒す。
+
+    Args:
+        workspace: ワークスペースのルートパス。
+        stale_after_sec: この秒数より古い ts は stale (停止/ハング) とみなす。
+
+    Returns:
+        HealthResponse。不在・壊れは reason 付きの running=False。
+    """
+    path = _health_file(workspace)
+    if not path.exists():
+        return HealthResponse(running=False, stale=False, reason=_HEALTH_ABSENT_REASON)
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("health.json の読み取り/パースに失敗: %s", path, exc_info=True)
+        return HealthResponse(running=False, stale=False, reason=_HEALTH_CORRUPT_REASON)
+
+    if not isinstance(raw, dict):
+        return HealthResponse(running=False, stale=False, reason=_HEALTH_CORRUPT_REASON)
+
+    parsed_ts = _parse_health_ts(raw)
+    is_stale = parsed_ts is None or (datetime.now(UTC) - parsed_ts).total_seconds() > stale_after_sec
+
+    try:
+        response = HealthResponse.model_validate(raw)
+    except ValidationError:
+        # 有効な JSON dict だが型が壊れている (running 欠落・queue が dict でない等)。
+        # file content は信頼しない方針に従い、500 ではなく「停止中」に倒す。
+        logger.warning("health.json の型検証に失敗: %s", path, exc_info=True)
+        return HealthResponse(running=False, stale=False, reason=_HEALTH_CORRUPT_REASON)
+    if is_stale:
+        # 統計値はファイル内容を引き継ぎつつ、running=False / stale=True に倒す。
+        return response.model_copy(update={"running": False, "stale": True, "reason": _HEALTH_STALE_REASON})
+    return response.model_copy(update={"stale": False})
 
 
 def _events_file(workspace: Path, issue_number: int) -> Path:

@@ -120,6 +120,28 @@ class CostsResponse(BaseModel):
     issues: list[IssueCost] = Field(default_factory=list)
 
 
+class HealthResponse(BaseModel):
+    """orchestrator の稼働状態 (health.json 由来) (#97).
+
+    health.json の不在/古い/壊れに対しても、API は常に「停止中である」という
+    事実を返せるよう running/stale/reason を持つ。health.json の追加キーには
+    寛容 (extra="ignore")。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    running: bool
+    stale: bool = False
+    reason: str | None = None
+    ts: str | None = None
+    queue: dict[str, int] | None = None
+    repositories: list[str] = Field(default_factory=list)
+    rate_limit: dict[str, int] | None = None
+    worktrees: int | None = None
+    last_poll: dict[str, str] = Field(default_factory=dict)
+    accounts: dict[str, bool] = Field(default_factory=dict)
+
+
 class DiffFile(BaseModel):
     """PR の 1 ファイル分の差分メタ情報."""
 
