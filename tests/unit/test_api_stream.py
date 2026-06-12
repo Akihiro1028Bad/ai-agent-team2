@@ -7,7 +7,10 @@ import json
 from pathlib import Path
 
 from ai_agent_orchestrator.api.stream import (
+    SseConnectionLimiter,
     SseEvent,
+    _read_new_lines,
+    _TailState,
     format_sse,
     parse_last_event_id,
     tail_issue_streams,
@@ -141,16 +144,20 @@ async def test_tail_streams_broken_line_raw_and_consumes(tmp_path: Path) -> None
 # ──────────────────────────────────────
 # SSE エンドポイント (TestClient, 即時クローズ)
 # ──────────────────────────────────────
-def _make_app(workspace: Path):  # type: ignore[no-untyped-def]
+def _make_app(workspace: Path, *, max_idle_sec: float | None = 0.05):  # type: ignore[no-untyped-def]
     from ai_agent_orchestrator.api.app import create_app
     from ai_agent_orchestrator.config.settings import AppSettings, RepositoryConfig
 
-    return create_app(
+    app = create_app(
         AppSettings(
             repositories=[RepositoryConfig(owner="o", repo="r", account="default")],
             workspace_dir=str(workspace),
         )
     )
+    # max_idle_sec は公開 Query から外したため (#113 L3)、テストは app.state 経由で
+    # 短いアイドル打ち切りを設定し、TestClient のストリームを終端させる。
+    app.state.sse_max_idle_sec = max_idle_sec
+    return app
 
 
 def test_stream_endpoint_returns_event_stream(tmp_path: Path) -> None:
@@ -161,7 +168,7 @@ def test_stream_endpoint_returns_event_stream(tmp_path: Path) -> None:
 
     app = _make_app(tmp_path)
     with TestClient(app) as client:
-        with client.stream("GET", "/api/stream?issue=1&max_idle_sec=0.05") as resp:
+        with client.stream("GET", "/api/stream?issue=1") as resp:
             assert resp.status_code == 200
             assert resp.headers["content-type"].startswith("text/event-stream")
             body = "".join(chunk for chunk in resp.iter_text())
@@ -182,13 +189,29 @@ def test_stream_endpoint_last_event_id_resume(tmp_path: Path) -> None:
     with TestClient(app) as client:
         with client.stream(
             "GET",
-            "/api/stream?issue=1&max_idle_sec=0.05",
+            "/api/stream?issue=1",
             headers={"Last-Event-ID": "events:0,agent:1"},
         ) as resp:
             assert resp.status_code == 200
             body = "".join(chunk for chunk in resp.iter_text())
     assert "two" in body
     assert "one" not in body
+
+
+def test_stream_endpoint_429_when_limit_exhausted(tmp_path: Path) -> None:
+    """per-issue 接続上限を使い切ると 429 を返す (#113 L2)."""
+    from fastapi.testclient import TestClient
+
+    _issue_dir(tmp_path, 1)
+    app = _make_app(tmp_path)
+    limiter: SseConnectionLimiter = app.state.sse_limiter
+    # per-issue 上限まで占有 (テストから直接 acquire)
+    for _ in range(limiter.max_per_issue):
+        assert limiter.try_acquire(1) is True
+
+    with TestClient(app) as client:
+        resp = client.get("/api/stream?issue=1")
+    assert resp.status_code == 429
 
 
 async def test_tail_does_not_consume_unterminated_line(tmp_path: Path) -> None:
@@ -229,3 +252,89 @@ def test_format_sse_keepalive_is_comment() -> None:
 def test_parse_last_event_id_negative_clamped_to_zero() -> None:
     """負のオフセットは 0 にクランプする (負スライスでの行再送・id ずれ防止)."""
     assert parse_last_event_id("events:-3,agent:-1") == (0, 0)
+
+
+# ──────────────────────────────────────
+# SseConnectionLimiter (#113 L2)
+# ──────────────────────────────────────
+def test_limiter_enforces_per_issue_cap() -> None:
+    limiter = SseConnectionLimiter(max_total=100, max_per_issue=2)
+    assert limiter.try_acquire(1) is True
+    assert limiter.try_acquire(1) is True
+    assert limiter.try_acquire(1) is False  # 上限到達
+    assert limiter.try_acquire(2) is True  # 別 Issue は独立
+
+
+def test_limiter_enforces_global_cap() -> None:
+    limiter = SseConnectionLimiter(max_total=2, max_per_issue=10)
+    assert limiter.try_acquire(1) is True
+    assert limiter.try_acquire(2) is True
+    assert limiter.try_acquire(3) is False  # 全体上限
+
+
+def test_limiter_release_frees_slot() -> None:
+    limiter = SseConnectionLimiter(max_total=1, max_per_issue=1)
+    assert limiter.try_acquire(1) is True
+    assert limiter.try_acquire(1) is False
+    limiter.release(1)
+    assert limiter.try_acquire(1) is True
+
+
+def test_limiter_release_unknown_is_safe() -> None:
+    limiter = SseConnectionLimiter(max_total=1, max_per_issue=1)
+    limiter.release(99)  # 未取得でも例外を出さず負にもならない
+    assert limiter.try_acquire(99) is True
+
+
+# ──────────────────────────────────────
+# _read_new_lines (#113 seek ベース増分読み)
+# ──────────────────────────────────────
+def test_incremental_read_returns_only_appended(tmp_path: Path) -> None:
+    p = tmp_path / "agent.jsonl"
+    p.write_text("a\nb\n", encoding="utf-8")
+    state = _TailState(path=p, start_line=0)
+    assert _read_new_lines(state) == ["a", "b"]
+    first_offset = state.byte_offset
+    # 追記分のみが返り、byte_offset は前進する
+    with p.open("a", encoding="utf-8") as f:
+        f.write("c\n")
+    assert _read_new_lines(state) == ["c"]
+    assert state.byte_offset > first_offset
+    # 追記なしなら空
+    assert _read_new_lines(state) == []
+
+
+def test_incremental_read_priming_skips_start_lines(tmp_path: Path) -> None:
+    p = tmp_path / "agent.jsonl"
+    p.write_text("0\n1\n2\n3\n", encoding="utf-8")
+    state = _TailState(path=p, start_line=2)
+    assert _read_new_lines(state) == ["2", "3"]
+
+
+def test_incremental_read_skips_unterminated_tail(tmp_path: Path) -> None:
+    p = tmp_path / "agent.jsonl"
+    p.write_text("done\npar", encoding="utf-8")  # 末尾未終端
+    state = _TailState(path=p, start_line=0)
+    assert _read_new_lines(state) == ["done"]
+    # 残りが改行で閉じたら次回に完全な行として届く
+    with p.open("a", encoding="utf-8") as f:
+        f.write("tial\n")
+    assert _read_new_lines(state) == ["partial"]
+
+
+def test_incremental_read_absent_then_appears(tmp_path: Path) -> None:
+    p = tmp_path / "agent.jsonl"
+    state = _TailState(path=p, start_line=0)
+    assert _read_new_lines(state) == []  # 不在
+    p.write_text("late\n", encoding="utf-8")
+    assert _read_new_lines(state) == ["late"]
+
+
+def test_incremental_read_resets_on_truncation(tmp_path: Path) -> None:
+    p = tmp_path / "agent.jsonl"
+    p.write_text("x\ny\n", encoding="utf-8")
+    state = _TailState(path=p, start_line=0)
+    assert _read_new_lines(state) == ["x", "y"]
+    # 縮退 (size < byte_offset): 先頭から読み直す
+    p.write_text("z\n", encoding="utf-8")
+    assert _read_new_lines(state) == ["z"]
