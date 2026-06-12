@@ -99,6 +99,18 @@ class TestParseOperationalLine:
         assert parse_operational_line(json.dumps({"action": "reorder", "order": [{"issue": 0, "phase": "p"}]})) is None
         assert parse_operational_line(json.dumps({"action": "reorder", "order": [{"issue": 1}]})) is None
 
+    def test_rewind_requires_target(self) -> None:
+        cmd = parse_operational_line(json.dumps({"action": "rewind", "issue": 5, "target": "plan", "actor": "a"}))
+        assert cmd == OperationalCommand(action="rewind", issue_number=5, actor="a", target="plan")
+        # target 欠落 / 型不正 は None
+        assert parse_operational_line(json.dumps({"action": "rewind", "issue": 5})) is None
+        assert parse_operational_line(json.dumps({"action": "rewind", "issue": 5, "target": ""})) is None
+
+    def test_retry_with_analysis_is_issue_scoped(self) -> None:
+        cmd = parse_operational_line(json.dumps({"action": "retry_with_analysis", "issue": 5, "actor": "a"}))
+        assert cmd == OperationalCommand(action="retry_with_analysis", issue_number=5, actor="a")
+        assert parse_operational_line(json.dumps({"action": "retry_with_analysis", "actor": "a"})) is None
+
 
 class TestReadNewOperationalCommands:
     def test_returns_only_authorized_new_commands(self, tmp_path: Path) -> None:

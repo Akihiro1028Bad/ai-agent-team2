@@ -42,6 +42,8 @@ OperationalAction = Literal[
     "enqueue_issue",
     "set_priority",
     "reorder",
+    "rewind",
+    "retry_with_analysis",
 ]
 _OPERATIONAL_ACTIONS: frozenset[str] = frozenset(
     {
@@ -54,6 +56,8 @@ _OPERATIONAL_ACTIONS: frozenset[str] = frozenset(
         "enqueue_issue",
         "set_priority",
         "reorder",
+        "rewind",
+        "retry_with_analysis",
     }
 )
 # issue 番号を必要としない全体コマンド (shutdown と #96 の poll_now / worktree_gc)。
@@ -79,6 +83,8 @@ class OperationalCommand:
     priority: int | None = None
     # reorder の希望順: (issue_number, phase) のタプル列 (frozen のため tuple)。
     order: tuple[tuple[int, str], ...] | None = None
+    # rewind の巻き戻し先フェーズ (Phase.value 文字列)。
+    target: str | None = None
 
 
 def parse_operational_line(line: str) -> OperationalCommand | None:
@@ -143,6 +149,13 @@ def parse_operational_line(line: str) -> OperationalCommand | None:
             phase=phase,
             priority=priority,
         )
+
+    if action == "rewind":
+        target = data.get("target")
+        if not isinstance(target, str) or not target:
+            logger.warning("rewind command missing/invalid target, skipping")
+            return None
+        return OperationalCommand(action="rewind", issue_number=issue, actor=actor, target=target)
 
     return OperationalCommand(action=validated_action, issue_number=issue, actor=actor)
 

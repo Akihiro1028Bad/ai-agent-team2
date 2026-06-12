@@ -35,6 +35,7 @@ from ai_agent_orchestrator.orchestrator.state_machine import (
     StateMachineManager,
 )
 from ai_agent_orchestrator.orchestrator.task_queue import (
+    Priority,
     TaskQueue,
     TaskRequest,
 )
@@ -66,6 +67,37 @@ def _extract_worktree_issue_number(name: str) -> int | None:
     """
     match = _WORKTREE_ISSUE_RE.search(name)
     return int(match.group(1)) if match else None
+
+
+# rewind の巻き戻し先として許可するフェーズ (state machine の resume_to_* と一致)。
+_REWIND_TARGETS: frozenset[Phase] = frozenset(
+    {
+        Phase.INTAKE,
+        Phase.CLARIFY,
+        Phase.CLARIFY_WAIT,
+        Phase.SPLIT,
+        Phase.PLAN,
+        Phase.APPROVE,
+        Phase.IMPLEMENT,
+        Phase.REVIEW,
+        Phase.REVISE,
+    }
+)
+# retry_with_analysis で現フェーズのまま再試行できる実行フェーズ。
+_RETRYABLE_PHASES: frozenset[Phase] = frozenset({Phase.PLAN, Phase.IMPLEMENT, Phase.REVISE})
+
+
+def _parse_rewind_target(target: str) -> Phase | None:
+    """rewind の target 文字列を、resume 可能な Phase へ変換する (#96).
+
+    Phase.value (例: "implement", "clarify-wait") に一致し、かつ resume 先として
+    許可された相のみ受理する。不正・未許可は None。
+    """
+    try:
+        phase = Phase(target)
+    except ValueError:
+        return None
+    return phase if phase in _REWIND_TARGETS else None
 
 
 # ---------------------------------------------------------------------------
@@ -854,6 +886,10 @@ class Orchestrator:
             await self._handle_set_priority(cmd)
         elif cmd.action == "reorder":
             await self._handle_reorder(cmd)
+        elif cmd.action == "rewind":
+            await self._handle_rewind(cmd)
+        elif cmd.action == "retry_with_analysis":
+            await self._handle_retry_with_analysis(cmd)
 
     async def _audit_control(self, event: str, cmd: OperationalCommand) -> None:
         """運用コマンドの適用を events.jsonl に監査記録する."""
@@ -1010,6 +1046,101 @@ class Orchestrator:
         if resolved:
             self._task_queue.reorder(resolved)
             await self._audit_control("queue_reordered", cmd)
+
+    async def _handle_rewind(self, cmd: OperationalCommand) -> None:
+        """rewind: 成果物を保持したまま target フェーズへ巻き戻し再エンキューする (#96).
+
+        abort と異なり worktree/PR は削除しない (成果物保持)。現フェーズ →
+        SUSPENDED → target の 2-hop で遷移し、target の TaskRequest を積み直す。
+        """
+        if cmd.issue_number is None or cmd.target is None:
+            return
+        issue_key = self._resolve_issue_key(cmd.issue_number)
+        if issue_key is None:
+            return
+        target_phase = _parse_rewind_target(cmd.target)
+        if target_phase is None:
+            logger.warning("rewind: 不正な target '%s' (#%d)", cmd.target, cmd.issue_number)
+            return
+
+        # 2-hop: current → SUSPENDED → target。成果物 (worktree/PR) は消さない。
+        try:
+            await self._state_machine.transition(issue_key, Phase.SUSPENDED)
+            await self._state_machine.transition(issue_key, target_phase)
+        except (InvalidTransitionError, KeyError) as exc:
+            logger.warning("rewind: 遷移に失敗 (#%d → %s): %s", cmd.issue_number, cmd.target, exc)
+            return
+
+        repo_config = self._repo_config_for(issue_key[0])
+        if repo_config is None:
+            logger.warning("rewind: repo を解決できません (#%d)", cmd.issue_number)
+            return
+        try:
+            client = await self._account_manager.get_client_for_repo(repo_config.owner, repo_config.repo)
+            await client.replace_phase_label(repo_config, cmd.issue_number, f"phase:{target_phase.value}")
+        except Exception as exc:
+            logger.warning("rewind: ラベル更新に失敗 (#%d): %s", cmd.issue_number, exc)
+        await self._task_queue.enqueue(
+            TaskRequest(issue_number=cmd.issue_number, repo=repo_config, phase=target_phase.value)
+        )
+        await self._audit_control("issue_rewound", cmd)
+
+    async def _handle_retry_with_analysis(self, cmd: OperationalCommand) -> None:
+        """retry_with_analysis: 直近エラーを要約し再実行プロンプトに添えて再試行する (#96).
+
+        abort と対で成果物を保持したまま、現フェーズを高優先で積み直す。直近の
+        phase_error イベントの要約を ``extra["feedback"]`` に載せ、既存の再実行
+        プロンプト経路 (feedback) でエージェントへ渡す。
+        """
+        if cmd.issue_number is None:
+            return
+        issue_key = self._resolve_issue_key(cmd.issue_number)
+        if issue_key is None:
+            return
+        repo_config = self._repo_config_for(issue_key[0])
+        if repo_config is None:
+            logger.warning("retry_with_analysis: repo を解決できません (#%d)", cmd.issue_number)
+            return
+        current_phase = self._state_machine.get_phase(issue_key)
+        retry_phase = current_phase if current_phase in _RETRYABLE_PHASES else Phase.IMPLEMENT
+        error_summary = self._read_last_error_summary(cmd.issue_number)
+        extra: dict[str, Any] = {"retry_with_analysis": True}
+        if error_summary:
+            extra["feedback"] = f"前回の失敗を踏まえて再実行してください。直近のエラー:\n{error_summary}"
+        await self._task_queue.enqueue(
+            TaskRequest(
+                issue_number=cmd.issue_number,
+                repo=repo_config,
+                phase=retry_phase.value,
+                priority=Priority.HIGH,
+                extra=extra,
+            )
+        )
+        await self._audit_control("issue_retry_with_analysis", cmd)
+
+    def _read_last_error_summary(self, issue_number: int, max_chars: int = 1000) -> str | None:
+        """Issue の events.jsonl から直近の phase_error 要約を best-effort で読む (#96).
+
+        失敗 (不在/壊れ) は None。詳細プロンプト整形は prompt_enhancer 側に委ねる。
+        """
+        events_file = self._event_logger.log_dir / f"issue-{issue_number}" / "events.jsonl"
+        try:
+            lines = events_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+        for line in reversed(lines):
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not isinstance(record, dict) or record.get("event") != "phase_error":
+                continue
+            data = record.get("data")
+            message = data.get("error") if isinstance(data, dict) else None
+            if isinstance(message, str) and message:
+                return message[:max_chars]
+            return None
+        return None
 
     async def _handle_shutdown(self, cmd: OperationalCommand) -> None:
         """shutdown: drain を要求し、in-flight 完了後に graceful stop する."""

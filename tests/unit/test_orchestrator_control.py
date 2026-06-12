@@ -221,6 +221,58 @@ class TestPriorityCommands:
         assert first.issue_number == 2
 
 
+class TestRewind:
+    """#96 Unit D: rewind (成果物保持の 2-hop 巻き戻し + 再エンキュー)."""
+
+    async def test_rewind_resumes_target_and_reenqueues(self, tmp_path: Path) -> None:
+        workspace = AsyncMock()
+        account_mgr = AsyncMock()
+        client = AsyncMock()
+        account_mgr.get_client_for_repo = AsyncMock(return_value=client)
+        orch = _make_orchestrator(tmp_path, workspace_manager=workspace, account_manager=account_mgr)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.IMPLEMENT)
+        _write_control(orch, {"action": "rewind", "issue": 5, "target": "plan", "actor": "test-owner"})
+
+        await orch._consume_control_commands()
+
+        # 受け入れ条件: target フェーズへ戻り、そのフェーズが再エンキューされる
+        assert orch._state_machine.get_phase(make_issue_key(REPO, 5)) is Phase.PLAN
+        queued = orch._task_queue.get_queue_snapshot()["queued"]
+        assert any(q["phase"] == "plan" and q["issue_number"] == 5 for q in queued)
+        # 成果物保持: abort と違い worktree は削除しない
+        workspace.remove_worktree.assert_not_called()
+        client.replace_phase_label.assert_awaited_once()
+
+    async def test_rewind_invalid_target_ignored(self, tmp_path: Path) -> None:
+        orch = _make_orchestrator(tmp_path)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.IMPLEMENT)
+        # "done" は resume 不可な target → 無視
+        _write_control(orch, {"action": "rewind", "issue": 5, "target": "done", "actor": "test-owner"})
+
+        await orch._consume_control_commands()
+
+        assert orch._state_machine.get_phase(make_issue_key(REPO, 5)) is Phase.IMPLEMENT
+        assert orch._task_queue.get_queue_snapshot()["queued"] == []
+
+    async def test_retry_with_analysis_reenqueues_with_feedback(self, tmp_path: Path) -> None:
+        account_mgr = AsyncMock()
+        account_mgr.get_client_for_repo = AsyncMock(return_value=AsyncMock())
+        orch = _make_orchestrator(tmp_path, account_manager=account_mgr)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.IMPLEMENT)
+        await orch._event_logger.track(
+            "phase_error", issue_number=5, phase="implement", data={"error": "boom failure", "category": "unknown"}
+        )
+        _write_control(orch, {"action": "retry_with_analysis", "issue": 5, "actor": "test-owner"})
+
+        await orch._consume_control_commands()
+
+        req = await orch._task_queue.dequeue()
+        assert req.issue_number == 5
+        assert req.phase == "implement"
+        assert req.extra.get("retry_with_analysis") is True
+        assert "boom failure" in req.extra["feedback"]
+
+
 class TestQueueJson:
     async def test_build_and_write_queue_json(self, tmp_path: Path) -> None:
         orch = _make_orchestrator(tmp_path)

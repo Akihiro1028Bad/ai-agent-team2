@@ -79,8 +79,10 @@
   `uv run ai-agent api` + `cd web && npm run dev` → ブラウザでキュー画面の表示・並べ替え操作を確認
 
 ## 受け入れ条件（Issue 由来）
-- [ ] UI の実行キュー画面（表示+並べ替え）が実データで動く
-- [ ] rewind 後に対象フェーズから再実行されることのテスト
+- [x] UI の実行キュー画面（表示+並べ替え）が実データで動く
+  （Unit A: 表示をブラウザ目視で確認 / Unit C: reorder バックエンド。UI 操作配線は #88）
+- [x] rewind 後に対象フェーズから再実行されることのテスト
+  （Unit D: `test_rewind_resumes_target_and_reenqueues`）
 
 ## 非スコープ
 - UI 側の操作配線（POST /api/control への接続・キュー画面の実接続）→ #88
