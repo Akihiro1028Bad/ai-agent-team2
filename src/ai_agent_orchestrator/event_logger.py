@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ai_agent_orchestrator import sanitize
+from ai_agent_orchestrator.io_safety import ensure_private_file
 
 
 class EventLogger:
@@ -73,11 +74,12 @@ class EventLogger:
             record["data"] = self._sanitize_for_log(data)
 
         events_file = self._log_dir / f"issue-{issue_number}" / "events.jsonl"
-        events_file.parent.mkdir(parents=True, exist_ok=True)
 
         line = json.dumps(record, ensure_ascii=False) + "\n"
 
         def _write() -> None:
+            # 初回作成時に 0o600 で用意 (他ローカルユーザー不可読, #115)。
+            ensure_private_file(events_file)
             with events_file.open("a", encoding="utf-8") as f:
                 f.write(line)
 

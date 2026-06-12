@@ -22,6 +22,7 @@ from ai_agent_orchestrator.context.engine import ContextEngine
 from ai_agent_orchestrator.credential import CredentialResolver
 from ai_agent_orchestrator.event_logger import EventLogger
 from ai_agent_orchestrator.github.client import AccountManager
+from ai_agent_orchestrator.io_safety import atomic_write_text
 from ai_agent_orchestrator.models import ErrorCategory, IssueKey, Phase, make_issue_key
 from ai_agent_orchestrator.notifications.slack import SlackNotifier
 from ai_agent_orchestrator.orchestrator.approval import resolve_approvers
@@ -854,11 +855,8 @@ class Orchestrator:
             logger.warning("queue.json の書き出しに失敗: %s", exc)
 
     def _write_queue_json_sync(self, snapshot: dict[str, Any]) -> None:
-        """queue.json の同期書き出し (tmp + replace)."""
-        self._queue_file.parent.mkdir(parents=True, exist_ok=True)
-        tmp_file = self._queue_file.with_suffix(".tmp")
-        tmp_file.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp_file.replace(self._queue_file)
+        """queue.json の同期書き出し (tmp + replace + 0o600, #115)."""
+        atomic_write_text(self._queue_file, json.dumps(snapshot, ensure_ascii=False, indent=2))
 
     async def _consume_control_commands(self) -> None:
         """未処理の運用コマンドを読み取り、順に適用して offset を進める."""
@@ -1698,10 +1696,11 @@ class Orchestrator:
             repo = repos[0]
             client = await self._account_manager.get_client_for_repo(repo.owner, repo.repo)
             status = await client.get_rate_limit()
+            # reset (Unix 秒) はトークン消費タイミングのフィンガープリントになり
+            # 得るため snapshot には含めない。Web UI は remaining/limit のみ参照 (#115)。
             return {
                 "remaining": status.remaining,
                 "limit": status.limit,
-                "reset": status.reset,
             }
         except Exception as exc:
             logger.warning("health snapshot: rate_limit 取得に失敗: %s", exc)
@@ -1746,14 +1745,8 @@ class Orchestrator:
             logger.warning("health.json の書き出しに失敗: %s", exc)
 
     def _write_health_json_sync(self, snapshot: dict[str, Any]) -> None:
-        """health.json の同期書き出し (tmp + replace)."""
-        self._health_file.parent.mkdir(parents=True, exist_ok=True)
-        tmp_file = self._health_file.with_suffix(".tmp")
-        tmp_file.write_text(
-            json.dumps(snapshot, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        tmp_file.replace(self._health_file)  # atomic rename
+        """health.json の同期書き出し (tmp + replace + 0o600, #115)."""
+        atomic_write_text(self._health_file, json.dumps(snapshot, ensure_ascii=False, indent=2))
 
     async def _emit_health_snapshot(self, *, running: bool | None = None, lightweight: bool = False) -> None:
         """health_check 実行 → snapshot 構築 → health.json 書き出し (best-effort).

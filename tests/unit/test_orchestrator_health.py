@@ -82,7 +82,9 @@ class TestBuildHealthSnapshot:
 
         orch = _make_orchestrator(tmp_path, account_manager=account_mgr)
         snapshot = await orch.build_health_snapshot()
-        assert snapshot["rate_limit"] == {"remaining": 4990, "limit": 5000, "reset": 123}
+        # reset はフィンガープリント低減のため snapshot から除外 (#115)。
+        assert snapshot["rate_limit"] == {"remaining": 4990, "limit": 5000}
+        assert "reset" not in snapshot["rate_limit"]
 
     async def test_rate_limit_failure_falls_back_to_none(self, tmp_path: Path) -> None:
         """rate_limit 取得が例外でも None に倒れて全体は成功すること."""

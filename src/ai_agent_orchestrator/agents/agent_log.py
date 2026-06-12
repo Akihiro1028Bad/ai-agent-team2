@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ai_agent_orchestrator.io_safety import ensure_private_file
 from ai_agent_orchestrator.sanitize import sanitize_dict
 
 
@@ -52,7 +53,8 @@ class AgentLogWriter:
         line = json.dumps(sanitized, ensure_ascii=False, default=str) + "\n"
 
         def _write() -> None:
-            agent_file.parent.mkdir(parents=True, exist_ok=True)
+            # 初回作成時に 0o600 で用意 (他ローカルユーザー不可読, #115)。
+            ensure_private_file(agent_file)
             with agent_file.open("a", encoding="utf-8") as f:
                 f.write(line)
 

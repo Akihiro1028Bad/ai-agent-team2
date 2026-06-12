@@ -28,6 +28,12 @@ from ai_agent_orchestrator.api.schemas import (
     QueueResponse,
     phase_to_status,
 )
+from ai_agent_orchestrator.io_safety import (
+    MAX_LOG_FILE_BYTES,
+    MAX_STATUS_FILE_BYTES,
+    FileTooLargeError,
+    read_text_capped,
+)
 from ai_agent_orchestrator.state_persistence import StatePersistence
 
 if TYPE_CHECKING:
@@ -53,6 +59,8 @@ _HEALTH_STALE_REASON = "health.json が古い (orchestrator 停止/ハングの�
 # ファイルは存在するが中身が壊れている (壊れ JSON / 非 dict / 型不正)。
 # 「未起動」と区別し、運用者の切り分けを助ける。
 _HEALTH_CORRUPT_REASON = "health.json が壊れている (型/内容不正)"
+# サイズ上限超過 (異常に肥大した health.json)。読み込まず停止中に倒す (#115)。
+_HEALTH_TOO_LARGE_REASON = "health.json がサイズ上限を超過 (異常)"
 
 
 def _parse_health_ts(raw: dict[str, Any]) -> datetime | None:
@@ -88,7 +96,10 @@ def read_health(workspace: Path, *, stale_after_sec: float = 900.0) -> HealthRes
         return HealthResponse(running=False, stale=False, reason=_HEALTH_ABSENT_REASON)
 
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(read_text_capped(path, MAX_STATUS_FILE_BYTES))
+    except FileTooLargeError:
+        logger.warning("health.json がサイズ上限を超過: %s", path)
+        return HealthResponse(running=False, stale=False, reason=_HEALTH_TOO_LARGE_REASON)
     except (OSError, json.JSONDecodeError):
         logger.warning("health.json の読み取り/パースに失敗: %s", path, exc_info=True)
         return HealthResponse(running=False, stale=False, reason=_HEALTH_CORRUPT_REASON)
@@ -131,7 +142,8 @@ def read_queue(workspace: Path) -> QueueResponse:
     if not path.exists():
         return QueueResponse(running=False, reason=_QUEUE_ABSENT_REASON)
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        # FileTooLargeError は OSError 派生なので下の except が捕捉 (#115)。
+        raw = json.loads(read_text_capped(path, MAX_STATUS_FILE_BYTES))
     except (OSError, json.JSONDecodeError):
         logger.warning("queue.json の読み取り/パースに失敗: %s", path, exc_info=True)
         return QueueResponse(running=False, reason=_QUEUE_CORRUPT_REASON)
@@ -211,7 +223,8 @@ def read_agent_logs(
         return AgentLogPage(records=[], next_offset=offset, total=0)
 
     try:
-        text = path.read_text(encoding="utf-8")
+        # サイズ上限超過 (FileTooLargeError) も OSError として安全側に倒す (#115)。
+        text = read_text_capped(path, MAX_LOG_FILE_BYTES)
     except OSError:
         logger.warning("agent.jsonl の読み取りに失敗: %s", path, exc_info=True)
         return AgentLogPage(records=[], next_offset=offset, total=0)
@@ -282,7 +295,8 @@ def _iter_event_lines(path: Path) -> list[EventRecord]:
 
     records: list[EventRecord] = []
     try:
-        text = path.read_text(encoding="utf-8")
+        # サイズ上限超過 (FileTooLargeError) も OSError として安全側に倒す (#115)。
+        text = read_text_capped(path, MAX_LOG_FILE_BYTES)
     except OSError:
         logger.warning("events.jsonl の読み取りに失敗: %s", path, exc_info=True)
         return []
