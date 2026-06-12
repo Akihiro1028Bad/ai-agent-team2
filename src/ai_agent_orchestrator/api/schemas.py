@@ -161,6 +161,37 @@ class DiffResponse(BaseModel):
     files: list[DiffFile] = Field(default_factory=list)
 
 
+class QueueEntry(BaseModel):
+    """実行キューの 1 件 (待ち / 実行中 / pause)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    repo: str = ""
+    issue_number: int = 0
+    phase: str = ""
+    priority: int = 0
+    enqueued_at: str = ""
+    wait_reason: str = ""
+
+
+class QueueResponse(BaseModel):
+    """実行キューの状態 (queue.json 由来) (#96).
+
+    不在/壊れでも 200 で「停止中で空のキュー」を返せるよう reason を持つ。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    running: bool = False
+    ts: str | None = None
+    reason: str | None = None
+    queued: list[QueueEntry] = Field(default_factory=list)
+    active: list[QueueEntry] = Field(default_factory=list)
+    paused: list[QueueEntry] = Field(default_factory=list)
+    max_total: int = 0
+    max_per_repo: int = 0
+
+
 class ControlRequest(BaseModel):
     """POST /api/control のリクエストボディ.
 

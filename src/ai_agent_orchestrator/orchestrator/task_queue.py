@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -103,6 +104,9 @@ class TaskQueue:
         self._parked: dict[IssueKey, TaskRequest] = {}
         self._draining = False
         self._aborted: set[IssueKey] = set()
+        # キュー可視化用メタ (#96): (issue_key, phase) → {repo, issue_number, phase,
+        # priority, enqueued_at, wait_reason}。queue.json / GET /api/queue の真実源。
+        self._queued_meta: dict[tuple[IssueKey, str], dict[str, Any]] = {}
 
     # --- public methods ---
 
@@ -159,6 +163,7 @@ class TaskQueue:
 
         self._queued_issues.add(ik)
         self._queued_tasks.add(task_key)
+        self._record_queued_meta(request, "queued")
         self._seq += 1
         await self._queue.put((request.priority, self._seq, request))
         logger.info(
@@ -187,6 +192,7 @@ class TaskQueue:
         """
         _, _, request = await self._queue.get()
         self._queued_issues.discard(request.issue_key)
+        self._queued_meta.pop((request.issue_key, request.phase), None)
         logger.debug(
             "dequeued: issue=#%d repo=%s phase=%s remaining=%d",
             request.issue_number,
@@ -225,6 +231,7 @@ class TaskQueue:
                 # abort 済み Issue は、キュー滞留していた分も実行せず破棄する
                 # (SUSPENDED から復活して走るのを防ぐ。再エンキューで解除される)。
                 if request.issue_key in self._aborted:
+                    self._queued_meta.pop((request.issue_key, request.phase), None)
                     logger.info(
                         "Issue #%d is aborted, dropping queued phase=%s",
                         request.issue_number,
@@ -235,6 +242,7 @@ class TaskQueue:
                 # resume で再エンキューされるまで待機。実行中フェーズは中断しない。
                 if request.issue_key in self._paused:
                     self._parked[request.issue_key] = request
+                    self._queued_meta.pop((request.issue_key, request.phase), None)
                     logger.info(
                         "Issue #%d is paused, parking phase=%s",
                         request.issue_number,
@@ -292,6 +300,7 @@ class TaskQueue:
                     request.issue_number,
                 )
                 await asyncio.sleep(5)
+                self._record_queued_meta(request, "repo_busy")
                 self._seq += 1
                 await self._queue.put((request.priority, self._seq, request))
                 self._queued_issues.add(request.issue_key)
@@ -308,6 +317,8 @@ class TaskQueue:
                 task = asyncio.current_task()
                 if task is not None:
                     self._active_tasks[request.issue_key] = task
+                # 実行開始 = キュー待ちではなくなる。
+                self._queued_meta.pop((request.issue_key, request.phase), None)
                 await self._execute_task(executor, request)
             finally:
                 repo_sem.release()
@@ -360,6 +371,45 @@ class TaskQueue:
             "max_total": self._max_total,
             "queued": self.queued_count,
             "active_issues": list(self._active_tasks.keys()),
+        }
+
+    def _record_queued_meta(self, request: TaskRequest, wait_reason: str) -> None:
+        """キュー待ちメタを記録/更新する (enqueued_at は既存があれば保持)。"""
+        key = (request.issue_key, request.phase)
+        existing = self._queued_meta.get(key)
+        enqueued_at = existing["enqueued_at"] if existing else datetime.now(UTC).isoformat()
+        self._queued_meta[key] = {
+            "repo": request.repo_key,
+            "issue_number": request.issue_number,
+            "phase": request.phase,
+            "priority": request.priority,
+            "enqueued_at": enqueued_at,
+            "wait_reason": wait_reason,
+        }
+
+    def get_queue_snapshot(self) -> dict[str, Any]:
+        """キューの可視化用スナップショットを返す (#96。queue.json / GET /api/queue)。
+
+        Returns:
+            {"queued": [...], "active": [...], "paused": [...],
+             "max_total": int, "max_per_repo": int}。
+            queued は priority 昇順 → enqueued_at 昇順。
+        """
+        queued = sorted(
+            self._queued_meta.values(),
+            key=lambda m: (m["priority"], m["enqueued_at"]),
+        )
+        active = [{"repo": key[0], "issue_number": key[1]} for key in self._active_tasks]
+        paused = [
+            {"repo": req.repo_key, "issue_number": req.issue_number, "phase": req.phase}
+            for req in self._parked.values()
+        ]
+        return {
+            "queued": queued,
+            "active": active,
+            "paused": paused,
+            "max_total": self._max_total,
+            "max_per_repo": self._max_per_repo,
         }
 
     def is_issue_active(self, issue_key: IssueKey) -> bool:
@@ -417,6 +467,8 @@ class TaskQueue:
         self._paused.discard(issue_key)
         self._parked.pop(issue_key, None)
         self._aborted.add(issue_key)
+        for key in [k for k in self._queued_meta if k[0] == issue_key]:
+            self._queued_meta.pop(key, None)
 
     def request_drain(self) -> None:
         """drain を要求する (ワーカーは新規タスクを拾わず自然終了する)。"""

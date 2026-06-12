@@ -435,6 +435,8 @@ class Orchestrator:
         )
         # offset は control_file と同じディレクトリに置く (custom パス時のズレ防止)。
         self._control_offset_file = self._control_file.with_name(self._control_file.name + ".offset")
+        # キュー可視化 (#96): TaskQueue 状態の書き出し先。
+        self._queue_file = workspace_path / "queue.json"
         self._persistence = persistence or StatePersistence(
             state_file=workspace_path / "state.json",
         )
@@ -765,15 +767,40 @@ class Orchestrator:
         return None
 
     async def _control_loop(self) -> None:
-        """control.jsonl をポーリングし、運用コマンドを適用する背景ループ."""
+        """control.jsonl をポーリングし、運用コマンドを適用する背景ループ.
+
+        併せて毎周回 queue.json を書き出す (#96。UI のキュー画面が ~2s で追従)。
+        """
         while self._running:
             try:
                 await self._consume_control_commands()
+                await self._write_queue_json()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.warning("control loop iteration failed: %s", exc)
             await asyncio.sleep(self._CONTROL_POLL_INTERVAL_SEC)
+
+    def build_queue_snapshot(self) -> dict[str, Any]:
+        """queue.json 用のスナップショットを構築する (#96)."""
+        snapshot = self._task_queue.get_queue_snapshot()
+        snapshot["ts"] = datetime.now(UTC).isoformat()
+        snapshot["running"] = self._running
+        return snapshot
+
+    async def _write_queue_json(self) -> None:
+        """queue.json を atomic (tmp + replace) に書き出す (#96。失敗は warning)."""
+        try:
+            await asyncio.to_thread(self._write_queue_json_sync, self.build_queue_snapshot())
+        except Exception as exc:
+            logger.warning("queue.json の書き出しに失敗: %s", exc)
+
+    def _write_queue_json_sync(self, snapshot: dict[str, Any]) -> None:
+        """queue.json の同期書き出し (tmp + replace)."""
+        self._queue_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp_file = self._queue_file.with_suffix(".tmp")
+        tmp_file.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_file.replace(self._queue_file)
 
     async def _consume_control_commands(self) -> None:
         """未処理の運用コマンドを読み取り、順に適用して offset を進める."""

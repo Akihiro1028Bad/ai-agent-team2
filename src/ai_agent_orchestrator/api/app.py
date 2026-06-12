@@ -26,6 +26,7 @@ from ai_agent_orchestrator.api.readers import (
     read_health,
     read_issue_events,
     read_issue_summaries,
+    read_queue,
 )
 from ai_agent_orchestrator.api.schemas import (
     AgentLogPage,
@@ -38,6 +39,7 @@ from ai_agent_orchestrator.api.schemas import (
     HealthResponse,
     IssueDetailResponse,
     IssueSummaryResponse,
+    QueueResponse,
 )
 from ai_agent_orchestrator.api.stream import (
     KEEPALIVE_INTERVAL_SEC,
@@ -281,6 +283,15 @@ def create_app(settings: AppSettings) -> FastAPI:
         「停止中である」事実を返す (#84 の停止中でも応答する方針)。
         """
         return read_health(workspace)
+
+    @app.get("/api/queue", response_model=QueueResponse)
+    async def get_queue() -> QueueResponse:
+        """実行キューの状態を返す (#96).
+
+        queue.json を読んで返す。不在/壊れでも 200 で空キュー + reason を返す
+        (#84 の「停止中でも応答」方針)。
+        """
+        return read_queue(workspace)
 
     @app.get("/api/costs", response_model=CostsResponse)
     async def get_costs() -> CostsResponse:

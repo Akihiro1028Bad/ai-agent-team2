@@ -436,3 +436,56 @@ def test_read_health_type_corrupted_dict(tmp_path: Path) -> None:
     assert result.reason is not None
     # ファイルは存在するので「未起動」ではなく破損として報告する。
     assert "未起動" not in result.reason
+
+
+# ──────────────────────────────────────
+# read_queue (#96)
+# ──────────────────────────────────────
+from ai_agent_orchestrator.api.readers import read_queue  # noqa: E402
+
+
+def test_read_queue_absent(tmp_path: Path) -> None:
+    """queue.json 不在 → 空キュー + reason."""
+    result = read_queue(tmp_path)
+    assert result.running is False
+    assert result.queued == []
+    assert result.reason is not None
+
+
+def test_read_queue_normal(tmp_path: Path) -> None:
+    """正常な queue.json → 各フィールド反映."""
+    payload = {
+        "running": True,
+        "ts": "2026-06-12T00:00:00+00:00",
+        "queued": [
+            {
+                "repo": "o/r",
+                "issue_number": 5,
+                "phase": "implement",
+                "priority": 5,
+                "enqueued_at": "x",
+                "wait_reason": "queued",
+            },
+        ],
+        "active": [{"repo": "o/r", "issue_number": 3}],
+        "paused": [],
+        "max_total": 2,
+        "max_per_repo": 1,
+    }
+    (tmp_path / "queue.json").write_text(json.dumps(payload), encoding="utf-8")
+    result = read_queue(tmp_path)
+    assert result.running is True
+    assert len(result.queued) == 1
+    assert result.queued[0].issue_number == 5
+    assert result.queued[0].wait_reason == "queued"
+    assert result.active[0].issue_number == 3
+    assert result.max_total == 2
+
+
+def test_read_queue_corrupt(tmp_path: Path) -> None:
+    """壊れ JSON → 空キュー + reason (例外を投げない)."""
+    (tmp_path / "queue.json").write_text("{broken", encoding="utf-8")
+    result = read_queue(tmp_path)
+    assert result.running is False
+    assert result.queued == []
+    assert result.reason is not None

@@ -121,3 +121,19 @@ class TestControlConsume:
         # 同じ workspace の新インスタンスは offset を引き継ぐ (処理済みを再適用しない)
         orch2 = _make_orchestrator(tmp_path)
         assert orch2._load_control_offset() == 1
+
+
+class TestQueueJson:
+    async def test_build_and_write_queue_json(self, tmp_path: Path) -> None:
+        orch = _make_orchestrator(tmp_path)
+        repo = orch._settings.repositories[0]
+        from ai_agent_orchestrator.models import TaskRequest
+
+        await orch._task_queue.enqueue(TaskRequest(issue_number=5, repo=repo, phase="implement", priority=5))
+        await orch._write_queue_json()
+
+        written = json.loads(orch._queue_file.read_text(encoding="utf-8"))
+        assert written["max_total"] == 2
+        assert len(written["queued"]) == 1
+        assert written["queued"][0]["issue_number"] == 5
+        assert "ts" in written

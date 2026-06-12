@@ -448,3 +448,45 @@ def test_post_orchestrator_unknown_action_returns_404(client: TestClient) -> Non
     """未知の action → 404."""
     resp = client.post("/api/orchestrator/restart")
     assert resp.status_code == 404
+
+
+# ──────────────────────────────────────
+# GET /api/queue (#96)
+# ──────────────────────────────────────
+def test_get_queue_absent_returns_200_empty(client: TestClient) -> None:
+    """queue.json 不在でも 200 で空キュー + reason."""
+    resp = client.get("/api/queue")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["running"] is False
+    assert body["queued"] == []
+    assert body["reason"] is not None
+
+
+def test_get_queue_returns_entries(client: TestClient, workspace: Path) -> None:
+    """queue.json の内容を返す."""
+    payload = {
+        "running": True,
+        "ts": "2026-06-12T00:00:00+00:00",
+        "queued": [
+            {
+                "repo": "o/r",
+                "issue_number": 5,
+                "phase": "implement",
+                "priority": 5,
+                "enqueued_at": "x",
+                "wait_reason": "queued",
+            },
+        ],
+        "active": [{"repo": "o/r", "issue_number": 3}],
+        "paused": [],
+        "max_total": 2,
+        "max_per_repo": 1,
+    }
+    (workspace / "queue.json").write_text(json.dumps(payload), encoding="utf-8")
+    resp = client.get("/api/queue")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["running"] is True
+    assert body["queued"][0]["issue_number"] == 5
+    assert body["max_total"] == 2

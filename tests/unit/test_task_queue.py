@@ -510,3 +510,47 @@ class TestPauseResumeDrain:
             assert [r.issue_number for r in ex.calls] == [14]
         finally:
             await _cancel(worker)
+
+
+# ---------------------------------------------------------------------------
+# キュー可視化スナップショット (#96)
+# ---------------------------------------------------------------------------
+
+
+class TestQueueSnapshot:
+    """get_queue_snapshot のメタデータと並び順。"""
+
+    async def test_snapshot_lists_queued_sorted_with_metadata(self) -> None:
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        await tq.enqueue(TaskRequest(issue_number=1, repo=repo, phase="implement", priority=Priority.NORMAL))
+        await tq.enqueue(TaskRequest(issue_number=2, repo=repo, phase="plan", priority=Priority.CRITICAL))
+
+        snap = tq.get_queue_snapshot()
+        assert snap["max_total"] == 2
+        assert snap["max_per_repo"] == 1
+        q = snap["queued"]
+        assert len(q) == 2
+        # CRITICAL(1) が先頭
+        assert q[0]["issue_number"] == 2
+        assert q[0]["phase"] == "plan"
+        assert q[1]["issue_number"] == 1
+        for entry in q:
+            assert {"repo", "issue_number", "phase", "priority", "enqueued_at", "wait_reason"} <= set(entry)
+            assert entry["wait_reason"] == "queued"
+
+    async def test_dequeue_removes_from_snapshot(self) -> None:
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        await tq.enqueue(TaskRequest(issue_number=7, repo=repo, phase="implement"))
+        assert len(tq.get_queue_snapshot()["queued"]) == 1
+        await tq.dequeue()
+        assert tq.get_queue_snapshot()["queued"] == []
+
+    async def test_abort_removes_queued_meta(self) -> None:
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        req = TaskRequest(issue_number=8, repo=repo, phase="implement")
+        await tq.enqueue(req)
+        tq.mark_aborted(req.issue_key)
+        assert tq.get_queue_snapshot()["queued"] == []
