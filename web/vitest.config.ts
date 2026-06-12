@@ -40,6 +40,8 @@ export default defineConfig({
         "lib/model-config.ts",
         "lib/hooks.ts",
         "lib/diff-parse.ts",
+        "lib/notifications.ts",
+        "lib/activity-context.tsx",
         "components/ConnectionBanner.tsx",
         "components/ComingSoon.tsx",
         "components/ErrorPanel.tsx",

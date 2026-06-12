@@ -25,7 +25,12 @@ vi.mock("@/lib/hooks", () => ({
   usePolling: vi.fn(),
 }));
 
+vi.mock("@/lib/activity-context", () => ({
+  useActivity: vi.fn(),
+}));
+
 import { usePolling } from "@/lib/hooks";
+import { useActivity } from "@/lib/activity-context";
 import Dashboard from "@/app/page";
 
 function makeIssue(overrides: Partial<IssueSummary> & { number: number }): IssueSummary {
@@ -43,6 +48,7 @@ function makeIssue(overrides: Partial<IssueSummary> & { number: number }): Issue
 
 beforeEach(() => {
   vi.mocked(usePolling).mockReturnValue({ data: undefined, error: undefined, loading: true });
+  vi.mocked(useActivity).mockReturnValue({ data: [], error: undefined });
 });
 
 describe("Dashboard: 追加カバレッジ", () => {
@@ -54,18 +60,14 @@ describe("Dashboard: 追加カバレッジ", () => {
         needsHuman: "承認・回答待ち",
       }),
     ];
-    vi.mocked(usePolling)
-      .mockReturnValueOnce({ data: issues, error: undefined, loading: false })
-      .mockReturnValueOnce({ data: [], error: undefined, loading: false });
+    vi.mocked(usePolling).mockReturnValue({ data: issues, error: undefined, loading: false });
     render(<Dashboard />);
     await waitFor(() => expect(screen.getByText("承認・回答待ち")).toBeDefined());
   });
 
   it("needsHuman がない issue では '更新 N分前' が表示される", async () => {
     const issues = [makeIssue({ number: 2, status: "running", updated: "3分前" })];
-    vi.mocked(usePolling)
-      .mockReturnValueOnce({ data: issues, error: undefined, loading: false })
-      .mockReturnValueOnce({ data: [], error: undefined, loading: false });
+    vi.mocked(usePolling).mockReturnValue({ data: issues, error: undefined, loading: false });
     render(<Dashboard />);
     await waitFor(() => expect(screen.getByText(/更新 3分前/)).toBeDefined());
   });
@@ -74,9 +76,8 @@ describe("Dashboard: 追加カバレッジ", () => {
     const events: IssueEvent[] = [
       { id: "ev1", at: "1分前", kind: "ci", title: "CI 実行中", detail: "build-and-test 実行" },
     ];
-    vi.mocked(usePolling)
-      .mockReturnValueOnce({ data: [], error: undefined, loading: false })
-      .mockReturnValueOnce({ data: events, error: undefined, loading: false });
+    vi.mocked(usePolling).mockReturnValue({ data: [], error: undefined, loading: false });
+    vi.mocked(useActivity).mockReturnValue({ data: events, error: undefined });
     render(<Dashboard />);
     await waitFor(() => {
       expect(screen.getByText("CI 実行中")).toBeDefined();
@@ -85,19 +86,22 @@ describe("Dashboard: 追加カバレッジ", () => {
   });
 
   it("activity が空のとき 'イベントはまだありません' が表示される", async () => {
-    vi.mocked(usePolling)
-      .mockReturnValueOnce({ data: [], error: undefined, loading: false })
-      .mockReturnValueOnce({ data: [], error: undefined, loading: false });
+    vi.mocked(usePolling).mockReturnValue({ data: [], error: undefined, loading: false });
     render(<Dashboard />);
     await waitFor(() => expect(screen.getByText("イベントはまだありません。")).toBeDefined());
   });
 
   it("loading が false かつ issue あり: initialLoading=false", async () => {
     const issues = [makeIssue({ number: 10, title: "マイ Issue" })];
-    vi.mocked(usePolling)
-      .mockReturnValueOnce({ data: issues, error: undefined, loading: false })
-      .mockReturnValueOnce({ data: [], error: undefined, loading: false });
+    vi.mocked(usePolling).mockReturnValue({ data: issues, error: undefined, loading: false });
     render(<Dashboard />);
     await waitFor(() => expect(screen.queryByText("読み込み中…")).toBeNull());
+  });
+
+  it("useActivity が data=undefined のとき activity は空配列で表示する", async () => {
+    vi.mocked(usePolling).mockReturnValue({ data: [], error: undefined, loading: false });
+    vi.mocked(useActivity).mockReturnValue({ data: undefined, error: undefined });
+    render(<Dashboard />);
+    await waitFor(() => expect(screen.getByText("イベントはまだありません。")).toBeDefined());
   });
 });

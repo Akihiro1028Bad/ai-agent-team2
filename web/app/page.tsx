@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { usePolling } from "@/lib/hooks";
+import { useActivity } from "@/lib/activity-context";
 import { Money, StatusPill, TypeTag, eventIcon, phaseAccent } from "@/components/ui";
 import { PhaseRail } from "@/components/PhaseRail";
 import { AddIssueButton } from "@/components/AddIssueButton";
@@ -25,12 +26,11 @@ function Stat({ label, value, accent, sub }: { label: string; value: string; acc
 export default function Dashboard() {
   /* v8 ignore next -- usePolling callback is mocked in tests; api.listIssues is tested separately */
   const issuesState = usePolling(useCallback((signal: AbortSignal) => api.listIssues(signal), []), 5000);
-  /* v8 ignore next -- usePolling callback is mocked in tests; api.getActivity is tested separately */
-  const activityState = usePolling(useCallback((signal: AbortSignal) => api.getActivity(40, signal), []), 5000);
+  const activityCtx = useActivity();
 
   const issues = issuesState.data ?? [];
-  const activity = activityState.data ?? [];
-  const error = issuesState.error ?? activityState.error;
+  const activity = (activityCtx.data ?? []).slice(0, 40);
+  const error = issuesState.error ?? activityCtx.error;
   const initialLoading = issuesState.loading && issuesState.data === undefined;
 
   const repoCount = new Set(issues.map((i) => i.repo)).size;

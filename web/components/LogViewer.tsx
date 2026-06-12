@@ -22,7 +22,7 @@ interface LogViewerProps {
 
 /** ターミナル風のライブログ。SSE (useLogStream) でリアルタイム表示する */
 export function LogViewer({ issueNumber, live = true }: LogViewerProps) {
-  const { lines, connected } = useLogStream(issueNumber);
+  const { lines, connected } = useLogStream(issueNumber, live);
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

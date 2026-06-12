@@ -745,6 +745,12 @@ export async function postReview(
   return res.outcome;
 }
 
+/** GET /api/issues/{n}/logs — 非 running 時の一括ログ取得用 */
+export async function getLogs(issue: number, signal?: AbortSignal): Promise<LogLine[]> {
+  const page = await apiGet<ApiAgentLogPage>(`/api/issues/${issue}/logs?offset=0&limit=1000`, signal);
+  return page.records.map(adaptAgentLog);
+}
+
 // ── エンドポイント ──
 
 export const api = {
@@ -788,6 +794,8 @@ export const api = {
   getPhaseModels: (signal?: AbortSignal) => getPhaseModels(signal),
 
   putPhaseModels: (rows: PhaseModelInput[], signal?: AbortSignal) => putPhaseModels(rows, signal),
+
+  getLogs: (issue: number, signal?: AbortSignal) => getLogs(issue, signal),
 };
 
 /** SSE ストリームの URL を組み立てる (EventSource 用、相対パス)。 */

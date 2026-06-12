@@ -7,6 +7,18 @@ import { usePolling, useLogStream } from "@/lib/hooks";
 import { ApiError } from "@/lib/api";
 import { FakeEventSource, installFakeEventSource } from "./_fakes";
 
+// api.getLogs をモック（useLogStream が内部で参照するため）
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      getLogs: vi.fn().mockResolvedValue([]),
+    },
+  };
+});
+
 // ── usePolling: 非 ApiError 例外 ──────────────────────────────────
 
 describe("usePolling: 非 ApiError 例外", () => {

@@ -4,6 +4,20 @@ import { usePolling, useLogStream } from "@/lib/hooks";
 import { ApiError } from "@/lib/api";
 import { FakeEventSource, installFakeEventSource } from "./_fakes";
 
+// api をモック（useLogStream live=false 経路で api.getLogs を使う）
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      getLogs: vi.fn(),
+    },
+  };
+});
+
+import { api } from "@/lib/api";
+
 // ── usePolling ────────────────────────────────────────────────────
 
 describe("usePolling", () => {
@@ -72,9 +86,12 @@ describe("useLogStream", () => {
 
   beforeEach(() => {
     restore = installFakeEventSource();
+    // live=false 経路のデフォルト
+    vi.mocked(api.getLogs).mockResolvedValue([]);
   });
   afterEach(() => {
     restore();
+    vi.restoreAllMocks();
   });
 
   /** ApiAgentLogRecord 形の JSON 文字列を生成する */
@@ -140,5 +157,49 @@ describe("useLogStream", () => {
 
     unmount();
     expect(src.closed).toBe(true);
+  });
+
+  it("(e) live=false のとき EventSource を張らず api.getLogs を呼ぶ", async () => {
+    const logLine = { t: "01:00:00", level: "agent" as const, source: "implement", text: "hist" };
+    vi.mocked(api.getLogs).mockResolvedValue([logLine]);
+
+    const { result } = renderHook(() => useLogStream(42, false));
+
+    // EventSource インスタンスは生成されない
+    expect(FakeEventSource.instances).toHaveLength(0);
+    // connected は false 固定
+    expect(result.current.connected).toBe(false);
+
+    // getLogs の結果が lines にセットされる
+    await waitFor(() => expect(result.current.lines).toHaveLength(1));
+    expect(result.current.lines[0].text).toBe("hist");
+  });
+
+  it("(f) live=false のとき api.getLogs 失敗でも lines は空のまま (クラッシュしない)", async () => {
+    vi.mocked(api.getLogs).mockRejectedValue(new Error("fetch failed"));
+
+    const { result } = renderHook(() => useLogStream(42, false));
+
+    // エラー後も lines は空、クラッシュしない
+    await waitFor(() => expect(result.current.lines).toHaveLength(0));
+    expect(result.current.connected).toBe(false);
+  });
+
+  it("(g) live が変わると lines がリセットされる", async () => {
+    const { result, rerender } = renderHook(
+      ({ issue, live }: { issue: number; live: boolean }) => useLogStream(issue, live),
+      { initialProps: { issue: 1, live: true } },
+    );
+
+    // live=true で行を追加
+    const src1 = FakeEventSource.instances[0];
+    await act(async () => {
+      src1.emit("agent", JSON.stringify({ ts: "2026-06-12T01:02:03+00:00", phase: "implement", type: "text", text: "live log" }));
+    });
+    expect(result.current.lines).toHaveLength(1);
+
+    // live=false に変更 → lines リセット
+    rerender({ issue: 1, live: false });
+    expect(result.current.lines).toHaveLength(0);
   });
 });

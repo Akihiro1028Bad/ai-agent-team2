@@ -3,12 +3,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LogViewer } from "@/components/LogViewer";
 import { FakeEventSource, installFakeEventSource } from "@/lib/__tests__/_fakes";
 
+// api をモック（live=false 経路で api.getLogs を使う）
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      getLogs: vi.fn(),
+    },
+  };
+});
+
+import { api } from "@/lib/api";
+
 // jsdom does not implement scrollTo — stub it out
 beforeEach(() => {
   HTMLElement.prototype.scrollTo = vi.fn();
+  // live=false 経路以外でも getLogs が解決済みになるようデフォルト設定
+  vi.mocked(api.getLogs).mockResolvedValue([]);
 });
 afterEach(() => {
   HTMLElement.prototype.scrollTo = undefined as unknown as typeof HTMLElement.prototype.scrollTo;
+  vi.restoreAllMocks();
 });
 
 function makeAgentData(text: string): string {
@@ -62,18 +79,39 @@ describe("LogViewer", () => {
     expect(screen.getByText("0 行")).toBeDefined();
   });
 
-  it("live=false のとき onopen でもインジケーターは非表示", async () => {
-    render(<LogViewer issueNumber={42} live={false} />);
-    const src = FakeEventSource.instances[0];
-
+  it("live=false のとき EventSource は張られず api.getLogs で取得する", async () => {
+    vi.mocked(api.getLogs).mockResolvedValue([]);
     await act(async () => {
-      src.open();
+      render(<LogViewer issueNumber={42} live={false} />);
     });
 
-    // streaming = live && connected = false && connected → streaming=false
-    // animate-pulse の span は描画されないはず
+    // live=false → EventSource インスタンスは生成されない
+    expect(FakeEventSource.instances).toHaveLength(0);
+
     // ヘッダーの行数表示は存在する
     expect(screen.getByText("0 行")).toBeDefined();
+  });
+
+  it("live=false のとき api.getLogs の結果がログ行として表示される", async () => {
+    const logLine = { t: "01:02:03", level: "agent" as const, source: "implement", text: "取得済みログ" };
+    vi.mocked(api.getLogs).mockResolvedValue([logLine]);
+    await act(async () => {
+      render(<LogViewer issueNumber={42} live={false} />);
+    });
+
+    expect(screen.getByText("取得済みログ")).toBeDefined();
+    expect(screen.getByText("1 行")).toBeDefined();
+  });
+
+  it("live=false のとき api.getLogs が失敗しても空のまま表示される", async () => {
+    vi.mocked(api.getLogs).mockRejectedValue(new Error("fetch failed"));
+    await act(async () => {
+      render(<LogViewer issueNumber={42} live={false} />);
+    });
+
+    // エラー時は空のまま (クラッシュしない)
+    expect(screen.getByText("0 行")).toBeDefined();
+    expect(screen.getByText("この Issue の実行ログはありません。")).toBeDefined();
   });
 
   it("複数行受信でカウントが増える", async () => {
