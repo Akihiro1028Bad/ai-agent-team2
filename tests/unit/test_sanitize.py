@@ -27,6 +27,47 @@ def test_sanitize_text_no_match_passthrough() -> None:
 
 
 # ──────────────────────────────────────
+# sanitize_text — 追加プロバイダの秘密 (#112)
+# ──────────────────────────────────────
+def test_sanitize_text_masks_anthropic_key() -> None:
+    key = "sk-ant-api03-" + "A1b2C3d4_" * 11  # sk-ant- + 十分長い高エントロピー
+    assert sanitize_text(f"key={key} done") == "key=***REDACTED*** done"
+
+
+def test_sanitize_text_masks_openai_project_key() -> None:
+    key = "sk-proj-" + "Xy9_" * 10
+    assert sanitize_text(f"use {key}") == "use ***REDACTED***"
+
+
+def test_sanitize_text_masks_openai_legacy_key() -> None:
+    key = "sk-" + "a1B2c3D4" * 6  # sk- + 48 英数字
+    assert sanitize_text(key) == "***REDACTED***"
+
+
+def test_sanitize_text_masks_aws_access_key_id() -> None:
+    assert sanitize_text("AKIAIOSFODNN7EXAMPLE here") == "***REDACTED*** here"
+    assert sanitize_text("ASIAIOSFODNN7EXAMPLE here") == "***REDACTED*** here"
+
+
+def test_sanitize_text_masks_slack_token() -> None:
+    token = "xoxb-" + "123456789012-" + "abcdefABCDEF0123"
+    assert sanitize_text(f"slack {token}") == "slack ***REDACTED***"
+
+
+def test_sanitize_text_masks_google_api_key() -> None:
+    key = "AIza" + "Bc0_-" * 7  # AIza + 35 文字
+    assert sanitize_text(f"g={key}") == "g=***REDACTED***"
+
+
+# ──────────────────────────────────────
+# false positive 回避 (#112): 通常文・短い断片はマスクしない
+# ──────────────────────────────────────
+def test_sanitize_text_does_not_mask_plain_hyphenated_words() -> None:
+    text = "task-management sk-helper xoxb-123 plain-english-sentence"
+    assert sanitize_text(text) == text
+
+
+# ──────────────────────────────────────
 # sanitize_dict
 # ──────────────────────────────────────
 def test_sanitize_dict_masks_sensitive_key() -> None:

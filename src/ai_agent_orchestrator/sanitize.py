@@ -6,7 +6,7 @@ EventLogger から抽出した共有モジュール。トークン・パスワ�
 
 公開シンボル:
     SENSITIVE_KEYS: マスク対象のキー名パターン (部分一致)。
-    TOKEN_PATTERN: GitHub トークン文字列にマッチする正規表現。
+    TOKEN_PATTERN: 秘密トークン文字列 (GitHub/Anthropic/OpenAI/AWS/Slack/Google) にマッチする正規表現。
     URL_TOKEN_PATTERN: URL クエリ中の機微パラメータにマッチする正規表現。
     sanitize_dict(data): dict を再帰的にサニタイズして新しい dict を返す。
     sanitize_text(text): 文字列内のトークン・URL 機微パラメータをマスクする。
@@ -29,8 +29,24 @@ SENSITIVE_KEYS: frozenset[str] = frozenset(
 )
 """マスク対象のキー名パターン (キー名に部分一致したら値を伏字化)。"""
 
-TOKEN_PATTERN: re.Pattern[str] = re.compile(r"(ghp_[A-Za-z0-9]{36}|gho_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{82})")
-"""GitHub トークン文字列にマッチする正規表現。"""
+# 高信頼 (プレフィックス固定・高エントロピー) な秘密トークンのパターン (#112)。
+# 過度に広いパターンは正当なテキストを壊す (false positive) ため、必ず固有の
+# プレフィックスで固定する。sk-ant- / sk-proj- は legacy sk-…{48} より前に置き、
+# 先頭一致で正しく分岐させる。
+_SECRET_PATTERNS: tuple[str, ...] = (
+    r"ghp_[A-Za-z0-9]{36}",  # GitHub personal access token
+    r"gho_[A-Za-z0-9]{36}",  # GitHub OAuth token
+    r"github_pat_[A-Za-z0-9_]{82}",  # GitHub fine-grained PAT
+    r"sk-ant-[A-Za-z0-9_-]{20,}",  # Anthropic API key
+    r"sk-proj-[A-Za-z0-9_-]{20,}",  # OpenAI project key
+    r"sk-[A-Za-z0-9]{48}",  # OpenAI legacy key (48 文字固定)
+    r"(?:AKIA|ASIA)[0-9A-Z]{16}",  # AWS access key ID
+    r"xox[baprs]-[A-Za-z0-9-]{10,}",  # Slack token
+    r"AIza[0-9A-Za-z_-]{35}",  # Google API key
+)
+
+TOKEN_PATTERN: re.Pattern[str] = re.compile("(" + "|".join(_SECRET_PATTERNS) + ")")
+"""秘密トークン文字列にマッチする正規表現 (GitHub / Anthropic / OpenAI / AWS / Slack / Google)。"""
 
 URL_TOKEN_PATTERN: re.Pattern[str] = re.compile(r"([?&])(access_token|token|key|secret|password|credential)=([^&\s]+)")
 """URL クエリ中の機微パラメータにマッチする正規表現。"""
