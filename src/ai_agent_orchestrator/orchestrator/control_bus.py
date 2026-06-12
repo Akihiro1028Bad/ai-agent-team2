@@ -98,7 +98,11 @@ def read_new_operational_commands(
     読み飛ばすが offset には数える (再処理しないため)。
 
     認可は #102 と同じく ``is_authorized_approver`` で行う: actor が
-    許可リストに含まれない運用コマンドはなりすまし防止のため無視する。
+    許可リストに含まれない運用コマンドは無視する。ただし #102 が GitHub 検証済みの
+    送信者を見るのに対し、ここでの actor は POST /api/control の自己申告フィールド
+    である。AuthMiddleware が no-op の現状では actor 詐称を防げないため、本検証は
+    パース衛生・誤操作防止が主で、なりすまし防止としては実認証導入まで限定的
+    (localhost 前提・#115 で対処)。
 
     DoS 対策としてファイルサイズ上限 (_MAX_CONTROL_FILE_BYTES) を超える
     ファイルはスキップする。

@@ -433,7 +433,8 @@ class Orchestrator:
         self._control_file = (
             Path(settings.control_file).expanduser() if settings.control_file else workspace_path / "control.jsonl"
         )
-        self._control_offset_file = workspace_path / "control.offset"
+        # offset は control_file と同じディレクトリに置く (custom パス時のズレ防止)。
+        self._control_offset_file = self._control_file.with_name(self._control_file.name + ".offset")
         self._persistence = persistence or StatePersistence(
             state_file=workspace_path / "state.json",
         )
@@ -836,8 +837,9 @@ class Orchestrator:
             return
 
         await self._task_queue.cancel_task(issue_key)
-        # pause/park 状態も破棄する (park 済みが resume で復活しないように)。
-        self._task_queue.discard_control_state(issue_key)
+        # pause/park を破棄し、キュー滞留中の分も含め以後の実行をドロップする
+        # (park の resume 復活・キュー滞留タスクによる SUSPENDED 復活を防ぐ)。
+        self._task_queue.mark_aborted(issue_key)
 
         repo_config = self._repo_config_for(issue_key[0])
         if repo_config is not None:
