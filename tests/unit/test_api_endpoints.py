@@ -348,3 +348,103 @@ def test_get_health_normal_shape(client: TestClient, workspace: Path) -> None:
     assert body["stale"] is False
     assert body["queue"] == {"active": 0, "queued": 0, "max_total": 2}
     assert body["accounts"] == {"github/default": True}
+
+
+# ──────────────────────────────────────
+# POST /api/control (#87 ControlBus 書き込み)
+# ──────────────────────────────────────
+def test_post_control_pause_appends_to_jsonl(client: TestClient, workspace: Path) -> None:
+    """pause コマンド → 202 かつ control.jsonl に該当行が追記される."""
+    resp = client.post("/api/control", json={"action": "pause", "issue": 5, "actor": "alice"})
+    assert resp.status_code == 202
+    assert resp.json()["accepted"] is True
+    lines = (workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record == {"action": "pause", "issue": 5, "actor": "alice"}
+
+
+def test_post_control_shutdown_no_issue_key(client: TestClient, workspace: Path) -> None:
+    """shutdown コマンド → 202, control.jsonl の行に issue キーが含まれない."""
+    resp = client.post("/api/control", json={"action": "shutdown", "actor": "alice"})
+    assert resp.status_code == 202
+    lines = (workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()
+    record = json.loads(lines[0])
+    assert "issue" not in record
+    assert record["action"] == "shutdown"
+    assert record["actor"] == "alice"
+
+
+def test_post_control_pause_missing_issue_returns_422(client: TestClient) -> None:
+    """pause で issue 省略 → 422 バリデーションエラー."""
+    resp = client.post("/api/control", json={"action": "pause", "actor": "alice"})
+    assert resp.status_code == 422
+
+
+def test_post_control_pause_zero_issue_returns_422(client: TestClient) -> None:
+    """pause で issue=0 (非正整数) → 422."""
+    resp = client.post("/api/control", json={"action": "pause", "issue": 0, "actor": "alice"})
+    assert resp.status_code == 422
+
+
+def test_post_control_appends_multiple_lines(client: TestClient, workspace: Path) -> None:
+    """複数回 POST すると control.jsonl に複数行追記される."""
+    client.post("/api/control", json={"action": "pause", "issue": 1, "actor": "a"})
+    client.post("/api/control", json={"action": "resume", "issue": 1, "actor": "a"})
+    lines = (workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["action"] == "pause"
+    assert json.loads(lines[1])["action"] == "resume"
+
+
+# ──────────────────────────────────────
+# POST /api/orchestrator/{action}
+# ──────────────────────────────────────
+class _MockSystemd:
+    """テスト用モック ControlSystemd."""
+
+    def __init__(self) -> None:
+        self.started = 0
+        self.stopped = 0
+
+    async def start(self) -> None:
+        self.started += 1
+
+    async def stop(self) -> None:
+        self.stopped += 1
+
+
+def test_post_orchestrator_start_calls_systemd(client: TestClient) -> None:
+    """POST /api/orchestrator/start → モック systemd の start が呼ばれ 200."""
+    mock = _MockSystemd()
+    client.app.state.systemd = mock  # type: ignore[attr-defined]
+    resp = client.post("/api/orchestrator/start")
+    assert resp.status_code == 200
+    assert resp.json()["accepted"] is True
+    assert mock.started == 1
+    assert mock.stopped == 0
+
+
+def test_post_orchestrator_stop_appends_shutdown_and_calls_systemd(
+    client: TestClient,
+    workspace: Path,
+) -> None:
+    """POST /api/orchestrator/stop → control.jsonl に shutdown 追記 + モック systemd.stop 呼び出し."""
+    mock = _MockSystemd()
+    client.app.state.systemd = mock  # type: ignore[attr-defined]
+    resp = client.post("/api/orchestrator/stop")
+    assert resp.status_code == 200
+    assert resp.json()["accepted"] is True
+    assert mock.stopped == 1
+    assert mock.started == 0
+    lines = (workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["action"] == "shutdown"
+    assert "issue" not in record
+
+
+def test_post_orchestrator_unknown_action_returns_404(client: TestClient) -> None:
+    """未知の action → 404."""
+    resp = client.post("/api/orchestrator/restart")
+    assert resp.status_code == 404

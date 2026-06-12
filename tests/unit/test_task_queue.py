@@ -380,3 +380,133 @@ class TestQueueLifecycleLogging:
         debug_text = "\n".join(r.message for r in caplog.records if r.levelno == logging.DEBUG)
         assert "7" in debug_text
         assert "dequeue" in debug_text.lower()
+
+
+# ---------------------------------------------------------------------------
+# ControlBus: pause / resume / drain (#87)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingExecutor:
+    """execute された TaskRequest を記録し、呼び出しを Event で通知する。"""
+
+    def __init__(self) -> None:
+        self.calls: list[TaskRequest] = []
+        self.event = asyncio.Event()
+
+    async def execute(self, request: TaskRequest) -> None:
+        self.calls.append(request)
+        self.event.set()
+
+
+async def _cancel(task: asyncio.Task[None]) -> None:
+    import contextlib
+
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+class TestPauseResumeDrain:
+    """pause/resume(park 方式) と drain の挙動。"""
+
+    async def test_paused_issue_is_parked_then_resumed(self) -> None:
+        """pause 中はフェーズを実行せず park、resume で再エンキュー → 実行される。"""
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        req = TaskRequest(issue_number=5, repo=repo, phase="implement", priority=Priority.NORMAL)
+
+        tq.pause(req.issue_key)
+        assert tq.is_paused(req.issue_key)
+
+        ex = _RecordingExecutor()
+        await tq.enqueue(req)
+        worker = asyncio.create_task(tq.worker_loop(ex))
+        try:
+            await asyncio.sleep(0.05)
+            # pause 中 → 実行されず park される
+            assert ex.calls == []
+
+            # resume すると再エンキューされ実行される
+            await tq.resume(req.issue_key)
+            assert not tq.is_paused(req.issue_key)
+            await asyncio.wait_for(ex.event.wait(), timeout=1.0)
+            assert [r.issue_number for r in ex.calls] == [5]
+        finally:
+            await _cancel(worker)
+
+    async def test_drain_stops_worker_without_executing(self) -> None:
+        """drain 中のワーカーは新規タスクを実行せずループを抜ける。"""
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        req = TaskRequest(issue_number=9, repo=repo, phase="implement", priority=Priority.NORMAL)
+
+        tq.request_drain()
+        assert tq.is_draining
+
+        ex = _RecordingExecutor()
+        await tq.enqueue(req)
+        worker = asyncio.create_task(tq.worker_loop(ex))
+        try:
+            await asyncio.sleep(0.05)
+            assert ex.calls == []  # drain → 実行されない
+            assert worker.done()  # ワーカーは自然終了
+        finally:
+            await _cancel(worker)
+
+    async def test_discard_control_state_prevents_resume_resurrection(self) -> None:
+        """abort 相当: pause/park を破棄すると resume しても再実行されない。"""
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        req = TaskRequest(issue_number=11, repo=repo, phase="implement", priority=Priority.NORMAL)
+
+        tq.pause(req.issue_key)
+        ex = _RecordingExecutor()
+        await tq.enqueue(req)
+        worker = asyncio.create_task(tq.worker_loop(ex))
+        try:
+            await asyncio.sleep(0.05)
+            assert ex.calls == []  # park 済み
+
+            tq.mark_aborted(req.issue_key)  # abort 相当
+            assert not tq.is_paused(req.issue_key)
+
+            await tq.resume(req.issue_key)
+            await asyncio.sleep(0.05)
+            assert ex.calls == []  # park 破棄済み → 復活しない
+        finally:
+            await _cancel(worker)
+
+    async def test_aborted_issue_queued_task_is_dropped(self) -> None:
+        """キュー滞留中に abort された Issue は dequeue 時に破棄され実行されない。"""
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        req = TaskRequest(issue_number=13, repo=repo, phase="implement", priority=Priority.NORMAL)
+
+        await tq.enqueue(req)  # 先にキューへ滞留させる
+        tq.mark_aborted(req.issue_key)  # 実行前に abort
+
+        ex = _RecordingExecutor()
+        worker = asyncio.create_task(tq.worker_loop(ex))
+        try:
+            await asyncio.sleep(0.05)
+            assert ex.calls == []  # abort 済み → 実行されず破棄
+        finally:
+            await _cancel(worker)
+
+    async def test_reenqueue_clears_abort(self) -> None:
+        """abort 後に再エンキューすると abort ドロップが解除され実行される。"""
+        tq = TaskQueue(max_total=2, max_per_repo=1)
+        repo = _make_repo()
+        req = TaskRequest(issue_number=14, repo=repo, phase="implement", priority=Priority.NORMAL)
+
+        tq.mark_aborted(req.issue_key)
+        ex = _RecordingExecutor()
+        await tq.enqueue(req)  # 再アクティブ化 → abort 解除
+
+        worker = asyncio.create_task(tq.worker_loop(ex))
+        try:
+            await asyncio.wait_for(ex.event.wait(), timeout=1.0)
+            assert [r.issue_number for r in ex.calls] == [14]
+        finally:
+            await _cancel(worker)

@@ -97,6 +97,12 @@ class TaskQueue:
         self._active_tasks: dict[IssueKey, asyncio.Task[None]] = {}
         self._queued_issues: set[IssueKey] = set()  # 重複排除用
         self._queued_tasks: set[tuple[IssueKey, str]] = set()  # (issue_key, phase) 重複排除用
+        # ControlBus (#87): pause された Issue とその退避タスク、drain フラグ、
+        # abort された Issue (キュー滞留分も実行させないためのドロップ集合)
+        self._paused: set[IssueKey] = set()
+        self._parked: dict[IssueKey, TaskRequest] = {}
+        self._draining = False
+        self._aborted: set[IssueKey] = set()
 
     # --- public methods ---
 
@@ -116,6 +122,8 @@ class TaskQueue:
             (False を無視して処理済み扱いにすると、そのタスクの内容が失われる)。
         """
         ik = request.issue_key
+        # 新規に積まれた = Issue が再びアクティブ化された → abort ドロップを解除する。
+        self._aborted.discard(ik)
         task_key: tuple[IssueKey, str] = (ik, request.phase)
         if task_key in self._queued_tasks:
             logger.info(
@@ -207,9 +215,41 @@ class TaskQueue:
             executor: フェーズ実行エンジン
         """
         while True:
+            # drain 中は新規タスクを拾わずワーカーを自然終了させる
+            # (#87 graceful shutdown: 実行中フェーズは完走、新規は開始しない)。
+            if self._draining:
+                return
             _priority, _seq, request = await self._queue.get()
             try:
                 self._queued_issues.discard(request.issue_key)
+                # abort 済み Issue は、キュー滞留していた分も実行せず破棄する
+                # (SUSPENDED から復活して走るのを防ぐ。再エンキューで解除される)。
+                if request.issue_key in self._aborted:
+                    logger.info(
+                        "Issue #%d is aborted, dropping queued phase=%s",
+                        request.issue_number,
+                        request.phase,
+                    )
+                    continue
+                # pause 中の Issue は実行せず park する (フェーズ境界で graceful に停止)。
+                # resume で再エンキューされるまで待機。実行中フェーズは中断しない。
+                if request.issue_key in self._paused:
+                    self._parked[request.issue_key] = request
+                    logger.info(
+                        "Issue #%d is paused, parking phase=%s",
+                        request.issue_number,
+                        request.phase,
+                    )
+                    continue
+                # drain がデキュー後に立った場合はキューへ戻してワーカーを終了する
+                # (continue だと先頭の drain 判定まで戻るだけ。return で確実に退場)。
+                # 注: finally が再投入分の _queued_tasks を discard するため dedup 集合と
+                # 実キュー内容が一時的に乖離するが、drain は終端処理なので実害はない。
+                if self._draining:
+                    self._seq += 1
+                    await self._queue.put((_priority, self._seq, request))
+                    self._queued_issues.add(request.issue_key)
+                    return
                 # _queued_tasks はデキュー時に除去しない (実行中の重複防止)
                 await self._try_execute(executor, request)
             except Exception as e:
@@ -345,3 +385,44 @@ class TaskQueue:
             logger.info("Cancelled task for Issue #%d (%s)", issue_key[1], issue_key[0])
             return True
         return False
+
+    # --- ControlBus: pause / resume / drain (#87) ---
+
+    def pause(self, issue_key: IssueKey) -> None:
+        """指定 Issue を pause する (次フェーズの dequeue 時に park される)。
+
+        実行中のフェーズは中断しない。フェーズ境界で停止する graceful pause。
+        """
+        self._paused.add(issue_key)
+
+    async def resume(self, issue_key: IssueKey) -> None:
+        """pause を解除し、park 済みタスクがあれば再エンキューする。"""
+        self._paused.discard(issue_key)
+        parked = self._parked.pop(issue_key, None)
+        if parked is not None:
+            await self.enqueue(parked)
+
+    def is_paused(self, issue_key: IssueKey) -> bool:
+        """指定 Issue が pause 中かどうかを返す。"""
+        return issue_key in self._paused
+
+    def mark_aborted(self, issue_key: IssueKey) -> None:
+        """Issue を abort 扱いにする (cancel_task と併せて呼ぶ)。
+
+        - pause / park 状態を破棄 (resume で復活させない)。
+        - ``_aborted`` に登録し、キュー滞留中・将来 dequeue される分も
+          worker_loop でドロップする (SUSPENDED からの復活を防ぐ)。
+        再度 enqueue されると (Issue が再アクティブ化) abort ドロップは解除される。
+        """
+        self._paused.discard(issue_key)
+        self._parked.pop(issue_key, None)
+        self._aborted.add(issue_key)
+
+    def request_drain(self) -> None:
+        """drain を要求する (ワーカーは新規タスクを拾わず自然終了する)。"""
+        self._draining = True
+
+    @property
+    def is_draining(self) -> bool:
+        """drain 要求中かどうか。"""
+        return self._draining
