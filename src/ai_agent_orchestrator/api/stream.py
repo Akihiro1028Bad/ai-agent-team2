@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,6 +23,55 @@ logger = logging.getLogger(__name__)
 
 KEEPALIVE_INTERVAL_SEC = 15.0
 """SSE keep-alive コメント行の送出間隔 (秒)。プロキシ切断対策。"""
+
+MAX_SSE_CONNECTIONS_TOTAL = 50
+"""SSE の全体同時接続上限 (#113 DoS 対策)。"""
+
+MAX_SSE_CONNECTIONS_PER_ISSUE = 5
+"""1 Issue あたりの SSE 同時接続上限 (#113 DoS 対策)。"""
+
+
+class SseConnectionLimiter:
+    """SSE 同時接続数を全体 / Issue 単位で制限する (#113 L2)。
+
+    クリティカルセクションはカウンタの増減のみと小さく、SSE 接続は高頻度では
+    ないため ``threading.Lock`` で同期する (async ループに依存せずテストからも
+    同期的に検証できる)。
+
+    Attributes:
+        max_total: 全体の同時接続上限。
+        max_per_issue: 1 Issue あたりの同時接続上限。
+    """
+
+    def __init__(self, *, max_total: int, max_per_issue: int) -> None:
+        self.max_total = max_total
+        self.max_per_issue = max_per_issue
+        self._lock = threading.Lock()
+        self._total = 0
+        self._per_issue: dict[int, int] = {}
+
+    def try_acquire(self, issue: int) -> bool:
+        """接続枠を 1 つ確保する。上限超過なら False を返す (取得しない)。"""
+        with self._lock:
+            if self._total >= self.max_total:
+                return False
+            if self._per_issue.get(issue, 0) >= self.max_per_issue:
+                return False
+            self._total += 1
+            self._per_issue[issue] = self._per_issue.get(issue, 0) + 1
+            return True
+
+    def release(self, issue: int) -> None:
+        """確保済みの接続枠を 1 つ解放する。未取得の Issue でも安全 (負にしない)。"""
+        with self._lock:
+            current = self._per_issue.get(issue, 0)
+            if current <= 0:
+                return
+            self._total = max(0, self._total - 1)
+            if current == 1:
+                self._per_issue.pop(issue, None)
+            else:
+                self._per_issue[issue] = current - 1
 
 
 @dataclass(frozen=True)
@@ -89,36 +140,83 @@ def format_sse(event: SseEvent) -> str:
     )
 
 
-def _read_new_lines(path: Path, consumed: int) -> list[str]:
-    """ファイルの consumed 行目以降の物理行 (非空) を返す.
+@dataclass
+class _TailState:
+    """1 ファイルの tail 読み出し状態 (#113 seek ベース増分読み)。
 
-    壊れ行の判定はしない (SSE は生行を流し、UI 側でパースする)。空行は
-    スキップするが、返すのは consumed 以降に出現した非空行のみ。
+    Attributes:
+        path: 対象ファイル。
+        start_line: 再開時に読み飛ばす物理行数 (Last-Event-ID 由来)。
+        byte_offset: 消費済みバイト位置 (最後の完全な行の直後)。
+        primed: start_line までの位置決め (priming) が済んだか。
+    """
 
-    既知の制約 (#113): 毎 poll でファイル全体を読む (O(ファイルサイズ))。
-    ログ肥大 + 同時接続増で CPU が線形に増えるため、将来は保持オフセットからの
-    seek ベース増分読みへ移行余地あり。localhost 単一利用の現フェーズでは許容。
+    path: Path
+    start_line: int
+    byte_offset: int = field(default=0)
+    primed: bool = field(default=False)
+
+
+def _byte_offset_after_lines(data: bytes, n: int) -> int:
+    """data 内で n 本の改行を読み飛ばした直後のバイト位置を返す。
+
+    改行が n 本に満たない場合は ``len(data)`` を返す (それ以上は読まない)。
+    """
+    if n <= 0:
+        return 0
+    idx = 0
+    for _ in range(n):
+        nl = data.find(b"\n", idx)
+        if nl == -1:
+            return len(data)
+        idx = nl + 1
+    return idx
+
+
+def _read_new_lines(state: _TailState) -> list[str]:
+    """state のファイルから未消費の完全な物理行を返し、byte_offset を進める。
+
+    seek ベースの増分読み: byte_offset 以降のみ読むため、毎 poll の計算量は
+    追記バイト量に比例する (#113。従来は O(ファイルサイズ))。初回は start_line
+    本の改行まで走査して位置決め (priming) する。末尾が改行で終端されていない
+    行は書き込み途中の可能性があるため消費しない (torn read 防止)。縮退
+    (切り詰め/ローテーションで size < byte_offset) 時のみ先頭から読み直す。
+
+    壊れ行の判定はしない (SSE は生行を流し、UI 側でパースする)。
 
     Args:
-        path: 対象ファイル。
-        consumed: 既に消費済みの物理行数。
+        state: 対象ファイルの tail 状態 (in-place で byte_offset/primed を更新)。
 
     Returns:
-        新規物理行 (古い順)。ファイル不在なら空。
+        新規の完全な物理行 (古い順、空行も含む)。ファイル不在なら空。
     """
+    path = state.path
     if not path.exists():
         return []
     try:
-        text = path.read_text(encoding="utf-8")
+        with path.open("rb") as f:
+            if not state.primed:
+                data = f.read()
+                state.byte_offset = _byte_offset_after_lines(data, state.start_line)
+                state.primed = True
+                chunk = data[state.byte_offset :]
+            else:
+                size = f.seek(0, os.SEEK_END)
+                if size < state.byte_offset:
+                    # 縮退 (切り詰め/ローテーション): 先頭から読み直す。
+                    state.byte_offset = 0
+                f.seek(state.byte_offset)
+                chunk = f.read()
     except OSError:
         logger.warning("SSE tail の読み取りに失敗: %s", path, exc_info=True)
         return []
-    lines = text.splitlines()
-    # 末尾が改行で終端されていない行は書き込み途中の可能性があるため消費しない
-    # (torn read 防止)。改行で閉じられた次の poll で完全な行として読む。
-    if text and not text.endswith("\n") and lines:
-        lines = lines[:-1]
-    return lines[consumed:]
+
+    last_nl = chunk.rfind(b"\n")
+    if last_nl == -1:
+        return []  # 完全な新規行なし (末尾未終端のみ)。
+    complete = chunk[: last_nl + 1]
+    state.byte_offset += len(complete)
+    return complete.decode("utf-8", errors="replace").splitlines()
 
 
 async def tail_issue_streams(
@@ -152,8 +250,8 @@ async def tail_issue_streams(
         SseEvent。
     """
     log_dir = _issue_log_dir(workspace, issue_number)
-    events_path = log_dir / "events.jsonl"
-    agent_path = log_dir / "agent.jsonl"
+    events_state = _TailState(path=log_dir / "events.jsonl", start_line=start_events)
+    agent_state = _TailState(path=log_dir / "agent.jsonl", start_line=start_agent)
 
     events_consumed = start_events
     agent_consumed = start_agent
@@ -163,17 +261,14 @@ async def tail_issue_streams(
     while True:
         emitted = False
 
-        for source, path, consumed in (
-            ("events", events_path, events_consumed),
-            ("agent", agent_path, agent_consumed),
-        ):
-            new_lines = await asyncio.to_thread(_read_new_lines, path, consumed)
+        for source, state in (("events", events_state), ("agent", agent_state)):
+            new_lines = await asyncio.to_thread(_read_new_lines, state)
             for line in new_lines:
-                consumed += 1
+                # 空行も物理行として消費数 (SSE id) をカウントするが yield はしない。
                 if source == "events":
-                    events_consumed = consumed
+                    events_consumed += 1
                 else:
-                    agent_consumed = consumed
+                    agent_consumed += 1
                 stripped = line.strip()
                 if not stripped:
                     continue

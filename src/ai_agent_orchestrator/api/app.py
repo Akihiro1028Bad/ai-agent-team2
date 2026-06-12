@@ -13,8 +13,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from ai_agent_orchestrator.api.design import build_design_response
 from ai_agent_orchestrator.api.middleware import AuthMiddleware
@@ -52,6 +52,9 @@ from ai_agent_orchestrator.api.schemas import (
 )
 from ai_agent_orchestrator.api.stream import (
     KEEPALIVE_INTERVAL_SEC,
+    MAX_SSE_CONNECTIONS_PER_ISSUE,
+    MAX_SSE_CONNECTIONS_TOTAL,
+    SseConnectionLimiter,
     format_sse,
     parse_last_event_id,
     tail_issue_streams,
@@ -211,6 +214,14 @@ def create_app(settings: AppSettings) -> FastAPI:
     app.state.workspace = workspace
     app.state.github_client_factory = _build_default_factory(settings)
     app.state.systemd = SystemctlControl()
+    # SSE 同時接続のリミッタ (#113 DoS 対策)。テストは app.state 経由で参照できる。
+    app.state.sse_limiter = SseConnectionLimiter(
+        max_total=MAX_SSE_CONNECTIONS_TOTAL,
+        max_per_issue=MAX_SSE_CONNECTIONS_PER_ISSUE,
+    )
+    # tail のアイドル打ち切り秒数。本番は None (無限) で、テストのみ app.state 経由で
+    # 短い値を設定して TestClient のストリームを終端させる。公開 Query には出さない (#113 L3)。
+    app.state.sse_max_idle_sec = None
 
     @app.get("/api/issues", response_model=list[IssueSummaryResponse])
     async def list_issues() -> list[IssueSummaryResponse]:
@@ -251,31 +262,44 @@ def create_app(settings: AppSettings) -> FastAPI:
         last_event_id: str | None = Query(default=None),
         # 下限 0.1s: 過小値での毎ループ全ファイル読みによる CPU 占有を防ぐ
         poll_interval: float = Query(default=0.5, ge=0.1, le=5.0),
-        max_idle_sec: float | None = Query(default=None, gt=0.0),
-    ) -> StreamingResponse:
-        """events.jsonl + agent.jsonl の tail を SSE で配信する (#85).
+    ) -> Response:
+        """events.jsonl + agent.jsonl の tail を SSE で配信する (#85, #113).
 
         Last-Event-ID は (EventSource polyfill 対応で) ヘッダとクエリの両方を
-        受ける。15 秒ごとに keep-alive コメント行を送出する。
+        受ける。15 秒ごとに keep-alive コメント行を送出する。同時接続数は
+        ``app.state.sse_limiter`` で全体 / Issue 単位に制限し、上限超過は 429。
+        ストリームはクライアント切断で終端する (テスト用 max_idle_sec は
+        tail_issue_streams 側にのみ残し、公開 Query からは外した)。
         """
+        limiter: SseConnectionLimiter = app.state.sse_limiter
+        if not limiter.try_acquire(issue):
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many concurrent stream connections"},
+            )
+
         header_id = request.headers.get("Last-Event-ID")
         start_events, start_agent = parse_last_event_id(header_id or last_event_id)
 
         async def _gen() -> AsyncIterator[str]:
             # keepalive は tail_issue_streams がアイドル中も source="keepalive" として
             # yield する (format_sse がコメント行へ整形)。イベント待ちで沈黙しない。
-            async for event in tail_issue_streams(
-                workspace,
-                issue,
-                start_events=start_events,
-                start_agent=start_agent,
-                poll_interval=poll_interval,
-                max_idle_sec=max_idle_sec,
-                keepalive_interval=KEEPALIVE_INTERVAL_SEC,
-            ):
-                if await request.is_disconnected():
-                    break
-                yield format_sse(event)
+            try:
+                async for event in tail_issue_streams(
+                    workspace,
+                    issue,
+                    start_events=start_events,
+                    start_agent=start_agent,
+                    poll_interval=poll_interval,
+                    max_idle_sec=app.state.sse_max_idle_sec,
+                    keepalive_interval=KEEPALIVE_INTERVAL_SEC,
+                ):
+                    if await request.is_disconnected():
+                        break
+                    yield format_sse(event)
+            finally:
+                # 正常終了・切断・キャンセルのいずれでも接続枠を解放する。
+                limiter.release(issue)
 
         return StreamingResponse(
             _gen(),
