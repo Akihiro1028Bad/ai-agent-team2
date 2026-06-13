@@ -22,12 +22,15 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
-    api: { ...actual.api, getDesign: vi.fn() },
+    api: { ...actual.api, getDesign: vi.fn(), getEvidence: vi.fn() },
   };
 });
 
 import { api, ApiError } from "@/lib/api";
+import type { EvidenceView } from "@/lib/evidence";
 import DesignReviewPage from "@/app/issues/[id]/review/page";
+
+const EMPTY_EVIDENCE: EvidenceView = { generatedAt: null, items: [], notes: [] };
 
 function presentView(): DesignView {
   return {
@@ -45,6 +48,8 @@ function presentView(): DesignView {
 describe("DesignReviewPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // エビデンスは既定で空（個別テストで上書き）。
+    (api.getEvidence as ReturnType<typeof vi.fn>).mockResolvedValue(EMPTY_EVIDENCE);
   });
 
   it("present=true で DesignReviewClient を描画する", async () => {
@@ -52,6 +57,30 @@ describe("DesignReviewPage", () => {
     render(<DesignReviewPage />);
 
     expect(await screen.findByTestId("design-client-129")).toBeInTheDocument();
+  });
+
+  it("エビデンスがあれば EvidenceGallery セクションを描画する", async () => {
+    (api.getDesign as ReturnType<typeof vi.fn>).mockResolvedValue(presentView());
+    (api.getEvidence as ReturnType<typeof vi.fn>).mockResolvedValue({
+      generatedAt: "2026-06-13T00:00:00+00:00",
+      items: [
+        { id: "screenshot-desktop", kind: "screenshot", title: "デスクトップ スクリーンショット", url: "/api/issues/129/evidence/screenshot-desktop.png", viewport: "desktop", createdAt: undefined },
+      ],
+      notes: [],
+    } satisfies EvidenceView);
+    render(<DesignReviewPage />);
+
+    expect(await screen.findByRole("heading", { name: "エビデンス" })).toBeInTheDocument();
+    expect(screen.getByAltText("デスクトップ スクリーンショット")).toBeInTheDocument();
+  });
+
+  it("エビデンス取得失敗時もレビュー本体は描画される", async () => {
+    (api.getDesign as ReturnType<typeof vi.fn>).mockResolvedValue(presentView());
+    (api.getEvidence as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("evidence down"));
+    render(<DesignReviewPage />);
+
+    expect(await screen.findByTestId("design-client-129")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "エビデンス" })).not.toBeInTheDocument();
   });
 
   it("present=false は設計未生成メッセージを表示する", async () => {

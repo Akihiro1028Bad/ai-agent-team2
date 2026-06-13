@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError, type DesignView } from "@/lib/api";
+import type { EvidenceView } from "@/lib/evidence";
 import { DesignReviewClient } from "@/components/review/DesignReviewClient";
+import { EvidenceGallery } from "@/components/review/EvidenceGallery";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { IconArrow } from "@/components/icons";
 
@@ -25,6 +27,8 @@ export default function DesignReviewPage() {
   const [view, setView] = useState<DesignView | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
+  // エビデンス (#91)。design とは独立に取得し、失敗してもレビュー本体は妨げない。
+  const [evidence, setEvidence] = useState<EvidenceView | null>(null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -44,6 +48,19 @@ export default function DesignReviewPage() {
       });
     return () => ac.abort();
   }, [id, repo]);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    api
+      .getEvidence(id, ac.signal)
+      .then((v) => {
+        if (!ac.signal.aborted) setEvidence(v);
+      })
+      .catch(() => {
+        // エビデンス取得失敗はレビュー画面を妨げない（非表示にとどめる）。
+      });
+    return () => ac.abort();
+  }, [id]);
 
   return (
     <div className="mx-auto max-w-[920px] pb-4">
@@ -67,6 +84,13 @@ export default function DesignReviewPage() {
         <div className="panel mt-4 p-8 text-center" style={{ color: "var(--color-ink-dim)" }}>
           {view?.reason ?? "この Issue にはまだ設計が生成されていません（PLAN フェーズ未完了）。"}
         </div>
+      )}
+
+      {evidence && (
+        <section className="mt-8">
+          <h2 className="mb-3 text-[14px] font-semibold">エビデンス</h2>
+          <EvidenceGallery items={evidence.items} notes={evidence.notes} />
+        </section>
       )}
     </div>
   );

@@ -18,6 +18,7 @@ import type { LogLine, LogLevel } from "@/lib/logs";
 import type { HealthItem } from "@/lib/health";
 import type { IssueCostRow } from "@/lib/costs";
 import type { PrDiff } from "@/lib/diff";
+import type { Evidence, EvidenceKind, EvidenceView } from "@/lib/evidence";
 import { parsePatch } from "@/lib/diff-parse";
 
 // ── API ワイヤ型 (src/ai_agent_orchestrator/api/schemas.py と対応) ──
@@ -701,6 +702,57 @@ export async function getDesign(issue: number, repo?: string, signal?: AbortSign
   return adaptDesign(await apiGet<ApiDesignResponse>(withRepo(`/api/issues/${issue}/design`, repo), signal));
 }
 
+// ── エビデンス (#91) ──
+
+interface ApiEvidenceItem {
+  id: string;
+  kind: string;
+  title: string;
+  url: string;
+  viewport: string | null;
+  created_at: string | null;
+}
+
+interface ApiEvidenceResponse {
+  generated_at: string | null;
+  items: ApiEvidenceItem[];
+  notes: string[];
+}
+
+const _EVIDENCE_KINDS: readonly EvidenceKind[] = ["screenshot", "video", "terminal"];
+
+/** backend の kind 文字列を UI 型へ。未知種別は除外できるよう null を返す。 */
+function adaptEvidenceKind(kind: string): EvidenceKind | null {
+  return (_EVIDENCE_KINDS as readonly string[]).includes(kind) ? (kind as EvidenceKind) : null;
+}
+
+/** ApiEvidenceResponse を EvidenceView へ写す。未知 kind の item は黙って捨てる。 */
+function adaptEvidence(res: ApiEvidenceResponse): EvidenceView {
+  const items: Evidence[] = [];
+  for (const it of res.items ?? []) {
+    const kind = adaptEvidenceKind(it.kind);
+    if (!kind || !it.url) continue;
+    items.push({
+      id: it.id,
+      kind,
+      title: it.title,
+      url: it.url,
+      viewport: it.viewport === "desktop" || it.viewport === "mobile" ? it.viewport : undefined,
+      createdAt: it.created_at ?? undefined,
+    });
+  }
+  return {
+    generatedAt: res.generated_at ?? null,
+    items,
+    notes: (res.notes ?? []).filter((n): n is string => typeof n === "string"),
+  };
+}
+
+/** GET /api/issues/{n}/evidence */
+export async function getEvidence(issue: number, signal?: AbortSignal): Promise<EvidenceView> {
+  return adaptEvidence(await apiGet<ApiEvidenceResponse>(`/api/issues/${issue}/evidence`, signal));
+}
+
 /** レビュー提出コメント (UI の DraftComment を API 形へ写したもの)。 */
 export interface ReviewCommentInput {
   anchor: string;
@@ -787,6 +839,8 @@ export const api = {
   postReply: (issue: number, text: string, signal?: AbortSignal) => postReply(issue, text, signal),
 
   getDesign: (issue: number, repo?: string, signal?: AbortSignal) => getDesign(issue, repo, signal),
+
+  getEvidence: (issue: number, signal?: AbortSignal) => getEvidence(issue, signal),
 
   postReview: (issue: number, comments: ReviewCommentInput[], actor: string, repo?: string, signal?: AbortSignal) =>
     postReview(issue, comments, actor, repo, signal),
