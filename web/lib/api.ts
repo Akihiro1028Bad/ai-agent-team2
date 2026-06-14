@@ -27,6 +27,7 @@ export interface ApiIssueSummary {
   number: number;
   repo: string;
   title: string | null;
+  body_excerpt?: string | null;
   issue_type: string;
   phase: string;
   status: RunStatus;
@@ -201,6 +202,7 @@ export function adaptIssueSummary(a: ApiIssueSummary): IssueSummary {
     number: a.number,
     repo: a.repo,
     title: a.title ?? `#${a.number}`,
+    bodyExcerpt: a.body_excerpt ?? undefined,
     type: normalizeIssueType(a.issue_type),
     phase: normalizePhase(a.phase),
     status: a.status,

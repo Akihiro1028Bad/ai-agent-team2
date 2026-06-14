@@ -31,6 +31,7 @@ def mock_sm() -> AsyncMock:
     sm.set_issue_type = MagicMock()  # 同期メソッド
     sm.get_workflow_params = MagicMock(side_effect=lambda key: derive_workflow_params(sm.get_issue_type(key)))
     sm.get_state = MagicMock(return_value=None)  # 同期メソッド
+    sm.backfill_issue_meta = MagicMock(return_value=False)  # 同期メソッド (#142)
     sm.get_ci_retry_count = AsyncMock(return_value=0)
     return sm
 
@@ -94,12 +95,35 @@ class TestEventRouterNewIssue:
         """NEW_ISSUE -> register_issue + TYPE_DETECTION エンキュー."""
         mock_sm.get_phase = MagicMock(side_effect=KeyError(42))  # 未登録 -> KeyError
         event = _make_event(EventType.NEW_ISSUE)
+        event.issue.title = "新規Issueのタイトル"
+        event.issue.body = "本文の内容"
         await router.route(event)
 
         mock_sm.register_issue.assert_called_once()
+        # 受付時に GitHub のタイトル/本文が state へ渡る (#142)
+        assert mock_sm.register_issue.call_args.kwargs["title"] == "新規Issueのタイトル"
+        assert mock_sm.register_issue.call_args.kwargs["body"] == "本文の内容"
         mock_tq.enqueue.assert_called_once()
         enqueued = mock_tq.enqueue.call_args[0][0]
         assert enqueued.phase == "intake"
+
+    async def test_new_issue_already_registered_backfills_meta(
+        self,
+        router: EventRouter,
+        mock_sm: AsyncMock,
+        mock_tq: AsyncMock,
+    ) -> None:
+        """登録済み Issue は再登録せず title/body を backfill する (#142)."""
+        mock_sm.get_phase = MagicMock(return_value=Phase.CLARIFY)  # 登録済み
+        event = _make_event(EventType.NEW_ISSUE)
+        event.issue.title = "補完タイトル"
+        event.issue.body = "補完本文"
+        await router.route(event)
+
+        mock_sm.register_issue.assert_not_called()
+        mock_sm.backfill_issue_meta.assert_called_once()
+        assert mock_sm.backfill_issue_meta.call_args.kwargs["title"] == "補完タイトル"
+        assert mock_sm.backfill_issue_meta.call_args.kwargs["body"] == "補完本文"
 
 
 # ---------------------------------------------------------------------------

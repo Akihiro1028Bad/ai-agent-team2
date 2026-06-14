@@ -44,6 +44,7 @@ export interface IssueSummary {
   number: number;
   repo: string;
   title: string;
+  bodyExcerpt?: string; // 本文の先頭抜粋（カード表示用, #142）
   type: IssueType;
   phase: PhaseKey;
   status: RunStatus;

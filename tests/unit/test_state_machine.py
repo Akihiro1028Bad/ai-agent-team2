@@ -652,3 +652,56 @@ class TestHearingWaitWorkflow:
         await sm.transition(key, Phase.CLARIFY_WAIT)
         await sm.transition(key, Phase.SUSPENDED)
         assert sm.get_phase(key) == Phase.SUSPENDED
+
+
+# ---------------------------------------------------------------------------
+# Issue メタ (title/body) の保存・補完 (#142)
+# ---------------------------------------------------------------------------
+
+
+class TestIssueMeta:
+    """register_issue の title/body 保存と backfill_issue_meta の補完."""
+
+    def test_register_stores_title_and_body(self, sm):
+        sm.register_issue(1, "owner/repo", title="ログインバグ", body="再現手順あり")
+        state = sm.get_state(_key(1))
+        assert state is not None
+        assert state.title == "ログインバグ"
+        assert state.body == "再現手順あり"
+
+    def test_register_truncates_long_title_and_body(self, sm):
+        sm.register_issue(1, "owner/repo", title="あ" * 500, body="い" * 5000)
+        state = sm.get_state(_key(1))
+        assert state is not None
+        assert len(state.title) == 256
+        assert len(state.body) == 2000
+
+    def test_register_none_meta_becomes_empty(self, sm):
+        sm.register_issue(1, "owner/repo", title=None, body=None)
+        state = sm.get_state(_key(1))
+        assert state is not None
+        assert state.title == ""
+        assert state.body == ""
+
+    def test_backfill_fills_missing_meta(self, sm):
+        sm.register_issue(1, "owner/repo")  # title/body 未指定
+        key = _key(1)
+        changed = sm.backfill_issue_meta(key, title="後から補完", body="本文も補完")
+        assert changed is True
+        state = sm.get_state(key)
+        assert state is not None
+        assert state.title == "後から補完"
+        assert state.body == "本文も補完"
+
+    def test_backfill_does_not_overwrite_existing(self, sm):
+        sm.register_issue(1, "owner/repo", title="正本", body="正本本文")
+        key = _key(1)
+        changed = sm.backfill_issue_meta(key, title="別タイトル", body="別本文")
+        assert changed is False
+        state = sm.get_state(key)
+        assert state is not None
+        assert state.title == "正本"
+        assert state.body == "正本本文"
+
+    def test_backfill_unregistered_returns_false(self, sm):
+        assert sm.backfill_issue_meta(_key(999), title="x") is False

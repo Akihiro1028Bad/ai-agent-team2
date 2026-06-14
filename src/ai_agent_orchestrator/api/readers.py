@@ -385,12 +385,37 @@ def _issue_cost(workspace: Path, issue_number: int) -> float:
     return total
 
 
+# カードに出す本文抜粋の最大文字数 (#142)。レイアウトを崩さない短さに保つ。
+_BODY_EXCERPT_CHARS = 120
+
+
+def _make_excerpt(body: str) -> str | None:
+    """本文から表示用の短い抜粋を作る (#142).
+
+    連続する空白・改行を 1 つの空白へ畳み、先頭 ``_BODY_EXCERPT_CHARS`` 文字に
+    切り詰める。超過時は末尾に省略記号 (…) を付ける。空・空白のみは None。
+
+    Args:
+        body: state に保存された Issue 本文 (既に長さ制限済み)。
+
+    Returns:
+        表示用の抜粋文字列。内容が無ければ None。
+    """
+    collapsed = " ".join(body.split())
+    if not collapsed:
+        return None
+    if len(collapsed) <= _BODY_EXCERPT_CHARS:
+        return collapsed
+    return collapsed[:_BODY_EXCERPT_CHARS].rstrip() + "…"
+
+
 def _summary_from_state(state: IssueState, repo: str, cost_usd: float) -> IssueSummaryResponse:
     """IssueState から IssueSummaryResponse を構築する."""
     return IssueSummaryResponse(
         number=state.issue_number,
         repo=repo,
-        title=None,
+        title=state.title or None,
+        body_excerpt=_make_excerpt(state.body),
         issue_type=state.issue_type,
         phase=state.phase.value,
         status=phase_to_status(state.phase),
