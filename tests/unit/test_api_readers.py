@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from ai_agent_orchestrator.api.readers import (
+    _make_excerpt,
     aggregate_costs,
     merge_activity,
     read_agent_logs,
@@ -38,8 +39,10 @@ def _state_entry(
     phase: str,
     updated_at: str,
     issue_type: str = "bug",
+    title: str | None = None,
+    body: str | None = None,
 ) -> dict[str, object]:
-    return {
+    entry: dict[str, object] = {
         "issue_number": number,
         "phase": phase,
         "issue_type": issue_type,
@@ -52,6 +55,12 @@ def _state_entry(
         "created_at": "2026-01-01T00:00:00+00:00",
         "updated_at": updated_at,
     }
+    # title/body 未指定 = 旧データ (state にキー無し) を再現する
+    if title is not None:
+        entry["title"] = title
+    if body is not None:
+        entry["body"] = body
+    return entry
 
 
 # ──────────────────────────────────────
@@ -133,6 +142,53 @@ def test_read_issue_summaries_includes_cost(tmp_path: Path) -> None:
     )
     summaries = read_issue_summaries(tmp_path)
     assert summaries[0].cost_usd == pytest.approx(1.75)
+
+
+def test_read_issue_summaries_includes_title_and_body_excerpt(tmp_path: Path) -> None:
+    """state の title/body が summary に反映される (#142)."""
+    _write_state(
+        tmp_path,
+        {
+            "o/r:1": _state_entry(
+                number=1,
+                repo="o/r",
+                phase="clarify",
+                updated_at="2026-01-01T00:00:00+00:00",
+                title="ログイン画面のバグ修正",
+                body="ボタンを押しても反応しない。\n\n再現手順:\n1. ログイン",
+            )
+        },
+    )
+    summary = read_issue_summaries(tmp_path)[0]
+    assert summary.title == "ログイン画面のバグ修正"
+    # 改行は 1 つの空白へ畳まれる
+    assert summary.body_excerpt == "ボタンを押しても反応しない。 再現手順: 1. ログイン"
+
+
+def test_read_issue_summaries_legacy_state_without_title(tmp_path: Path) -> None:
+    """title/body キーの無い旧 state でも例外なく None を返す (#142)."""
+    _write_state(
+        tmp_path,
+        {"o/r:1": _state_entry(number=1, repo="o/r", phase="clarify", updated_at="2026-01-01T00:00:00+00:00")},
+    )
+    summary = read_issue_summaries(tmp_path)[0]
+    assert summary.title is None
+    assert summary.body_excerpt is None
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("", None),
+        ("   \n\t  ", None),
+        ("短い本文", "短い本文"),
+        ("複数  空白\n\n改行", "複数 空白 改行"),
+        ("a" * 200, "a" * 120 + "…"),
+    ],
+)
+def test_make_excerpt(body: str, expected: str | None) -> None:
+    """_make_excerpt は空白畳み込み・120字切り詰め・省略記号付与を行う (#142)."""
+    assert _make_excerpt(body) == expected
 
 
 # ──────────────────────────────────────

@@ -24,6 +24,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _opt_str(value: object) -> str | None:
+    """githubkit の Unset / None / str を str | None へ正規化する (#142).
+
+    Issue.body などは型上 ``Unset | str | None`` を取り得る。state へ渡す前に
+    文字列以外 (Unset / None) を None へ畳む。
+    """
+    return value if isinstance(value, str) else None
+
+
 _IMPL_REVIEW_PROMPT = """\
 @claude /review
 
@@ -300,6 +310,8 @@ class EventRouter:
             issue_number=event.issue.number,
             repo=repo_key,
             initial_phase=current_phase,
+            title=_opt_str(event.issue.title),
+            body=_opt_str(event.issue.body),
         )
         self._sm.set_issue_type(issue_key, issue_type)
 
@@ -313,9 +325,15 @@ class EventRouter:
             raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
         repo_key = f"{event.repo.owner}/{event.repo.repo}"
-        # 既に登録済みの場合はスキップ (再ポーリングで重複検知される)
+        # 既に登録済みの場合はスキップ (再ポーリングで重複検知される)。
+        # ただし title/body が未保存の旧データなら、この機会に補完する (#142)。
         try:
             self._sm.get_phase(issue_key)
+            self._sm.backfill_issue_meta(
+                issue_key,
+                title=_opt_str(event.issue.title),
+                body=_opt_str(event.issue.body),
+            )
             return  # 登録済み
         except KeyError:
             pass  # 未登録 -> 登録に進む
@@ -323,6 +341,8 @@ class EventRouter:
             issue_number=event.issue.number,
             repo=repo_key,
             initial_phase=Phase.INTAKE,
+            title=_opt_str(event.issue.title),
+            body=_opt_str(event.issue.body),
         )
         await self._tq.enqueue(
             TaskRequest(

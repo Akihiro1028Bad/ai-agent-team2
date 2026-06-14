@@ -70,6 +70,12 @@ describe("adaptIssueSummary", () => {
     expect(s.prNumber).toBeUndefined();
     expect(s.branch).toBeUndefined();
   });
+
+  it("body_excerpt を bodyExcerpt へ写し、null/未指定なら undefined (#142)", () => {
+    expect(adaptIssueSummary(summary({ body_excerpt: "本文の抜粋" })).bodyExcerpt).toBe("本文の抜粋");
+    expect(adaptIssueSummary(summary({ body_excerpt: null })).bodyExcerpt).toBeUndefined();
+    expect(adaptIssueSummary(summary()).bodyExcerpt).toBeUndefined();
+  });
 });
 
 describe("normalizePhase", () => {

@@ -21,6 +21,8 @@ from ai_agent_orchestrator.models import (
     WorkflowParams,
     derive_workflow_params,
     make_issue_key,
+    truncate_body,
+    truncate_title,
 )
 
 logger = logging.getLogger(__name__)
@@ -275,6 +277,8 @@ class StateMachineManager:
         issue_number: int,
         repo: str,
         initial_phase: Phase = Phase.INTAKE,
+        title: str | None = None,
+        body: str | None = None,
     ) -> None:
         """新規 Issue をステートマシンに登録する.
 
@@ -282,6 +286,8 @@ class StateMachineManager:
             issue_number: Issue 番号。
             repo: "owner/repo" 形式のリポジトリキー。
             initial_phase: 初期フェーズ (デフォルト: INTAKE)。
+            title: GitHub Issue のタイトル (Web UI 表示用, #142)。None 許容。
+            body: GitHub Issue の本文 (Web UI 抜粋表示用, #142)。None 許容。
 
         Raises:
             ValueError: 既に登録済みの Issue を指定した場合。
@@ -296,6 +302,8 @@ class StateMachineManager:
             issue_number=issue_number,
             phase=initial_phase,
             repo=repo,
+            title=truncate_title(title),
+            body=truncate_body(body),
             created_at=now,
             updated_at=now,
         )
@@ -470,6 +478,41 @@ class StateMachineManager:
         self._states[issue_key].issue_type = issue_type
         self._workflows[issue_key].issue_type = issue_type
         self._auto_save()
+
+    def backfill_issue_meta(
+        self,
+        issue_key: IssueKey,
+        title: str | None = None,
+        body: str | None = None,
+    ) -> bool:
+        """既登録 Issue の未保存タイトル/本文を補完する (#142).
+
+        既に値が入っているフィールドは上書きしない (受付時に保存した正本を尊重)。
+        title/body のいずれかを実際に更新した場合のみ永続化し True を返す。
+        ポーリングで再検知された Issue (受付時に title 未保存の旧データ) を、
+        次回検知時に補完するために使う。
+
+        Args:
+            issue_key: IssueKey (repo, issue_number)。
+            title: 補完候補のタイトル (None / 空文字なら何もしない)。
+            body: 補完候補の本文 (None / 空文字なら何もしない)。
+
+        Returns:
+            いずれかのフィールドを更新したら True、変更なしなら False。
+        """
+        state = self._states.get(issue_key)
+        if state is None:
+            return False
+        changed = False
+        if not state.title and title:
+            state.title = truncate_title(title)
+            changed = bool(state.title) or changed
+        if not state.body and body:
+            state.body = truncate_body(body)
+            changed = bool(state.body) or changed
+        if changed:
+            self._auto_save()
+        return changed
 
     async def get_ci_retry_count(self, issue_key: IssueKey) -> int:
         """CI 修正リトライ回数を取得する."""

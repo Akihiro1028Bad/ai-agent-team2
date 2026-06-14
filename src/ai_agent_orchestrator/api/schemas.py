@@ -50,6 +50,9 @@ class IssueSummaryResponse(BaseModel):
     number: int
     repo: str
     title: str | None = None
+    # 本文の先頭抜粋 (#142)。カードに 1〜2 行の概要を出すための短い文字列。
+    # 本文未保存 (旧データ等) は None。
+    body_excerpt: str | None = None
     issue_type: str
     phase: str
     status: RunStatus

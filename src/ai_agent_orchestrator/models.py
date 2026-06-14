@@ -196,6 +196,49 @@ class ApprovalMethod(StrEnum):
 
 
 # ---------------------------------------------------------------------------
+# 1.9 Issue メタ (title/body) の保存上限 (#142)
+# ---------------------------------------------------------------------------
+
+# state.json 肥大化を防ぐため、保存するタイトル/本文を上限で切り詰める。
+# 本文はカードの抜粋表示にしか使わないため、全文ではなく十分な先頭量のみ保持する。
+MAX_STORED_TITLE_CHARS = 256
+MAX_STORED_BODY_CHARS = 2000
+
+
+def truncate_title(title: str | None) -> str:
+    """保存用にタイトルを正規化・切り詰めする (#142).
+
+    None は空文字へ、前後空白は除去、上限超過は末尾を切り落とす。
+
+    Args:
+        title: GitHub Issue のタイトル (None 許容)。
+
+    Returns:
+        保存用に正規化したタイトル文字列。
+    """
+    if not title:
+        return ""
+    return title.strip()[:MAX_STORED_TITLE_CHARS]
+
+
+def truncate_body(body: str | None) -> str:
+    """保存用に本文を切り詰めする (#142).
+
+    None は空文字へ、上限超過は末尾を切り落とす。本文中の改行等は抜粋生成側
+    (api 層) で正規化するため、ここでは内容を保ったまま長さのみ制限する。
+
+    Args:
+        body: GitHub Issue の本文 (None 許容)。
+
+    Returns:
+        保存用に切り詰めた本文文字列。
+    """
+    if not body:
+        return ""
+    return body[:MAX_STORED_BODY_CHARS]
+
+
+# ---------------------------------------------------------------------------
 # 2. Dataclass 定義
 # ---------------------------------------------------------------------------
 
@@ -278,6 +321,11 @@ class IssueState:
     phase: Phase
     issue_type: str = ""
     repo: str = ""
+    # Issue 受付時に GitHub から取得して保存するタイトル/本文 (#142)。
+    # Web UI のカード表示に使う。state.json 肥大化を避けるため受付時に
+    # 上限内へ切り詰めて保存する (truncate_title / truncate_body)。
+    title: str = ""
+    body: str = ""
     session_id: str | None = None
     pr_number: int | None = None
     design_pr_number: int | None = None

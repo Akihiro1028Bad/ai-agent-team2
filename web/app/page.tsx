@@ -100,6 +100,11 @@ export default function Dashboard() {
                       <TypeTag type={issue.type} />
                     </div>
                     <h3 className="mt-1 truncate text-[15px] font-medium">{issue.title}</h3>
+                    {issue.bodyExcerpt && (
+                      <p className="mt-1 line-clamp-2 text-[12px] leading-snug" style={{ color: "var(--color-ink-dim)" }}>
+                        {issue.bodyExcerpt}
+                      </p>
+                    )}
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1.5">
                     <StatusPill status={issue.status} />

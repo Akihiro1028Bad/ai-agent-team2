@@ -82,6 +82,16 @@ describe("Dashboard (app/page.tsx)", () => {
     await waitFor(() => expect(screen.getByText("テスト Issue タイトル")).toBeDefined());
   });
 
+  it("bodyExcerpt があるとカードに本文抜粋が表示される (#142)", async () => {
+    vi.mocked(usePolling).mockReturnValue({
+      data: [makeIssue({ number: 42, title: "タイトル", bodyExcerpt: "本文の抜粋テキスト" })],
+      error: undefined,
+      loading: false,
+    });
+    render(<Dashboard />);
+    await waitFor(() => expect(screen.getByText("本文の抜粋テキスト")).toBeDefined());
+  });
+
   it("API エラー時に ConnectionBanner のアラートが表示される", async () => {
     vi.mocked(usePolling).mockReturnValue({ data: undefined, error: new ApiError(0, "接続不可"), loading: false });
     render(<Dashboard />);
