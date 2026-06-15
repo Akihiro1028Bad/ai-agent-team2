@@ -755,6 +755,51 @@ export async function getEvidence(issue: number, signal?: AbortSignal): Promise<
   return adaptEvidence(await apiGet<ApiEvidenceResponse>(`/api/issues/${issue}/evidence`, signal));
 }
 
+// ── UI プロトタイプ (#145) ──
+
+interface ApiPrototypeItem {
+  id: string;
+  title: string;
+  url: string;
+}
+
+interface ApiPrototypeResponse {
+  generated_at: string | null;
+  items: ApiPrototypeItem[];
+  notes: string[];
+}
+
+export interface Prototype {
+  id: string;
+  title: string;
+  /** HTML 配信 URL（相対パス）。sandbox iframe の src に使う。 */
+  url: string;
+}
+
+export interface PrototypeView {
+  generatedAt: string | null;
+  items: Prototype[];
+  notes: string[];
+}
+
+function adaptPrototypes(res: ApiPrototypeResponse): PrototypeView {
+  const items: Prototype[] = [];
+  for (const it of res.items ?? []) {
+    if (!it.url) continue;
+    items.push({ id: it.id, title: it.title, url: it.url });
+  }
+  return {
+    generatedAt: res.generated_at ?? null,
+    items,
+    notes: (res.notes ?? []).filter((n): n is string => typeof n === "string"),
+  };
+}
+
+/** GET /api/issues/{n}/prototypes */
+export async function getPrototypes(issue: number, signal?: AbortSignal): Promise<PrototypeView> {
+  return adaptPrototypes(await apiGet<ApiPrototypeResponse>(`/api/issues/${issue}/prototypes`, signal));
+}
+
 /** レビュー提出コメント (UI の DraftComment を API 形へ写したもの)。 */
 export interface ReviewCommentInput {
   anchor: string;
@@ -843,6 +888,7 @@ export const api = {
   getDesign: (issue: number, repo?: string, signal?: AbortSignal) => getDesign(issue, repo, signal),
 
   getEvidence: (issue: number, signal?: AbortSignal) => getEvidence(issue, signal),
+  getPrototypes: (issue: number, signal?: AbortSignal) => getPrototypes(issue, signal),
 
   postReview: (issue: number, comments: ReviewCommentInput[], actor: string, repo?: string, signal?: AbortSignal) =>
     postReview(issue, comments, actor, repo, signal),

@@ -437,3 +437,22 @@ class EvidenceResponse(BaseModel):
     generated_at: str | None = None
     items: list[EvidenceItemResponse] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+
+
+class PrototypeItemResponse(BaseModel):
+    """GET /api/issues/{n}/prototypes の 1 アイテム (#145).
+
+    url は HTML 配信エンドポイントへの相対 URL。sandbox iframe の src に使う。
+    """
+
+    id: str
+    title: str
+    url: str
+
+
+class PrototypeResponse(BaseModel):
+    """GET /api/issues/{n}/prototypes のレスポンス (#145)."""
+
+    generated_at: str | None = None
+    items: list[PrototypeItemResponse] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)

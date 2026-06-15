@@ -217,7 +217,15 @@ class PlanExecutor(PhaseExecutor):
             f"1. docs/designs/issue-{request.issue_number}.md に設計書を作成\n"
             f"   設計書には設計内容に加え、**末尾に `## サブタスク` セクション** "
             f"(実装計画) を必ず含めること\n"
-            f"2. **git commit / push / PR 作成は不要です** (システムが行います)"
+            f"2. **UI に影響がある場合**、プロのデザイナーとして "
+            f"`docs/designs/issue-{request.issue_number}.prototype.html` に "
+            f"**動く UI プロトタイプ**を 1 案作成すること (#145)。\n"
+            f"   - **単一の自己完結 HTML**: CSS/JS をインライン化し、外部ネットワーク依存なし\n"
+            f"   - **モックデータで主要画面と軽い操作が動く**こと (本番 API 連携・"
+            f"ピクセルパーフェクトは不要、使い捨て前提)\n"
+            f"   - 目的は「どんな UI でどう動くか」をユーザーが承認前に体感できること\n"
+            f"   - UI に影響がない変更 (内部ロジック等) ならプロトタイプは作成不要\n"
+            f"3. **git commit / push / PR 作成は不要です** (システムが行います)"
             f"\n\n## 設計書末尾の `## サブタスク` セクション (必ず守ること)\n\n"
             f"設計書の末尾に以下のフォーマットで `## サブタスク` セクションを含めること。\n"
             f"このセクションは後続フェーズが自動的に読み取り構造を検証するため、"
@@ -241,8 +249,10 @@ class PlanExecutor(PhaseExecutor):
             f"(`files` にテストファイルを含めること)\n"
             f"- `depends_on` には依存するサブタスクの番号 (整数) を列挙する\n"
             f"\n## 重要な制約\n"
-            f"- **設計書 (`docs/designs/` 配下の `.md` ファイル) のみ**を作成してください\n"
-            f"- ソースコード (`.ts`, `.tsx`, `.js`, `.py` 等) の作成・変更は**禁止**です\n"
+            f"- 作成してよいのは **設計書 (`docs/designs/` 配下の `.md`)** と "
+            f"**UI プロトタイプ (`docs/designs/issue-{request.issue_number}.prototype.html`)** のみです\n"
+            f"- ソースコード (`.ts`, `.tsx`, `.js`, `.py` 等) の作成・変更は**禁止**です "
+            f"(プロトタイプは上記の単一 HTML に限る)\n"
             f"- テストコードの作成も禁止です (`## サブタスク` での計画記述のみ)\n"
             f"- ソースコードの実装は後続の `implement` フェーズで行います\n"
         ) + plan_json_prompt_section("full")
@@ -267,6 +277,9 @@ class PlanExecutor(PhaseExecutor):
 
         # 設計フェーズでソースコードが作成された場合の警告
         await self._warn_if_source_files_added(request)
+
+        # UI プロトタイプを収集して承認画面で見られるようにする (#145)
+        await self._collect_prototype(request)
 
         # 設計書末尾の ## サブタスク (実装計画) の構造を自己検証し、NGなら再生成
         await self._revalidate_design(request)
@@ -305,6 +318,32 @@ class PlanExecutor(PhaseExecutor):
                 "next_action": "→ 設計PRをレビューしてください",
             },
         )
+
+    async def _collect_prototype(self, request: TaskRequest) -> None:
+        """PLAN 生成の UI プロトタイプ HTML を artifacts へ収集する (#145).
+
+        エージェントが worktree に生成したプロトタイプを承認画面で配信できる場所へ
+        コピーする。収集失敗・未生成は握り潰し、本処理 (PR 作成・遷移) は継続する。
+
+        Args:
+            request: タスクリクエスト。
+        """
+        try:
+            from pathlib import Path
+
+            from ai_agent_orchestrator.prototype.collector import collect_prototype
+
+            wt = await self._workspace.create_worktree(
+                request.repo,
+                request.issue_number,
+                branch_prefix="feature",
+            )
+            collect_prototype(self._workspace.base_dir, request.issue_number, Path(str(wt)))
+        except Exception:
+            logger.exception(
+                "Issue #%d: プロトタイプ収集に失敗しました（処理は継続）",
+                request.issue_number,
+            )
 
     # ------------------------------------------------------------------
     # plan JSON の保存
