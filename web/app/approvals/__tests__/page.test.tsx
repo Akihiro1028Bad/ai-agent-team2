@@ -131,4 +131,25 @@ describe("ApprovalsPage", () => {
     render(<ApprovalsPage />);
     await waitFor(() => expect(screen.getByText("5分前")).toBeDefined());
   });
+
+  it("phase=approve の行に承認ボタンが出る (#146)", async () => {
+    vi.mocked(usePolling).mockReturnValue({
+      data: [makeRow({ phase: "approve" })],
+      error: undefined,
+      loading: false,
+    });
+    render(<ApprovalsPage />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "承認" })).toBeDefined());
+  });
+
+  it("phase=review の行には承認ボタンを出さない (#146)", async () => {
+    vi.mocked(usePolling).mockReturnValue({
+      data: [makeRow({ phase: "review" })],
+      error: undefined,
+      loading: false,
+    });
+    render(<ApprovalsPage />);
+    await waitFor(() => expect(screen.getByText("PRレビュー待ち")).toBeDefined());
+    expect(screen.queryByRole("button", { name: "承認" })).toBeNull();
+  });
 });

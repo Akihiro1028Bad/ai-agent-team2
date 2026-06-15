@@ -9,6 +9,7 @@ import { Money, StatusPill, TypeTag, eventIcon, phaseAccent } from "@/components
 import { PhaseRail } from "@/components/PhaseRail";
 import { ErrorPanel } from "@/components/ErrorPanel";
 import { IssueControls } from "@/components/IssueControls";
+import { ApprovalGate } from "@/components/ApprovalGate";
 import { LogViewer } from "@/components/LogViewer";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { ComingSoon } from "@/components/ComingSoon";
@@ -35,9 +36,14 @@ export default function IssueDetailPage() {
   const [replySending, setReplySending] = useState(false);
   const [replyMessage, setReplyMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
-  // 実 API の PR 番号で導線の表示を判定する (差分/設計レビューへのリンク)。
+  // 実 API の PR 番号で導線の表示を判定する (差分リンク)。
   const hasPr = issue?.prNumber != null;
-  const hasReview = issue?.designPrNumber != null;
+  // 承認待ち (approve フェーズ) を直接承認できるゲートを出すか (#146)。
+  // 設計 PR の有無に依存せず、フェーズ条件で判定する。
+  const isApprovalGate = issue?.phase === "approve" && issue?.status === "waiting";
+  // 設計レビューへの標準導線。approve フェーズはゲート側にレビューリンクを内包する
+  // ため、重複を避けてここでは設計 PR がある非 approve 時のみ出す (#146)。
+  const hasReview = issue?.designPrNumber != null && !isApprovalGate;
 
   if (loading && !issue) {
     return (
@@ -110,6 +116,9 @@ export default function IssueDetailPage() {
 
         <IssueControls issue={issue.number} status={issue.status} phase={issue.phase} repo={issue.repo} />
 
+        {/* 計画承認ゲート (approve フェーズ待機時のみ表示, #146) */}
+        {isApprovalGate && <ApprovalGate issue={issue.number} repo={repo} />}
+
         {/* ヒアリング回答ボックス (clarify-wait 時のみ表示) */}
         {issue.phase === "clarify" && issue.status === "waiting" && (
           <div className="mt-4 rounded-xl border p-4" style={{ borderColor: "color-mix(in srgb, var(--color-amber) 35%, transparent)", background: "color-mix(in srgb, var(--color-amber) 6%, transparent)" }}>
@@ -181,7 +190,7 @@ export default function IssueDetailPage() {
           </Link>
         )}
 
-        {issue.needsHuman != null && (
+        {issue.needsHuman != null && !isApprovalGate && (
           <Link href="/approvals" className="mt-4 flex items-center justify-between rounded-xl border px-4 py-3" style={{ borderColor: "color-mix(in srgb, var(--color-amber) 35%, transparent)", background: "color-mix(in srgb, var(--color-amber) 8%, transparent)" }}>
             <span className="inline-flex items-center gap-2 text-[13px]" style={{ color: "var(--color-amber)" }}>
               <span className="block h-1.5 w-1.5 rounded-full" style={{ background: "var(--color-amber)" }} /> {issue.needsHuman}
