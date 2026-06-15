@@ -14,11 +14,13 @@
 ```
 
 > **あなたのリポジトリに、眠らないエンジニアを。**
-> Issue を投げれば、ヒアリング・設計・実装・PR まで全自動。
-> AI チームメンバーをそのまま雇う感覚でお使いください。
+> Issue を投げれば、ヒアリング → 設計 → 実装 → PR → レビュー対応まで全自動。
+> しかも要所では **Web ダッシュボードから「動く UI プロトタイプ」を見ながらワンクリック承認**。
+> AI チームメンバーをそのまま雇う感覚でお使いください。☕️
 
 [![CI](https://github.com/Akihiro1028Bad/ai-agent-team2/actions/workflows/ci.yml/badge.svg)](https://github.com/Akihiro1028Bad/ai-agent-team2/actions/workflows/ci.yml)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
+[![Next.js 16](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![uv](https://img.shields.io/badge/package%20manager-uv-blueviolet.svg)](https://docs.astral.sh/uv/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-orange.svg)](https://github.com/astral-sh/ruff)
@@ -27,61 +29,84 @@
 
 ## 🌟 概要
 
-24時間稼働するPCにAIマルチエージェントを配置し、**1人のエンジニアとして自律的に稼働**させるシステムです。
-GitHub Issue ベースでタスクをアサインし、要件ヒアリング・設計・実装計画・実装・レビュー対応までを自動で行い、Pull Request を作成します。
+24 時間稼働する PC に AI マルチエージェントを配置し、**1 人のエンジニアとして自律的に働かせる**システムです。
+GitHub Issue にラベルを 1 つ付けるだけで、要件ヒアリング・設計・実装計画・実装・CI 修正・レビュー対応までを自動で回し、Pull Request を仕上げます。
 
-### 主な特徴
+そして「全部おまかせ」では不安な要所 — **計画の承認・分割の承認・PR レビュー** — は、付属の **Web ダッシュボード**から人間がサクッと判断できます。設計段階では AI が**動く UI プロトタイプ**まで用意してくれるので、「コードになる前に画面を触って納得してから GO」が可能です。
+
+### ✨ 主な特徴
 
 | 機能 | 説明 |
 |-----|------|
-| 🤖 **Issue 駆動** | `ai-agent` ラベルを付けるだけで全自動起動 |
-| 🔀 **タイプ別フロー** | Bug / Feature-S / Feature-M / Feature-L を自動判定し最適なフローで処理 |
-| 🤝 **人間との協調** | 設計承認・PR レビューなど重要なポイントで人間の判断を介入 |
-| ⚡ **並行処理** | 最大2 Issue を同時処理（git worktree による物理的分離） |
-| 🏢 **マルチリポジトリ** | YAML 1ファイルで複数リポジトリを一元管理 |
-| 🔑 **マルチアカウント** | リポジトリごとに異なる GitHub アカウントを切り替え |
-| 🧠 **自己改善ループ** | エピソード → パターン → Skill 抽出で使うほど賢くなる |
+| 🏷️ **Issue 駆動** | `ai-agent` ラベルを付けるだけで全自動起動 |
+| 🛤️ **統一パイプライン** | 全 Issue が `INTAKE → CLARIFY → (SPLIT) → PLAN → APPROVE → IMPLEMENT → REVIEW → (REVISE) → DONE` の一本道を流れる。タイプ差はフェーズではなく**パラメータ**で表現 |
+| 🖥️ **Web ダッシュボード** | 処理中 Issue・キュー・ライブログ・コスト・承認待ちを一望。Next.js 製 |
+| ✅ **画面からワンクリック承認** | 計画・分割の承認/差し戻しを Web から実行（GitHub の 👍 リアクションに行かなくてよい） |
+| 🎨 **動く UI プロトタイプ** | 設計段階で AI がデザイナーとして自己完結 HTML を生成 → サンドボックス iframe で触って確認してから承認 |
+| 🤝 **人間との協調** | 承認・レビューなど重要ポイントで人間が介入。それ以外は自走 |
+| ⚡ **並行処理** | 複数 Issue を同時処理（git worktree で物理的に分離） |
+| 🏢 **マルチリポジトリ / 🔑 マルチアカウント** | YAML 1 ファイルで複数リポ・複数 GitHub アカウントを一元管理 |
+| 🧠 **自己改善ループ** | エピソード → パターン → Skill 抽出で、使うほど賢くなる |
 
 ---
 
 ## 🏛️ アーキテクチャ
 
+オーケストレーター本体（常駐 asyncio プロセス）と、それが書き出すファイル成果物を読む **Web レイヤ（FastAPI + Next.js）** の二段構え。Web 側はオーケストレーターのプロセス状態に一切触らず、`state.json` / `events.jsonl` / `artifacts/` などのファイルだけを読み、操作は `control.jsonl` 経由で受け渡します（疎結合）。
+
 ```
-╔══════════════════════════════════════════════════════╗
-║           AI Multi-Agent Orchestrator                ║
-║                   (asyncio 常駐)                     ║
-╠══════════════════════════════════════════════════════╣
-║                                                      ║
-║  GitHub Poller ──→ Event Router ──→ Task Queue       ║
-║   (2分間隔)                         (Priority+Sem)   ║
-║                                          │           ║
-║                                   Claude Agent       ║
-║                                    SDK Runner        ║
-║                                          │           ║
-║                         ┌────────────────┼────────┐  ║
-║                         ▼                ▼        ▼  ║
-║                     GitHub           Slack    Event  ║
-║                     Client          Notifier Logger  ║
-║                                                      ║
-║  ┌─────────────────────────────────────────────────┐ ║
-║  │            Knowledge (自己改善ループ)             │ ║
-║  │  Episode Store → Pattern Extractor → Skill Mgr  │ ║
-║  └─────────────────────────────────────────────────┘ ║
-╚══════════════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════════════════╗
+║                  AI Multi-Agent Orchestrator                   ║
+║                       (asyncio 常駐プロセス)                    ║
+╠════════════════════════════════════════════════════════════════╣
+║                                                                ║
+║  GitHub Poller ──→ Event Router ──→ Task Queue ──→ Dispatcher  ║
+║   (既定 120秒)                      (Priority+Sem)     │        ║
+║                                              Claude Agent SDK   ║
+║                                                Runner  │        ║
+║                         ┌──────────────┬───────────────┤        ║
+║                         ▼              ▼               ▼        ║
+║                     GitHub          Slack           Event      ║
+║                     Client         Notifier         Logger     ║
+║                                                                ║
+║  ┌──────────────────────────────────────────────────────────┐ ║
+║  │           Knowledge（自己改善ループ）                       │ ║
+║  │   Episode Store → Pattern Extractor → Skill Manager       │ ║
+║  └──────────────────────────────────────────────────────────┘ ║
+╚════════════════════════════════════════════════════════════════╝
+            │  state.json / events.jsonl / artifacts/   ▲ control.jsonl
+            ▼  (ファイル成果物を読む)                     │ (承認・操作を書く)
+╔════════════════════════════════════════════════════════════════╗
+║   Web レイヤ                                                    ║
+║   FastAPI (REST + SSE, :8000)  ◀──▶  Next.js Dashboard (:3000) ║
+║   ・処理中 Issue / キュー / ライブログ / コスト                 ║
+║   ・承認待ち一覧・計画/分割の承認・差し戻し                      ║
+║   ・設計レビュー＋動く UI プロトタイプ（sandbox iframe）         ║
+╚════════════════════════════════════════════════════════════════╝
 ```
 
 ---
 
-## 🔀 ワークフロー
+## 🛤️ ワークフロー（統一パイプライン）
 
-Issue は内容に応じて4つのタイプに自動分類され、タイプごとに最適化されたワークフローで処理されます。
+かつてはタイプごとに別フローでしたが、現在は **全 Issue が同じ 9 フェーズの一本道**を流れます。Bug / Feature-M / Feature-L の違いは、フェーズの分岐ではなく **3 つのパラメータ**に集約されています。
 
-| タイプ | 自動判定 | フェーズ | コスト目安 |
-|-------|---------|---------|-----------|
-| 🐛 **Bug** | エラー・不具合 | `ANALYSIS` → 👍承認 → `FIX` → PR | ~$0.80 |
-| ⚡ **Feature-S** | 1〜3ファイル変更 | `HEARING` → `PLAN_BRIEF` → 👍承認 → `IMPLEMENT` → PR | ~$0.90 |
-| 🏗️ **Feature-M** | 複数ファイル・設計必要 | `HEARING` → 設計PR → approve → `PLANNING` → `IMPLEMENT` → PR | ~$1.50 |
-| 🏢 **Feature-L** | 大規模・分割必要 | `HEARING` → 分割提案 → 子Issue作成 → 各子をタイプ別処理 | $2.0 + N×$1.50 |
+```
+INTAKE ─→ CLARIFY ─┬─→ SPLIT ─┐
+   │         │ (要分割のみ)    │
+   │         ▼                 ▼
+   └────→  PLAN ─→ APPROVE ─→ IMPLEMENT ─→ REVIEW ─→ DONE
+              ▲        │(差し戻し)            │(指摘/CI失敗)
+              └────────┘             REVISE ─┘
+```
+
+| パラメータ | 意味 | bug | feature-m | feature-l |
+|-----------|------|:---:|:---------:|:---------:|
+| `plan_depth` | 計画の深さ（light=方針 / full=設計書＋PR） | light | full | full |
+| `needs_split` | SPLIT（子 Issue 分割）を通すか | – | – | ✅ |
+| `approval_style` | 承認ゲートの方式 | 👍 reaction | PR approve | PR approve |
+
+> 💡 タイプは `INTAKE` が Issue の規模・性質から自動判定し、以降は全タイプが同一コードパスを流れます。承認は **Web 画面 / 👍 リアクション / PR approve / LGTM コメント**のいずれでも OK。差し戻し（指摘）は計画フェーズ（PLAN）へ戻り、指摘全文を次の実行プロンプトに渡して作り直します。
 
 ---
 
@@ -89,35 +114,35 @@ Issue は内容に応じて4つのタイプに自動分類され、タイプご�
 
 ### 前提条件
 
-| ソフトウェア | バージョン |
-|------------|-----------|
-| Python | 3.13+ |
-| [uv](https://docs.astral.sh/uv/) | 最新版 |
-| git | 2.20+ |
-| [gh (GitHub CLI)](https://cli.github.com/) | 2.0+ |
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | 最新版 |
+| ソフトウェア | バージョン | 用途 |
+|------------|-----------|------|
+| Python | 3.13+ | オーケストレーター本体 |
+| [uv](https://docs.astral.sh/uv/) | 最新版 | Python の依存・仮想環境管理 |
+| Node.js | 20+ | Web ダッシュボード（任意） |
+| git | 2.20+ | worktree 分離 |
+| [gh (GitHub CLI)](https://cli.github.com/) | 2.0+ | トークンのフォールバック解決 |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | 最新版 | AI エージェント実行基盤 |
 
 ### ① インストール
 
 ```bash
-# リポジトリのクローン
 git clone https://github.com/Akihiro1028Bad/ai-agent-team2.git
 cd ai-agent-team2
 
-# 依存関係のインストール
+# Python 依存をインストール
 uv sync --all-extras
 
-# インストール確認
+# 動作確認
 uv run ai-agent --help
 ```
 
 ### ② 初期セットアップ
 
 ```bash
-# GitHub アカウントを登録 (トークンを keyring に保存)
+# GitHub アカウントを登録（トークンを OS keyring に保存）
 uv run ai-agent account add my-org
 
-# 対象リポジトリをセットアップ (clone + ラベル作成 + config.yaml 更新)
+# 対象リポジトリをセットアップ（clone + ラベル作成 + config.yaml 更新）
 uv run ai-agent setup myorg/my-app --account my-org
 
 # 認証・接続チェック
@@ -127,12 +152,30 @@ uv run ai-agent health
 ### ③ 起動
 
 ```bash
+# オーケストレーター（フォアグラウンド）
 uv run ai-agent start --foreground
 ```
 
 ### ④ 動作確認
 
-対象リポジトリで `ai-agent` ラベルを付けた Issue を作成すると、2分以内にポーリングで検知され、自動処理が開始されます。
+対象リポジトリで `ai-agent` ラベルを付けた Issue を作成すると、ポーリング（既定 120 秒間隔）で検知され、自動処理が始まります。
+
+### ⑤ Web ダッシュボード（任意・おすすめ）
+
+「いま何が動いていて、何が承認待ちか」を画面で見たい・画面から承認したいときは、API と Web を起動します（オーケストレーターと合わせて **3 プロセス**構成）。
+
+```bash
+# ターミナル1: オーケストレーター本体
+uv run ai-agent start --foreground
+
+# ターミナル2: REST/SSE API（:8000）
+uv run ai-agent api
+
+# ターミナル3: Next.js ダッシュボード（:3000）
+cd web && npm install && npm run dev
+```
+
+ブラウザで http://localhost:3000 を開くと、処理中 Issue・キュー・ライブログ・コスト・**承認待ち**が見られます。計画/分割の承認、設計レビュー、**動く UI プロトタイプのプレビュー**もここから。
 
 ---
 
@@ -142,7 +185,7 @@ uv run ai-agent start --foreground
 
 | コマンド | 説明 |
 |---------|------|
-| `ai-agent account add <name>` | GitHub アカウントを追加 |
+| `ai-agent account add <name>` | GitHub アカウントを追加（keyring 保存） |
 | `ai-agent account list` | 登録済みアカウント一覧 |
 | `ai-agent account verify [name]` | トークンの有効性を検証 |
 | `ai-agent account remove <name>` | アカウントを削除 |
@@ -151,7 +194,7 @@ uv run ai-agent start --foreground
 
 | コマンド | 説明 |
 |---------|------|
-| `ai-agent setup <owner/repo>` | リポジトリの初期セットアップ |
+| `ai-agent setup <owner/repo>` | リポジトリの初期セットアップ（clone + ラベル + config） |
 | `ai-agent unregister <owner/repo>` | リポジトリの登録解除 |
 
 ### 🚀 稼働操作
@@ -163,6 +206,7 @@ uv run ai-agent start --foreground
 | `ai-agent status [--json]` | 稼働状況を表示 |
 | `ai-agent logs [-f] [-n N]` | ログを表示 |
 | `ai-agent health` | 認証・接続チェック |
+| `ai-agent api [--port 8000]` | Web ダッシュボード用 REST/SSE API を起動 |
 
 ---
 
@@ -199,6 +243,8 @@ repositories:
     label: "ai-agent"
     base_branch: "main"
     slack_channel: "#frontend-ai"
+    # 承認できる人（既定はリポジトリ owner）
+    approvers: ["alice", "bob"]
 
   - owner: "myorg"
     repo: "backend-api"
@@ -206,17 +252,17 @@ repositories:
     base_branch: "develop"
 
 concurrency:
-  max_total: 2
-  max_per_repo: 1
+  max_total: 2      # 同時処理する Issue の最大数
+  max_per_repo: 1   # 1 リポジトリあたりの同時処理数
 
 slack:
   webhook_url: "${SLACK_WEBHOOK_URL}"
   default_channel: "#ai-agent"
 ```
 
-主な設定項目については [セットアップガイド](docs/setup-guide.md) を参照してください。
+主な設定項目は [セットアップガイド](docs/setup-guide.md) を参照してください。
 
-### クレデンシャル解決順序
+### 🔐 クレデンシャル解決順序
 
 GitHub トークンは以下の優先順位で解決されます:
 
@@ -224,27 +270,39 @@ GitHub トークンは以下の優先順位で解決されます:
 |-------|------|------|
 | 1️⃣ | **keyring** | OS セキュアストレージ — `ai-agent account add` で登録。**推奨** |
 | 2️⃣ | **環境変数** | `GITHUB_TOKEN_{NAME}` 形式 |
-| 3️⃣ | **token_command** | 外部コマンド (1Password CLI, AWS Secrets Manager 等) |
+| 3️⃣ | **token_command** | 外部コマンド（1Password CLI / AWS Secrets Manager 等） |
 | 4️⃣ | **gh auth token** | GitHub CLI のフォールバック |
+
+> 🔒 承認は **承認者許可リスト**（既定はリポジトリ owner、`approvers` で設定可）に含まれるユーザーのみ有効。許可外の承認は無視されます。
 
 ---
 
 ## 🧰 技術スタック
 
-| カテゴリ | 技術 | バージョン | 用途 |
-|---------|------|-----------|------|
-| 言語 | Python | 3.13+ | 実行環境 |
-| パッケージ管理 | uv | 最新版 | 依存関係管理・仮想環境 |
-| CLI | Typer + Rich | >=0.15 / >=13 | CLI フレームワーク |
-| GitHub API | githubkit | >=0.14 | 非同期 GitHub API 操作 (型付き) |
-| HTTP | httpx | >=0.28 | 非同期 HTTP クライアント |
-| AI 基盤 | claude-agent-sdk | >=0.1.50 | AI エージェント実行 |
-| 状態機械 | python-statemachine | >=2.5 | フェーズ遷移管理 |
-| 設定 | pydantic-settings + PyYAML | >=2.7 / >=6 | YAML 設定 + 環境変数 |
-| 認証 | keyring | >=25 | OS Keychain によるトークン管理 |
-| テスト | pytest + pytest-asyncio + respx + hypothesis | >=8 / >=0.25 / >=0.22 / >=6.120 | テストフレームワーク |
-| Lint / Format | ruff | >=0.11 | Linter + Formatter |
-| 型チェック | mypy (strict) | >=1.15 | 静的型チェック |
+### オーケストレーター本体 (Python)
+
+| カテゴリ | 技術 | 用途 |
+|---------|------|------|
+| 言語 / パッケージ管理 | Python 3.13+ / uv | 実行環境・依存管理 |
+| CLI | Typer + Rich | CLI フレームワーク |
+| GitHub API | githubkit | 非同期・型付き GitHub API |
+| HTTP | httpx | 非同期 HTTP クライアント |
+| AI 基盤 | claude-agent-sdk | AI エージェント実行 |
+| 状態機械 | python-statemachine | フェーズ遷移管理 |
+| 設定 | pydantic-settings + PyYAML | YAML 設定 + 環境変数 |
+| 認証 | keyring | OS Keychain トークン管理 |
+| Web API | FastAPI + uvicorn | REST + SSE（ダッシュボード用） |
+| テスト | pytest + pytest-asyncio + respx + hypothesis | テスト |
+| 品質 | ruff（lint/format）/ mypy strict | 静的解析 |
+
+### Web ダッシュボード (web/)
+
+| カテゴリ | 技術 |
+|---------|------|
+| フレームワーク | Next.js 16 / React 19 |
+| スタイル | Tailwind CSS 4 |
+| 描画 | react-markdown + remark-gfm / mermaid |
+| テスト | Vitest + Testing Library |
 
 ---
 
@@ -256,74 +314,72 @@ GitHub トークンは以下の優先順位で解決されます:
 # 依存関係インストール
 uv sync --all-extras
 
-# テスト実行
+# テスト（単体は高速・モック使用）
 uv run pytest tests/ -v
-
-# 単体テストのみ
 uv run pytest tests/unit/ -v
 
-# 型チェック
+# 型チェック / lint / format
 uv run mypy src/
-
-# lint + format チェック
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
+
+# Web（web/ 配下）
+cd web && npm test        # Vitest
+cd web && npx tsc --noEmit # 型チェック
 ```
 
 ### プロジェクト構成
 
 ```
 src/ai_agent_orchestrator/
-├── cli.py                    # Typer CLI エントリポイント
-├── models.py                 # Enum, dataclass (Phase, IssueState 等)
-├── protocols.py              # Protocol 定義 (AgentRunner, Notifier, Tracker)
-├── credential.py             # 4段階トークン解決
-├── state_persistence.py      # Issue 状態のファイルベース永続化
-├── event_logger.py           # events.jsonl ログ
-├── workspace_manager.py      # git worktree 管理
-├── config/settings.py        # pydantic-settings (AppSettings)
-├── github/client.py          # GitHubClient (githubkit ラッパー)
-├── agents/claude_runner.py   # ClaudeAgentRunner (SDK 実行)
-├── notifications/slack.py    # SlackNotifier (Webhook)
-├── context/engine.py         # リポマップ + 関連ファイル検索
+├── cli.py / __main__.py        # Typer CLI エントリポイント
+├── models.py                   # Enum/dataclass（Phase, IssueState, WorkflowParams 等）
+├── protocols.py                # Protocol 定義（AgentRunner, Notifier, Tracker 等）
+├── credential.py               # 4 段階トークン解決
+├── state_persistence.py        # Issue 状態のファイル永続化（state.json）
+├── event_logger.py             # events.jsonl ログ + トークンサニタイズ
+├── workspace_manager.py        # git worktree 管理
+├── config/settings.py          # pydantic-settings（AppSettings, RepositoryConfig）
+├── github/client.py            # GitHubClient（githubkit ラッパー）
+├── agents/claude_runner.py     # ClaudeAgentRunner（SDK 実行）
+├── notifications/slack.py      # SlackNotifier（Webhook）
+├── context/engine.py           # リポマップ + 関連ファイル検索
 ├── orchestrator/
-│   ├── orchestrator.py       # メインオーケストレーター
-│   ├── state_machine.py      # フェーズ遷移ロジック
-│   ├── task_queue.py         # asyncio.PriorityQueue + Semaphore
-│   └── execution_guard.py    # 二重実行防止ガード
+│   ├── orchestrator.py         # メインオーケストレーター
+│   ├── state_machine.py        # フェーズ遷移（python-statemachine）
+│   ├── task_queue.py           # asyncio.PriorityQueue + Semaphore
+│   ├── approval.py             # 承認判定の共通化 + 承認者検証
+│   ├── control_file.py / control_bus.py # control.jsonl 受け口（Web 操作）
+│   └── execution_guard.py      # 二重実行防止ガード
 ├── poller/
-│   ├── github_poller.py      # GitHub Polling (2分間隔)
-│   └── event_router.py       # イベント → フェーズ遷移
-├── phases/                   # フェーズ実行ロジック
-│   ├── base.py               # PhaseExecutor 基底
-│   ├── type_detection.py     # タイプ自動判定
-│   ├── dispatcher.py         # フェーズ分岐ディスパッチャ
-│   ├── hearing.py            # ヒアリング
-│   ├── analysis.py           # Bug 原因分析
-│   ├── design.py             # 設計書作成
-│   ├── design_revise.py      # 設計書修正対応
-│   ├── planning.py           # 実装計画
-│   ├── implement.py          # 実装
-│   ├── impl_revise.py        # 実装修正対応
-│   ├── fix.py                # Bug 修正
-│   ├── ci_fix.py             # CI 失敗修正
-│   ├── revise.py             # レビュー対応
-│   ├── split.py              # Feature-L 分割
-│   └── done.py               # 完了処理
-├── knowledge/                # 自己改善ループ
-│   ├── episode_store.py      # エピソード記憶
-│   ├── pattern_extractor.py  # パターン抽出
-│   └── skill_manager.py      # Skill 管理
-└── commands/                 # CLI サブコマンド
-    ├── account.py
-    ├── setup.py
-    └── run.py
+│   ├── github_poller.py        # GitHub Polling
+│   └── event_router.py         # イベント → フェーズ遷移
+├── phases/                     # フェーズ実行ロジック（統一パイプライン）
+│   ├── base.py / dispatcher.py # PhaseExecutor 基底 / 振り分け
+│   ├── type_detection.py       # タイプ判定（INTAKE）
+│   ├── hearing.py              # CLARIFY（ヒアリング）
+│   ├── plan.py / plan_artifact.py / plan_validation.py # PLAN（設計＋プロトタイプ生成）
+│   ├── implement.py            # IMPLEMENT（実装）
+│   ├── revise.py / ci_fix.py   # REVISE（レビュー対応 / CI 修正）
+│   ├── review_classifier.py    # レビュー指摘の分類
+│   ├── split.py                # SPLIT（Feature-L 分割・冪等）
+│   └── done.py                 # DONE（完了処理）
+│   └── （analysis/design/fix/* は統合先への後方互換 re-export）
+├── api/                        # FastAPI（REST + SSE。ファイル成果物を読み Web へ）
+│   ├── app.py / readers.py / schemas.py / stream.py / review.py
+├── evidence/                   # IMPLEMENT 完了時のスクショ/録画/テストログ
+├── prototype/                  # PLAN 生成 UI プロトタイプの収集・配信
+├── knowledge/                  # 自己改善ループ（episode/pattern/skill）
+└── commands/                   # CLI サブコマンド（account/setup/run/api）
+
+web/                            # Next.js ダッシュボード
+├── app/                        # ルート（/ ダッシュボード, /issues, /approvals, /queue, ...）
+├── components/                 # UI（ApprovalGate, review/PrototypeGallery 等）
+└── lib/                        # API アダプタ / hooks（usePolling, useLogStream）
 
 tests/
-├── unit/                     # 単体テスト (モック使用、高速)
-├── integration/              # 結合テスト
-├── scenario/                 # シナリオテスト (実 API)
-└── e2e/                      # E2E テスト
+├── unit/                       # 単体テスト（モック使用、高速）
+└── integration/                # 結合テスト（実 API）
 ```
 
 ### 設計原則
@@ -331,10 +387,12 @@ tests/
 | # | 原則 | 説明 |
 |---|------|------|
 | 🔌 1 | **Protocol ベース** | 全外部依存を `typing.Protocol` で抽象化し、テスタビリティを確保 |
-| ⚡ 2 | **完全非同期** | `asyncio` ベースの非同期設計。ブロッキング呼び出し禁止 |
-| 🧊 3 | **イミュータブルデータ** | `dataclass(frozen=True)` で状態を表現 |
-| 🛡️ 4 | **Fail-safe** | 全フェーズでタイムアウト・リトライ・エラー通知を実装 |
-| 🔭 5 | **Observability** | 構造化イベントログ (`events.jsonl`) による全アクション追跡 |
+| ⚡ 2 | **完全非同期** | `asyncio` ベース。ブロッキング呼び出し禁止 |
+| 🧊 3 | **イミュータブル志向** | 状態は dataclass で表現し、不要な破壊的変更を避ける |
+| 🧩 4 | **統一パイプライン** | タイプ差はフェーズではなくパラメータ（plan_depth / needs_split / approval_style）で表現 |
+| 🪢 5 | **疎結合な Web レイヤ** | Web はプロセス状態に触れず、ファイル読み取り + control.jsonl 書き込みのみ |
+| 🛡️ 6 | **Fail-safe** | タイムアウト・リトライ・エラー通知。収集系（evidence/prototype）は失敗を握り潰し本処理を止めない |
+| 🔭 7 | **Observability** | 構造化イベントログ（`events.jsonl`）で全アクションを追跡 |
 
 ---
 
@@ -342,46 +400,40 @@ tests/
 
 | ドキュメント | 説明 |
 |------------|------|
-| [設計書](docs/design-python.md) | メイン設計書 (23章) |
+| [CLAUDE.md](CLAUDE.md) | プロジェクト概要・規約（AI/開発者向けの単一の真実点） |
+| [設計書](docs/design-python.md) | メイン設計書 |
 | [アーキテクチャ図解](docs/architecture-diagrams.md) | Mermaid 図解 |
 | [API リファレンス](docs/api-reference.md) | 型定義・Protocol 仕様 |
 | [セットアップガイド](docs/setup-guide.md) | インストールから初回実行まで |
-| [プロンプトテンプレート](docs/templates/README.md) | AI に渡す14種のテンプレート |
 
 ---
 
 ## 🏷️ GitHub Labels
 
-オーケストレーターは GitHub Labels でフェーズを管理します。`ai-agent setup` で自動作成されます。
+オーケストレーターは GitHub Labels でタイプ・フェーズを管理します。`ai-agent setup` で自動作成されます。
 
 | ラベル | 説明 |
 |-------|------|
-| `ai-agent` | AI に割り当てる Issue |
-| `type:bug` / `type:feature-s` / `type:feature-m` / `type:feature-l` | タイプ分類 |
-| `phase:hearing` ~ `phase:done` | 現在のフェーズ |
-| `plan:pending` / `plan:approved` | 方針承認状態 |
-| `needs-split` | Issue 分割の判断待ち |
-| `phase:suspended` | エラー等で保留中 |
-
-全ラベル一覧は `--full-labels` オプションで作成できます (全28ラベル)。
+| `ai-agent` | AI に割り当てる Issue（これが全自動起動のトリガー） |
+| `type:bug` / `type:feature-m` / `type:feature-l` | タイプ分類（INTAKE が自動判定） |
+| `phase:intake` 〜 `phase:done` | 現在のフェーズ |
+| `phase:suspended` | エラー等で保留中（手動復帰待ち） |
 
 ---
 
-## ✅ 検証結果
+## 🤝 人間との協調ポイント
 
-実際のテストリポジトリでの検証結果:
+全自動の中でも、ここだけは人間が舵を握れます（Web 画面 / GitHub どちらでも）。
 
-| 検証項目 | 結果 | 実コスト |
-|---------|------|---------|
-| タイプ自動判定 (Bug/Feature-S/Feature-M/Feature-L) | 4/4 正解 | $0.055 |
-| Bug ワークフロー (ANALYSIS → 👍 → FIX → PR) | 6/6 PASS | $0.33 |
-| Feature-S ワークフロー (HEARING → PLAN_BRIEF → 👍 → PR) | 6/6 PASS | $0.46 |
-| Feature-L 分割 (提案 → 子Issue 11個 → ラベル) | 38/38 PASS | $0.32 |
-| E2E (子Issue → PR → 完了 → ブロック解除 → PR) | 20/22 PASS | $1.32 |
-| **合計** | **91/93 PASS** | **$2.72** |
+| タイミング | できること |
+|-----------|-----------|
+| 🎨 **計画承認（APPROVE）** | 設計内容と**動く UI プロトタイプ**を確認 → 承認 or 差し戻し（指摘は再設計へ） |
+| 🧩 **分割承認（SPLIT）** | Feature-L の子 Issue 分割案を承認 or 差し戻し |
+| 🔍 **PR レビュー（REVIEW）** | 実装 PR をレビュー。指摘は REVISE で自動対応 |
+| 💬 **ヒアリング回答（CLARIFY）** | エージェントの質問に回答して要件を固める |
 
 ---
 
 ## 📄 ライセンス
 
-MIT License
+MIT License — お好きにどうぞ。あなたの代わりに PR を書く相棒が、今日も眠らず待っています。🌙
