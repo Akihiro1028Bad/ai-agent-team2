@@ -21,21 +21,26 @@ SPLIT_PROPOSAL_MARKER = "<!-- ai-agent:split-proposal -->"
 _LEGACY_PROPOSAL_KEYWORDS = ("Issue分割提案", "分割提案", "分割案")
 
 
-def _is_proposal_comment(body: str) -> bool:
-    """コメント本文が分割提案コメントかどうかを判定する (#141).
-
-    マーカー一致を最優先し、マーカー導入前の提案は後方互換キーワードで拾う。
-    """
-    if SPLIT_PROPOSAL_MARKER in body:
-        return True
-    return any(keyword in body for keyword in _LEGACY_PROPOSAL_KEYWORDS)
-
-
 def _is_human_comment(comment: object) -> bool:
     """コメントが人間 (Bot 以外) によるものかを判定する (#141)."""
     user = getattr(comment, "user", None)
     user_type = getattr(user, "type", "") if user else ""
     return user_type != "Bot"
+
+
+def _is_proposal_comment(comment: object) -> bool:
+    """コメントが分割提案コメントかどうかを判定する (#141).
+
+    マーカー一致を最優先する。マーカー導入前 (#141 以前) の提案は後方互換
+    キーワードで拾うが、人間が「この分割案を直して」等と書いた修正指示を提案と
+    誤判定しないよう、キーワード判定は Bot 投稿に限定する。
+    """
+    body = getattr(comment, "body", "") or ""
+    if SPLIT_PROPOSAL_MARKER in body:
+        return True
+    if _is_human_comment(comment):
+        return False
+    return any(keyword in body for keyword in _LEGACY_PROPOSAL_KEYWORDS)
 
 
 def _should_skip_reproposal(comments: list[object]) -> bool:
@@ -53,14 +58,13 @@ def _should_skip_reproposal(comments: list[object]) -> bool:
     """
     last_proposal_idx = -1
     for i, comment in enumerate(comments):
-        if _is_proposal_comment(getattr(comment, "body", "") or ""):
+        if _is_proposal_comment(comment):
             last_proposal_idx = i
     if last_proposal_idx == -1:
         return False  # 既存提案なし → 投稿する
     # 最新提案より後に人間の (提案以外の) コメントがあれば修正指示とみなし再投稿する
     for comment in comments[last_proposal_idx + 1 :]:
-        body = getattr(comment, "body", "") or ""
-        if _is_human_comment(comment) and not _is_proposal_comment(body):
+        if _is_human_comment(comment) and not _is_proposal_comment(comment):
             return False
     return True  # 既存提案あり・修正指示なし → スキップ
 

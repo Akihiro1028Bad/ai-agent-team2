@@ -2220,6 +2220,19 @@ class TestSplitReproposalHelpers:
         ]
         assert _should_skip_reproposal(comments) is False
 
+    def test_human_modification_mentioning_keyword_still_reposts(self) -> None:
+        """人間の修正コメントが『分割案』等を含んでも提案と誤判定せず再投稿する (#141)."""
+        from ai_agent_orchestrator.phases.split import (
+            SPLIT_PROPOSAL_MARKER,
+            _should_skip_reproposal,
+        )
+
+        comments = [
+            self._comment(f"案\n{SPLIT_PROPOSAL_MARKER}", "Bot"),
+            self._comment("この分割案をもっと細かく分けてください", "User"),
+        ]
+        assert _should_skip_reproposal(comments) is False
+
     def test_legacy_proposal_without_marker_is_detected(self) -> None:
         """マーカー導入前 (#141 以前) の提案も後方互換キーワードで検出する."""
         from ai_agent_orchestrator.phases.split import _should_skip_reproposal
