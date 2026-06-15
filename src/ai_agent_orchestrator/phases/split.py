@@ -137,6 +137,8 @@ class SplitProposalExecutor(PhaseExecutor):
         # 再起動での再ディスパッチや split↔clarify の往復による重複投稿を防ぐ。
         existing_comments = await client.list_comments(request.repo, request.issue_number)
         if _should_skip_reproposal(list(existing_comments or [])):
+            # 既存提案あり = 承認待ち。再起動再ディスパッチでもフラグを立て直す (#150)。
+            self._sm.set_awaiting_split_approval(self._issue_key(request), True)
             logger.info(
                 "Issue #%d: 既存の分割提案があり修正指示も無いため再投稿をスキップ",
                 request.issue_number,
@@ -151,6 +153,8 @@ class SplitProposalExecutor(PhaseExecutor):
         comment_body += next_action_footer("split-proposal")
         comment_body += f"\n\n{SPLIT_PROPOSAL_MARKER}"
         await client.create_comment(request.repo, request.issue_number, comment_body)
+        # 提案投稿 = 承認待ち。Web 画面の承認導線が拾えるようフラグを立てる (#150)。
+        self._sm.set_awaiting_split_approval(self._issue_key(request), True)
         # 承認待ち (SPLIT_PROPOSAL フェーズのまま)
         issue = await client.get_issue(request.repo, request.issue_number)
         repo_full_name = self._get_repo_full_name(request)
@@ -227,6 +231,8 @@ class SplitExecuteExecutor(PhaseExecutor):
             request.issue_number,
             f"分割が完了しました。子Issueが作成されています。\n\n{output_text}",
         )
+        # 実行に入ったので承認待ちを解除する (#150)。
+        self._sm.set_awaiting_split_approval(self._issue_key(request), False)
         await client.replace_phase_label(request.repo, request.issue_number, "phase:done")
         await self._sm.transition(self._issue_key(request), "done")
         issue = await client.get_issue(request.repo, request.issue_number)

@@ -187,6 +187,17 @@ describe("IssueDetailPage", () => {
     await waitFor(() => expect(screen.getByText(/設計レビューを開く/)).toBeDefined());
   });
 
+  it("phase=split かつ waiting のとき分割承認ゲートが表示される (#150)", async () => {
+    vi.mocked(usePolling).mockReturnValue({
+      data: makeIssue({ phase: "split", status: "waiting" }),
+      error: undefined,
+      loading: false,
+    });
+    render(<IssueDetailPage />);
+    await waitFor(() => expect(screen.getByText("この Issue は分割提案の承認待ちです")).toBeDefined());
+    expect(screen.getByRole("button", { name: "承認" })).toBeDefined();
+  });
+
   it("承認ゲート表示時は重複する '承認画面へ' リンクを出さない (#146)", async () => {
     vi.mocked(usePolling).mockReturnValue({
       data: makeIssue({ phase: "approve", status: "waiting", needsHuman: "承認・回答待ち" }),

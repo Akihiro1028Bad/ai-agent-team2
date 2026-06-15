@@ -917,16 +917,23 @@ class Orchestrator:
         if issue_key is None:
             return
         current = self._state_machine.get_phase(issue_key)
+        repo_config = self._repo_config_for(issue_key[0])
+        if repo_config is None:
+            logger.warning("review: repo を解決できません (#%d)", cmd.issue_number)
+            return
+
+        # SPLIT 分割提案の承認待ちは APPROVE ゲートとは別経路で処理する (#150)。
+        state = self._state_machine.get_state(issue_key)
+        if current is Phase.SPLIT and state is not None and state.awaiting_split_approval:
+            await self._apply_split_review_command(cmd, issue_key, repo_config)
+            return
+
         if current is not Phase.APPROVE:
             logger.info(
                 "review: #%d は APPROVE 相でないため無視 (現在 %s)",
                 cmd.issue_number,
                 current.value,
             )
-            return
-        repo_config = self._repo_config_for(issue_key[0])
-        if repo_config is None:
-            logger.warning("review: repo を解決できません (#%d)", cmd.issue_number)
             return
 
         next_phase = Phase.IMPLEMENT if cmd.action == "approve" else Phase.PLAN
@@ -961,6 +968,68 @@ class Orchestrator:
 
         await self._event_logger.track(
             "plan_approved" if cmd.action == "approve" else "plan_rejected",
+            issue_number=cmd.issue_number,
+            phase="system",
+            data={"action": cmd.action, "approver": cmd.approver},
+        )
+
+    async def _apply_split_review_command(
+        self,
+        cmd: ControlCommand,
+        issue_key: IssueKey,
+        repo_config: RepositoryConfig,
+    ) -> None:
+        """SPLIT 分割提案の承認/差し戻しを Web 経由で適用する (#150).
+
+        - approve → 承認待ち解除 + SPLIT 実行ステップをエンキュー (子Issue作成へ)
+        - reject  → 承認待ち解除 + SPLIT→CLARIFY 遷移 + 修正指示付き再エンキュー
+
+        poller 経由の 👍 承認 (_handle_split_approved) / コメント修正
+        (_handle_split_modified) と同じ振る舞いに合わせる。
+        """
+        # 承認待ちを解除してから処理する (二重適用防止)。
+        self._state_machine.set_awaiting_split_approval(issue_key, False)
+
+        if cmd.action == "approve":
+            await self._task_queue.enqueue(
+                TaskRequest(
+                    issue_number=cmd.issue_number,
+                    repo=repo_config,
+                    phase=Phase.SPLIT.value,
+                    priority=Priority.NORMAL,
+                    extra={"step": "execute"},
+                )
+            )
+            await self._event_logger.track(
+                "split_approved",
+                issue_number=cmd.issue_number,
+                phase="system",
+                data={"action": cmd.action, "approver": cmd.approver},
+            )
+            return
+
+        # reject → CLARIFY へ戻して修正指示を渡す
+        try:
+            await self._state_machine.transition(issue_key, Phase.CLARIFY)
+        except (InvalidTransitionError, KeyError) as exc:
+            logger.warning("split-review: CLARIFY への遷移に失敗 (#%d): %s", cmd.issue_number, exc)
+            return
+        await self._task_queue.enqueue(
+            TaskRequest(
+                issue_number=cmd.issue_number,
+                repo=repo_config,
+                phase=Phase.CLARIFY.value,
+                priority=Priority.NORMAL,
+                extra={"modification_request": cmd.feedback or ""},
+            )
+        )
+        try:
+            client = await self._account_manager.get_client_for_repo(repo_config.owner, repo_config.repo)
+            await client.replace_phase_label(repo_config, cmd.issue_number, "phase:clarify")
+        except Exception as exc:
+            logger.warning("split-review: ラベル更新に失敗 (#%d): %s", cmd.issue_number, exc)
+        await self._event_logger.track(
+            "split_rejected",
             issue_number=cmd.issue_number,
             phase="system",
             data={"action": cmd.action, "approver": cmd.approver},

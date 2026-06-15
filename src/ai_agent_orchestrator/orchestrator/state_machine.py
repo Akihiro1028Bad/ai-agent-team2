@@ -514,6 +514,23 @@ class StateMachineManager:
             self._auto_save()
         return changed
 
+    def set_awaiting_split_approval(self, issue_key: IssueKey, value: bool) -> None:
+        """SPLIT 分割提案の承認待ちフラグを設定する (#150).
+
+        提案投稿時に True、実行/承認/差し戻し時に False を設定する。値が変化した
+        ときのみ永続化する。未登録 Issue は何もしない。
+
+        Args:
+            issue_key: IssueKey (repo, issue_number)。
+            value: 承認待ちなら True。
+        """
+        state = self._states.get(issue_key)
+        if state is None:
+            return
+        if state.awaiting_split_approval != value:
+            state.awaiting_split_approval = value
+            self._auto_save()
+
     async def get_ci_retry_count(self, issue_key: IssueKey) -> int:
         """CI 修正リトライ回数を取得する."""
         state = self._states.get(issue_key)
