@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { api, ApiError, type DesignView } from "@/lib/api";
+import { api, ApiError, type DesignView, type PrototypeView } from "@/lib/api";
 import type { EvidenceView } from "@/lib/evidence";
 import { DesignReviewClient } from "@/components/review/DesignReviewClient";
 import { EvidenceGallery } from "@/components/review/EvidenceGallery";
+import { PrototypeGallery } from "@/components/review/PrototypeGallery";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { IconArrow } from "@/components/icons";
 
@@ -29,6 +30,8 @@ export default function DesignReviewPage() {
   const [loading, setLoading] = useState(true);
   // エビデンス (#91)。design とは独立に取得し、失敗してもレビュー本体は妨げない。
   const [evidence, setEvidence] = useState<EvidenceView | null>(null);
+  // UI プロトタイプ (#145)。承認前のプレビュー。取得失敗してもレビュー本体は妨げない。
+  const [prototypes, setPrototypes] = useState<PrototypeView | null>(null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -62,6 +65,19 @@ export default function DesignReviewPage() {
     return () => ac.abort();
   }, [id]);
 
+  useEffect(() => {
+    const ac = new AbortController();
+    api
+      .getPrototypes(id, ac.signal)
+      .then((v) => {
+        if (!ac.signal.aborted) setPrototypes(v);
+      })
+      .catch(() => {
+        // プロトタイプ取得失敗はレビュー画面を妨げない（非表示にとどめる）。
+      });
+    return () => ac.abort();
+  }, [id]);
+
   return (
     <div className="mx-auto max-w-[920px] pb-4">
       <Link href={`/issues/${id}${repoQuery}`} className="inline-flex items-center gap-1.5 text-[12.5px]" style={{ color: "var(--color-ink-dim)" }}>
@@ -84,6 +100,16 @@ export default function DesignReviewPage() {
         <div className="panel mt-4 p-8 text-center" style={{ color: "var(--color-ink-dim)" }}>
           {view?.reason ?? "この Issue にはまだ設計が生成されていません（PLAN フェーズ未完了）。"}
         </div>
+      )}
+
+      {prototypes && prototypes.items.length > 0 && (
+        <section className="mt-8">
+          <h2 className="mb-1 text-[14px] font-semibold">UI プロトタイプ</h2>
+          <p className="mb-3 text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+            提案 UI を実際に操作して確認できます（モックデータの使い捨てプレビュー）。
+          </p>
+          <PrototypeGallery items={prototypes.items} notes={prototypes.notes} />
+        </section>
       )}
 
       {evidence && (

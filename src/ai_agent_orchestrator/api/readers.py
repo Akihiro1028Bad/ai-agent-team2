@@ -27,6 +27,8 @@ from ai_agent_orchestrator.api.schemas import (
     IssueCost,
     IssueDetailResponse,
     IssueSummaryResponse,
+    PrototypeItemResponse,
+    PrototypeResponse,
     QueueResponse,
     phase_to_status,
 )
@@ -38,6 +40,7 @@ from ai_agent_orchestrator.io_safety import (
     read_text_capped,
 )
 from ai_agent_orchestrator.models import Phase
+from ai_agent_orchestrator.prototype.paths import prototype_dir
 from ai_agent_orchestrator.state_persistence import StatePersistence
 
 if TYPE_CHECKING:
@@ -204,6 +207,53 @@ def read_evidence(workspace: Path, issue_number: int) -> EvidenceResponse:
     notes = [str(n) for n in raw.get("notes", []) if isinstance(n, str)]
     generated_at = raw.get("generated_at")
     return EvidenceResponse(
+        generated_at=generated_at if isinstance(generated_at, str) else None,
+        items=items,
+        notes=notes,
+    )
+
+
+def read_prototypes(workspace: Path, issue_number: int) -> PrototypeResponse:
+    """Issue の prototype manifest.json を読み PrototypeResponse へ変換する (#145).
+
+    manifest が不在/壊れでも例外を投げず、空の PrototypeResponse を返す。各 item には
+    HTML 配信エンドポイント (/api/issues/{n}/prototypes/{file}) への url を組む。
+
+    Args:
+        workspace: ワークスペースのルートパス。
+        issue_number: Issue 番号。
+
+    Returns:
+        PrototypeResponse。
+    """
+    manifest_path = prototype_dir(workspace, issue_number) / "manifest.json"
+    if not manifest_path.exists():
+        return PrototypeResponse()
+    try:
+        raw = json.loads(read_text_capped(manifest_path, MAX_STATUS_FILE_BYTES))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("prototype manifest の読み取り/パースに失敗: %s", manifest_path, exc_info=True)
+        return PrototypeResponse()
+    if not isinstance(raw, dict):
+        return PrototypeResponse()
+
+    items: list[PrototypeItemResponse] = []
+    for entry in raw.get("items", []):
+        if not isinstance(entry, dict):
+            continue
+        file = str(entry.get("file", ""))
+        if not file:
+            continue
+        items.append(
+            PrototypeItemResponse(
+                id=str(entry.get("id", "")),
+                title=str(entry.get("title", "")),
+                url=f"/api/issues/{issue_number}/prototypes/{file}",
+            )
+        )
+    notes = [str(n) for n in raw.get("notes", []) if isinstance(n, str)]
+    generated_at = raw.get("generated_at")
+    return PrototypeResponse(
         generated_at=generated_at if isinstance(generated_at, str) else None,
         items=items,
         notes=notes,

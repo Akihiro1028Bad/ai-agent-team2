@@ -30,6 +30,7 @@ from ai_agent_orchestrator.api.readers import (
     read_health,
     read_issue_events,
     read_issue_summaries,
+    read_prototypes,
     read_queue,
 )
 from ai_agent_orchestrator.api.review import build_review_control_record, classify_review
@@ -50,6 +51,7 @@ from ai_agent_orchestrator.api.schemas import (
     PhaseModelRow,
     PhaseModelsRequest,
     PhaseModelsResponse,
+    PrototypeResponse,
     QueueResponse,
     ReplyRequest,
     ReplyResponse,
@@ -90,6 +92,11 @@ _EVIDENCE_MEDIA_TYPES: dict[str, str] = {
     ".png": "image/png",
     ".webm": "video/webm",
     ".txt": "text/plain; charset=utf-8",
+}
+
+# プロトタイプ配信の拡張子 → media_type (#145)。HTML のみ想定。
+_PROTOTYPE_MEDIA_TYPES: dict[str, str] = {
+    ".html": "text/html; charset=utf-8",
 }
 
 
@@ -403,6 +410,45 @@ def create_app(settings: AppSettings) -> FastAPI:
 
         media_type = _EVIDENCE_MEDIA_TYPES.get(target.suffix.lower(), "application/octet-stream")
         return FileResponse(path=str(target), media_type=media_type)
+
+    @app.get("/api/issues/{issue_number}/prototypes", response_model=PrototypeResponse)
+    async def get_issue_prototypes(issue_number: int) -> PrototypeResponse:
+        """Issue の UI プロトタイプ manifest を返す (#145).
+
+        manifest が不在/壊れでも 200 で空の PrototypeResponse を返す。各 item の
+        url は HTML 配信エンドポイントへの相対 URL (sandbox iframe の src)。
+        """
+        return read_prototypes(workspace, issue_number)
+
+    @app.get("/api/issues/{issue_number}/prototypes/{filename}")
+    async def get_issue_prototype_file(issue_number: int, filename: str) -> Response:
+        """UI プロトタイプ HTML を配信する (#145).
+
+        エージェント生成 HTML を返すため、サンドボックス化のセキュリティヘッダを
+        必ず付与する: ``Content-Security-Policy: sandbox`` でスクリプトを不透明
+        オリジン化し (同一オリジン資源・Cookie へ到達不可)、frame-ancestors を
+        'self' に限定。パストラバーサルはエビデンスと同様に多層で防ぐ。
+        """
+        from fastapi.responses import FileResponse
+
+        from ai_agent_orchestrator.prototype.paths import prototype_dir
+
+        if filename != Path(filename).name or ".." in filename:
+            raise HTTPException(status_code=404, detail="Prototype file not found")
+        proto_dir = prototype_dir(workspace, issue_number).resolve()
+        target = (proto_dir / filename).resolve()
+        if proto_dir not in target.parents:
+            raise HTTPException(status_code=404, detail="Prototype file not found")
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="Prototype file not found")
+
+        media_type = _PROTOTYPE_MEDIA_TYPES.get(target.suffix.lower(), "application/octet-stream")
+        # エージェント生成 HTML を隔離: sandbox で不透明オリジン化し、埋め込みは自オリジンのみ。
+        headers = {
+            "Content-Security-Policy": "sandbox allow-scripts; frame-ancestors 'self'",
+            "X-Content-Type-Options": "nosniff",
+        }
+        return FileResponse(path=str(target), media_type=media_type, headers=headers)
 
     @app.post("/api/issues/{issue_number}/review", response_model=ReviewResponse)
     async def post_issue_review(

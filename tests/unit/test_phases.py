@@ -454,6 +454,28 @@ class TestDesignExecutor:
         state = mock_sm.get_state(1)
         assert state.design_pr_number == 5
 
+    async def test_full_prompt_includes_prototype_instruction(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """full プロンプトに UI プロトタイプ生成の指示が含まれる (#145)."""
+        mock_sm.get_issue_type.return_value = "feature-m"
+        from ai_agent_orchestrator.phases.plan import PlanExecutor
+
+        executor = PlanExecutor(
+            mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+        )
+        prompt = await executor.build_prompt(_make_request(phase="plan"))
+
+        assert "prototype.html" in prompt
+        assert "プロトタイプ" in prompt
+
     async def test_process_result_posts_claude_review_comment(
         self,
         mock_runner: AsyncMock,
