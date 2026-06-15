@@ -1348,6 +1348,71 @@ class TestSplitProposalExecutor:
         mock_notifier.notify.assert_called_once()
         # transition should NOT be called (stays in split-proposal)
         mock_sm.transition.assert_not_called()
+        # 投稿本文に冪等化マーカーが埋め込まれる (#141)
+        from ai_agent_orchestrator.phases.split import SPLIT_PROPOSAL_MARKER
+
+        posted_body = mock_github.create_comment.call_args[0][2]
+        assert SPLIT_PROPOSAL_MARKER in posted_body
+
+    async def test_skips_repost_when_proposal_exists_without_modification(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """既存の分割提案があり修正指示も無ければ再投稿しない (#141)."""
+        from ai_agent_orchestrator.phases.split import (
+            SPLIT_PROPOSAL_MARKER,
+            SplitProposalExecutor,
+        )
+
+        existing = MagicMock()
+        existing.body = f"分割案です\n\n{SPLIT_PROPOSAL_MARKER}"
+        existing.user = MagicMock(type="Bot", login="bot")
+        mock_github.list_comments.return_value = [existing]
+
+        executor = SplitProposalExecutor(
+            mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+        )
+        await executor.execute(_make_request(phase="split-proposal"))
+
+        mock_github.create_comment.assert_not_called()
+        mock_notifier.notify.assert_not_called()
+
+    async def test_reposts_when_human_modification_after_proposal(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """最新提案より後に人間の修正コメントがあれば再投稿する (#141)."""
+        from ai_agent_orchestrator.phases.split import (
+            SPLIT_PROPOSAL_MARKER,
+            SplitProposalExecutor,
+        )
+
+        proposal = MagicMock()
+        proposal.body = f"分割案です\n\n{SPLIT_PROPOSAL_MARKER}"
+        proposal.user = MagicMock(type="Bot", login="bot")
+        modification = MagicMock()
+        modification.body = "サブタスクをもっと細かく分けてください"
+        modification.user = MagicMock(type="User", login="human")
+        mock_github.list_comments.return_value = [proposal, modification]
+
+        executor = SplitProposalExecutor(
+            mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+        )
+        await executor.execute(_make_request(phase="split-proposal"))
+
+        mock_github.create_comment.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -2111,3 +2176,71 @@ class TestPhaseCompletedStatus:
                                 break
 
         assert found_status, "orchestrator.py の phase_completed track 呼び出しに status フィールドが見つかりません"
+
+
+# ---------------------------------------------------------------------------
+# SPLIT 冪等化ヘルパ (#141)
+# ---------------------------------------------------------------------------
+
+
+class TestSplitReproposalHelpers:
+    """_should_skip_reproposal / _is_proposal_comment の単体テスト (#141)."""
+
+    @staticmethod
+    def _comment(body: str, user_type: str = "User") -> MagicMock:
+        c = MagicMock()
+        c.body = body
+        c.user = MagicMock(type=user_type, login="u")
+        return c
+
+    def test_no_existing_proposal_does_not_skip(self) -> None:
+        from ai_agent_orchestrator.phases.split import _should_skip_reproposal
+
+        comments = [self._comment("ヒアリング回答です", "User")]
+        assert _should_skip_reproposal(comments) is False
+
+    def test_existing_proposal_without_modification_skips(self) -> None:
+        from ai_agent_orchestrator.phases.split import (
+            SPLIT_PROPOSAL_MARKER,
+            _should_skip_reproposal,
+        )
+
+        comments = [self._comment(f"案\n{SPLIT_PROPOSAL_MARKER}", "Bot")]
+        assert _should_skip_reproposal(comments) is True
+
+    def test_modification_after_proposal_does_not_skip(self) -> None:
+        from ai_agent_orchestrator.phases.split import (
+            SPLIT_PROPOSAL_MARKER,
+            _should_skip_reproposal,
+        )
+
+        comments = [
+            self._comment(f"案\n{SPLIT_PROPOSAL_MARKER}", "Bot"),
+            self._comment("もっと細かく", "User"),
+        ]
+        assert _should_skip_reproposal(comments) is False
+
+    def test_human_modification_mentioning_keyword_still_reposts(self) -> None:
+        """人間の修正コメントが『分割案』等を含んでも提案と誤判定せず再投稿する (#141)."""
+        from ai_agent_orchestrator.phases.split import (
+            SPLIT_PROPOSAL_MARKER,
+            _should_skip_reproposal,
+        )
+
+        comments = [
+            self._comment(f"案\n{SPLIT_PROPOSAL_MARKER}", "Bot"),
+            self._comment("この分割案をもっと細かく分けてください", "User"),
+        ]
+        assert _should_skip_reproposal(comments) is False
+
+    def test_legacy_proposal_without_marker_is_detected(self) -> None:
+        """マーカー導入前 (#141 以前) の提案も後方互換キーワードで検出する."""
+        from ai_agent_orchestrator.phases.split import _should_skip_reproposal
+
+        comments = [self._comment("Issue分割提案\n| # | タイトル |", "Bot")]
+        assert _should_skip_reproposal(comments) is True
+
+    def test_empty_comments_does_not_skip(self) -> None:
+        from ai_agent_orchestrator.phases.split import _should_skip_reproposal
+
+        assert _should_skip_reproposal([]) is False

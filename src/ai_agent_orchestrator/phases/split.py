@@ -12,6 +12,62 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# 分割提案コメントを機械的に識別するための安定マーカー (#141)。
+# 本文末尾に埋め込み、再実行・再起動時の重複投稿検出と SplitExecuteExecutor の
+# 提案検出の双方で使う。HTML コメントなので GitHub 上では非表示。
+SPLIT_PROPOSAL_MARKER = "<!-- ai-agent:split-proposal -->"
+
+# マーカー導入前 (#141 以前) に投稿された提案コメントを拾うための後方互換キーワード。
+_LEGACY_PROPOSAL_KEYWORDS = ("Issue分割提案", "分割提案", "分割案")
+
+
+def _is_human_comment(comment: object) -> bool:
+    """コメントが人間 (Bot 以外) によるものかを判定する (#141)."""
+    user = getattr(comment, "user", None)
+    user_type = getattr(user, "type", "") if user else ""
+    return user_type != "Bot"
+
+
+def _is_proposal_comment(comment: object) -> bool:
+    """コメントが分割提案コメントかどうかを判定する (#141).
+
+    マーカー一致を最優先する。マーカー導入前 (#141 以前) の提案は後方互換
+    キーワードで拾うが、人間が「この分割案を直して」等と書いた修正指示を提案と
+    誤判定しないよう、キーワード判定は Bot 投稿に限定する。
+    """
+    body = getattr(comment, "body", "") or ""
+    if SPLIT_PROPOSAL_MARKER in body:
+        return True
+    if _is_human_comment(comment):
+        return False
+    return any(keyword in body for keyword in _LEGACY_PROPOSAL_KEYWORDS)
+
+
+def _should_skip_reproposal(comments: list[object]) -> bool:
+    """既存提案があり、かつ新しい修正指示が無ければ再投稿をスキップすべきか判定する (#141).
+
+    分割提案は Issue ごとに 1 件のみとし、再起動での再ディスパッチや
+    split↔clarify の往復で提案が積み増されるのを防ぐ。最新の提案コメント以降に
+    人間の修正コメントがある場合のみ「修正反映の再提案」として再投稿を許す。
+
+    Args:
+        comments: Issue のコメント一覧 (時系列昇順)。
+
+    Returns:
+        既存提案があり修正指示も無ければ True (スキップ)、それ以外は False (投稿)。
+    """
+    last_proposal_idx = -1
+    for i, comment in enumerate(comments):
+        if _is_proposal_comment(comment):
+            last_proposal_idx = i
+    if last_proposal_idx == -1:
+        return False  # 既存提案なし → 投稿する
+    # 最新提案より後に人間の (提案以外の) コメントがあれば修正指示とみなし再投稿する
+    for comment in comments[last_proposal_idx + 1 :]:
+        if _is_human_comment(comment) and not _is_proposal_comment(comment):
+            return False
+    return True  # 既存提案あり・修正指示なし → スキップ
+
 
 class SplitProposalExecutor(PhaseExecutor):
     """Feature-L 分割提案フェーズ。
@@ -76,12 +132,24 @@ class SplitProposalExecutor(PhaseExecutor):
         from ai_agent_orchestrator.phases.base import next_action_footer
 
         client = await self._get_client(request.repo)
+
+        # 冪等化 (#141): 既存の分割提案があり、新しい修正指示が無ければ再投稿しない。
+        # 再起動での再ディスパッチや split↔clarify の往復による重複投稿を防ぐ。
+        existing_comments = await client.list_comments(request.repo, request.issue_number)
+        if _should_skip_reproposal(list(existing_comments or [])):
+            logger.info(
+                "Issue #%d: 既存の分割提案があり修正指示も無いため再投稿をスキップ",
+                request.issue_number,
+            )
+            return
+
         comment_body = (
             result.output.strip()
             if result.output.strip()
             else ("分割提案を作成しましたが、出力が空でした。再実行が必要です。")
         )
         comment_body += next_action_footer("split-proposal")
+        comment_body += f"\n\n{SPLIT_PROPOSAL_MARKER}"
         await client.create_comment(request.repo, request.issue_number, comment_body)
         # 承認待ち (SPLIT_PROPOSAL フェーズのまま)
         issue = await client.get_issue(request.repo, request.issue_number)
@@ -117,15 +185,21 @@ class SplitExecuteExecutor(PhaseExecutor):
         issue = await client.get_issue(request.repo, request.issue_number)
         comments = await client.list_comments(request.repo, request.issue_number)
 
-        # 分割提案コメントを取得
+        # 分割提案コメントを取得。マーカー一致を最優先し (#141)、
+        # 見つからなければ後方互換 (Bot かつ旧キーワード) で拾う。
         split_proposal = ""
         for c in reversed(comments):
-            body = getattr(c, "body", "")
-            user = getattr(c, "user", None)
-            user_type = getattr(user, "type", "") if user else ""
-            if user_type == "Bot" and "Issue分割提案" in body:
-                split_proposal = body
+            if SPLIT_PROPOSAL_MARKER in (getattr(c, "body", "") or ""):
+                split_proposal = getattr(c, "body", "")
                 break
+        if not split_proposal:
+            for c in reversed(comments):
+                body = getattr(c, "body", "")
+                user = getattr(c, "user", None)
+                user_type = getattr(user, "type", "") if user else ""
+                if user_type == "Bot" and "Issue分割提案" in body:
+                    split_proposal = body
+                    break
 
         return (
             f"承認された分割案に基づいて子Issueを作成してください。\n\n"
