@@ -32,6 +32,7 @@ def mock_sm() -> AsyncMock:
     sm.get_workflow_params = MagicMock(side_effect=lambda key: derive_workflow_params(sm.get_issue_type(key)))
     sm.get_state = MagicMock(return_value=None)  # 同期メソッド
     sm.backfill_issue_meta = MagicMock(return_value=False)  # 同期メソッド (#142)
+    sm.set_awaiting_split_approval = MagicMock()  # 同期メソッド (#150)
     sm.get_ci_retry_count = AsyncMock(return_value=0)
     return sm
 

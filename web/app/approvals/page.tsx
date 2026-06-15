@@ -8,9 +8,9 @@ import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { ApproveButton } from "@/components/review/ApproveButton";
 
 // フェーズバッジ
-function PhaseBadge({ phase }: { phase: "approve" | "review" }) {
-  const label = phase === "approve" ? "計画承認待ち" : "PRレビュー待ち";
-  const color = phase === "approve" ? "var(--color-amber)" : "var(--color-cyan)";
+function PhaseBadge({ phase }: { phase: "approve" | "review" | "split" }) {
+  const label = phase === "approve" ? "計画承認待ち" : phase === "split" ? "分割承認待ち" : "PRレビュー待ち";
+  const color = phase === "review" ? "var(--color-cyan)" : "var(--color-amber)";
   return (
     <span
       className="rounded-md border px-2 py-0.5 font-mono text-[10px]"
@@ -52,7 +52,7 @@ export default function ApprovalsPage() {
         className="mt-4 rounded-xl border px-4 py-3 text-[12.5px]"
         style={{ borderColor: "var(--color-line)", color: "var(--color-ink-dim)", background: "var(--color-panel-2)" }}
       >
-        計画承認待ちは、この画面の「承認」ボタンからそのまま承認できます。指摘・質問での差し戻しは詳細の設計レビューから行ってください。PR レビュー待ちは詳細から差分を確認できます。
+        計画承認待ち・分割承認待ちは、この画面の「承認」ボタンからそのまま承認できます。差し戻しは詳細画面から行ってください。PR レビュー待ちは詳細から差分を確認できます。
       </div>
 
       <div className="rise mt-6 flex flex-col gap-2.5" style={{ animationDelay: "60ms" }}>
@@ -93,8 +93,10 @@ export default function ApprovalsPage() {
               <span className="font-mono text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
                 {row.updatedAt}
               </span>
-              {/* 計画承認待ちは画面から直接承認できる (#146)。PR レビュー待ちは詳細へ誘導。 */}
-              {row.phase === "approve" && <ApproveButton issue={row.issue} repo={row.repo} size="compact" />}
+              {/* 計画承認 (#146) / 分割承認 (#150) は画面から直接承認できる。PR レビュー待ちは詳細へ誘導。 */}
+              {(row.phase === "approve" || row.phase === "split") && (
+                <ApproveButton issue={row.issue} repo={row.repo} size="compact" />
+              )}
               <Link
                 href={`/issues/${row.issue}?repo=${encodeURIComponent(row.repo)}`}
                 className="rounded-lg border px-3 py-1.5 text-[12px] font-medium transition-colors"

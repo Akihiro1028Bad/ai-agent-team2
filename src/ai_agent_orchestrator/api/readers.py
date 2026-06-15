@@ -37,6 +37,7 @@ from ai_agent_orchestrator.io_safety import (
     FileTooLargeError,
     read_text_capped,
 )
+from ai_agent_orchestrator.models import Phase
 from ai_agent_orchestrator.state_persistence import StatePersistence
 
 if TYPE_CHECKING:
@@ -235,6 +236,8 @@ def read_approvals(workspace: Path) -> list[ApprovalEntry]:
         )
         for (repo, _number), state in load_states(workspace).items()
         if state.phase.value in _APPROVAL_WAIT_PHASES
+        # SPLIT は承認待ちフラグで判定する (#150)。
+        or (state.phase is Phase.SPLIT and state.awaiting_split_approval)
     ]
     entries.sort(key=lambda e: e.updated_at, reverse=True)
     return entries
@@ -411,6 +414,9 @@ def _make_excerpt(body: str) -> str | None:
 
 def _summary_from_state(state: IssueState, repo: str, cost_usd: float) -> IssueSummaryResponse:
     """IssueState から IssueSummaryResponse を構築する."""
+    # SPLIT は提案生成/承認待ち/実行を同一フェーズで通るため、承認待ちは
+    # フェーズではなくフラグで表す (#150)。フラグが立っていれば waiting に倒す。
+    status = "waiting" if state.awaiting_split_approval else phase_to_status(state.phase)
     return IssueSummaryResponse(
         number=state.issue_number,
         repo=repo,
@@ -418,7 +424,7 @@ def _summary_from_state(state: IssueState, repo: str, cost_usd: float) -> IssueS
         body_excerpt=_make_excerpt(state.body),
         issue_type=state.issue_type,
         phase=state.phase.value,
-        status=phase_to_status(state.phase),
+        status=status,
         cost_usd=cost_usd,
         pr_number=state.pr_number,
         design_pr_number=state.design_pr_number,

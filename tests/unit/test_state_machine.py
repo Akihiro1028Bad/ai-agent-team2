@@ -705,3 +705,19 @@ class TestIssueMeta:
 
     def test_backfill_unregistered_returns_false(self, sm):
         assert sm.backfill_issue_meta(_key(999), title="x") is False
+
+
+class TestAwaitingSplitApproval:
+    """set_awaiting_split_approval の単体テスト (#150)."""
+
+    def test_set_and_clear_flag(self, sm):
+        sm.register_issue(1, "owner/repo")
+        key = _key(1)
+        assert sm.get_state(key).awaiting_split_approval is False
+        sm.set_awaiting_split_approval(key, True)
+        assert sm.get_state(key).awaiting_split_approval is True
+        sm.set_awaiting_split_approval(key, False)
+        assert sm.get_state(key).awaiting_split_approval is False
+
+    def test_unregistered_is_noop(self, sm):
+        sm.set_awaiting_split_approval(_key(999), True)  # 例外を出さない

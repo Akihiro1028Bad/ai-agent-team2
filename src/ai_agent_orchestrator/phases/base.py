@@ -249,6 +249,10 @@ class StateMachineProtocol:
         """Set the issue type."""
         ...  # pragma: no cover
 
+    def set_awaiting_split_approval(self, issue_key: IssueKey, value: bool) -> None:
+        """Set the SPLIT proposal awaiting-approval flag (#150)."""
+        ...  # pragma: no cover
+
     async def transition(self, issue_key: IssueKey, phase: str) -> None:
         """Transition to a new phase."""
         ...  # pragma: no cover

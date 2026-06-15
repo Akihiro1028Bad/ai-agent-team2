@@ -152,4 +152,15 @@ describe("ApprovalsPage", () => {
     await waitFor(() => expect(screen.getByText("PRレビュー待ち")).toBeDefined());
     expect(screen.queryByRole("button", { name: "承認" })).toBeNull();
   });
+
+  it("phase=split の行に分割承認バッジと承認ボタンが出る (#150)", async () => {
+    vi.mocked(usePolling).mockReturnValue({
+      data: [makeRow({ phase: "split" })],
+      error: undefined,
+      loading: false,
+    });
+    render(<ApprovalsPage />);
+    await waitFor(() => expect(screen.getByText("分割承認待ち")).toBeDefined());
+    expect(screen.getByRole("button", { name: "承認" })).toBeDefined();
+  });
 });

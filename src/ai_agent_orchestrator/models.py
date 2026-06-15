@@ -341,6 +341,10 @@ class IssueState:
     answered_review_ids: list[int] = field(default_factory=list)
     # PLAN フェーズの構造化成果物 (U3 #81)。ui_impact を常に含む (#91 の判定ソース)
     plan_json: dict[str, Any] | None = None
+    # SPLIT 分割提案の承認待ちフラグ (#150)。提案投稿時に True、実行/承認/差し戻しで
+    # False。SPLIT は提案生成・承認待ち・実行を同一フェーズで通るため、フェーズだけでは
+    # 「承認待ち」を表せない。本フラグを status="waiting" 導出と承認待ち一覧に使う。
+    awaiting_split_approval: bool = False
 
 
 @dataclass

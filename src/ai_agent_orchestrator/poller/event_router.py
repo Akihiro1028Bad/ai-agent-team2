@@ -997,6 +997,8 @@ class EventRouter:
                 current_phase,
             )
             return
+        # Web 承認待ちフラグを解除する (#150)。
+        self._sm.set_awaiting_split_approval(issue_key, False)
         await self._tq.enqueue(
             TaskRequest(
                 issue_number=event.issue.number,
@@ -1012,6 +1014,8 @@ class EventRouter:
         if event.issue is None:
             raise ValueError(f"event.issue must not be None for event type {event.type}")
         issue_key = self._issue_key_from_event(event)
+        # Web 承認待ちフラグを解除する (#150)。
+        self._sm.set_awaiting_split_approval(issue_key, False)
         await self._sm.transition(issue_key, Phase.CLARIFY)
         await self._tq.enqueue(
             TaskRequest(

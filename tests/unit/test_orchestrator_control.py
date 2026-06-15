@@ -367,6 +367,54 @@ class TestReviewConsume:
         orch2, _ = self._orch_with_mocks(tmp_path)
         assert orch2._load_review_offset() == 1
 
+    # --- SPLIT 分割承認 (#150) ---
+
+    async def test_split_approve_enqueues_execute_step(self, tmp_path: Path) -> None:
+        orch, _ = self._orch_with_mocks(tmp_path)
+        key = make_issue_key(REPO, 5)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.SPLIT)
+        orch._state_machine.set_awaiting_split_approval(key, True)
+        _write_control(orch, {"issue": 5, "action": "approve", "approver": "test-owner"})
+
+        await orch._consume_review_commands()
+
+        # フェーズは SPLIT のまま、実行ステップがエンキューされ、フラグは解除
+        assert orch._state_machine.get_phase(key) is Phase.SPLIT
+        assert orch._state_machine.get_state(key).awaiting_split_approval is False
+        req = await orch._task_queue.dequeue()
+        assert req.phase == "split"
+        assert req.extra.get("step") == "execute"
+
+    async def test_split_reject_returns_to_clarify_with_feedback(self, tmp_path: Path) -> None:
+        orch, _ = self._orch_with_mocks(tmp_path)
+        key = make_issue_key(REPO, 5)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.SPLIT)
+        orch._state_machine.set_awaiting_split_approval(key, True)
+        _write_control(
+            orch,
+            {"issue": 5, "action": "reject", "approver": "test-owner", "feedback": "もっと細かく"},
+        )
+
+        await orch._consume_review_commands()
+
+        assert orch._state_machine.get_phase(key) is Phase.CLARIFY
+        assert orch._state_machine.get_state(key).awaiting_split_approval is False
+        req = await orch._task_queue.dequeue()
+        assert req.phase == "clarify"
+        assert req.extra.get("modification_request") == "もっと細かく"
+
+    async def test_split_review_ignored_without_awaiting_flag(self, tmp_path: Path) -> None:
+        """SPLIT でも承認待ちフラグが無ければ無視する (誤承認防止)."""
+        orch, _ = self._orch_with_mocks(tmp_path)
+        key = make_issue_key(REPO, 5)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.SPLIT)
+        _write_control(orch, {"issue": 5, "action": "approve", "approver": "test-owner"})
+
+        await orch._consume_review_commands()
+
+        assert orch._state_machine.get_phase(key) is Phase.SPLIT
+        assert orch._task_queue.get_queue_snapshot()["queued"] == []
+
 
 class TestQueueJson:
     async def test_build_and_write_queue_json(self, tmp_path: Path) -> None:

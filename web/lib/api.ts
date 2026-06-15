@@ -608,7 +608,7 @@ export async function getDefaultActor(signal?: AbortSignal): Promise<string> {
 export interface ApiApprovalEntry {
   repo: string;
   issue_number: number;
-  phase: "approve" | "review";
+  phase: "approve" | "review" | "split";
   pr_number: number | null;
   updated_at: string;
 }
@@ -616,7 +616,7 @@ export interface ApiApprovalEntry {
 export interface ApprovalRow {
   repo: string;
   issue: number;
-  phase: "approve" | "review";
+  phase: "approve" | "review" | "split";
   prNumber: number | null;
   updatedAt: string;
 }

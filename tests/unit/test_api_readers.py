@@ -12,6 +12,7 @@ from ai_agent_orchestrator.api.readers import (
     aggregate_costs,
     merge_activity,
     read_agent_logs,
+    read_approvals,
     read_issue_events,
     read_issue_summaries,
 )
@@ -41,6 +42,7 @@ def _state_entry(
     issue_type: str = "bug",
     title: str | None = None,
     body: str | None = None,
+    awaiting_split_approval: bool | None = None,
 ) -> dict[str, object]:
     entry: dict[str, object] = {
         "issue_number": number,
@@ -60,6 +62,8 @@ def _state_entry(
         entry["title"] = title
     if body is not None:
         entry["body"] = body
+    if awaiting_split_approval is not None:
+        entry["awaiting_split_approval"] = awaiting_split_approval
     return entry
 
 
@@ -189,6 +193,59 @@ def test_read_issue_summaries_legacy_state_without_title(tmp_path: Path) -> None
 def test_make_excerpt(body: str, expected: str | None) -> None:
     """_make_excerpt は空白畳み込み・120字切り詰め・省略記号付与を行う (#142)."""
     assert _make_excerpt(body) == expected
+
+
+def test_split_awaiting_approval_status_is_waiting(tmp_path: Path) -> None:
+    """awaiting_split_approval が立つと status は waiting になる (#150)."""
+    _write_state(
+        tmp_path,
+        {
+            "o/r:1": _state_entry(
+                number=1,
+                repo="o/r",
+                phase="split",
+                updated_at="2026-01-01T00:00:00+00:00",
+                awaiting_split_approval=True,
+            )
+        },
+    )
+    summary = read_issue_summaries(tmp_path)[0]
+    assert summary.status == "waiting"
+
+
+def test_split_without_flag_status_is_running(tmp_path: Path) -> None:
+    """フラグが無い SPLIT は通常どおり running (#150)."""
+    _write_state(
+        tmp_path,
+        {"o/r:1": _state_entry(number=1, repo="o/r", phase="split", updated_at="2026-01-01T00:00:00+00:00")},
+    )
+    assert read_issue_summaries(tmp_path)[0].status == "running"
+
+
+def test_read_approvals_includes_split_awaiting(tmp_path: Path) -> None:
+    """read_approvals は承認待ちフラグの立った SPLIT を含める (#150)."""
+    _write_state(
+        tmp_path,
+        {
+            "o/r:1": _state_entry(
+                number=1,
+                repo="o/r",
+                phase="split",
+                updated_at="2026-01-01T00:00:00+00:00",
+                awaiting_split_approval=True,
+            ),
+            "o/r:2": _state_entry(
+                number=2,
+                repo="o/r",
+                phase="split",
+                updated_at="2026-01-02T00:00:00+00:00",
+            ),
+        },
+    )
+    approvals = read_approvals(tmp_path)
+    nums = {(a.issue_number, a.phase) for a in approvals}
+    assert (1, "split") in nums
+    assert (2, "split") not in nums  # フラグ無しは含めない
 
 
 # ──────────────────────────────────────
