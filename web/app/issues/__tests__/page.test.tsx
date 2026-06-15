@@ -165,6 +165,39 @@ describe("IssueDetailPage", () => {
     await waitFor(() => expect(screen.getByText("承認画面へ")).toBeDefined());
   });
 
+  it("phase=approve かつ waiting のとき承認ゲートと承認ボタンが表示される (#146)", async () => {
+    vi.mocked(usePolling).mockReturnValue({
+      data: makeIssue({ phase: "approve", status: "waiting" }),
+      error: undefined,
+      loading: false,
+    });
+    render(<IssueDetailPage />);
+    await waitFor(() => expect(screen.getByText("この計画は承認待ちです")).toBeDefined());
+    expect(screen.getByRole("button", { name: "承認" })).toBeDefined();
+  });
+
+  it("承認ゲート表示時は設計 PR が無くても設計レビュー導線が出る (#146)", async () => {
+    vi.mocked(usePolling).mockReturnValue({
+      // designPrNumber 未設定でも approve フェーズならレビューへ行ける
+      data: makeIssue({ phase: "approve", status: "waiting" }),
+      error: undefined,
+      loading: false,
+    });
+    render(<IssueDetailPage />);
+    await waitFor(() => expect(screen.getByText(/設計レビューを開く/)).toBeDefined());
+  });
+
+  it("承認ゲート表示時は重複する '承認画面へ' リンクを出さない (#146)", async () => {
+    vi.mocked(usePolling).mockReturnValue({
+      data: makeIssue({ phase: "approve", status: "waiting", needsHuman: "承認・回答待ち" }),
+      error: undefined,
+      loading: false,
+    });
+    render(<IssueDetailPage />);
+    await waitFor(() => expect(screen.getByText("この計画は承認待ちです")).toBeDefined());
+    expect(screen.queryByText("承認画面へ")).toBeNull();
+  });
+
   it("error イベントがある場合は ErrorPanel が表示される", async () => {
     vi.mocked(usePolling).mockReturnValue({
       data: makeIssue({
