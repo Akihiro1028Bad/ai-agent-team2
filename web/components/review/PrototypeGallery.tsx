@@ -40,8 +40,10 @@ function Frame({ url, title, large }: { url: string; title: string; large?: bool
  */
 export function PrototypeGallery({ items, notes, issue, repo, iteration = 0, selected = null }: PrototypeGalleryProps) {
   const [expanded, setExpanded] = useState<Prototype | null>(null);
-  // 楽観的に選択状態を保持（API 成功で確定）。複数案かつ issue 指定時のみ選択 UI を出す。
-  const [selectedId, setSelectedId] = useState<string | null>(selected);
+  // ローカルの選択上書き（楽観更新）。未操作時はサーバ由来の selected prop に追従する
+  // ため、effect 内 setState を使わず派生で算出する（#145 Phase3）。
+  const [override, setOverride] = useState<string | null>(null);
+  const selectedId = override ?? selected;
   const [selecting, setSelecting] = useState<string | null>(null);
   const [selectError, setSelectError] = useState<string | null>(null);
   const canSelect = issue !== undefined && items.length > 1;
@@ -52,7 +54,7 @@ export function PrototypeGallery({ items, notes, issue, repo, iteration = 0, sel
     setSelectError(null);
     try {
       await api.selectPrototype(issue, variantId);
-      setSelectedId(variantId);
+      setOverride(variantId);
     } catch {
       setSelectError("案の選択に失敗しました。少し待ってから再試行してください。");
     } finally {

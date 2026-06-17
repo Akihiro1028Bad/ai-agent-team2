@@ -139,7 +139,12 @@ def _collect_one_variant(
         notes.append(f"案 '{variant_id}' の HTML がサイズ上限 (2MiB) を超えたためスキップしました。")
         return None
     dest_name = f"{variant_id}.html"
-    shutil.copy2(src, dest_dir / dest_name)
+    # 1 案のコピー失敗が他案の収集を巻き込まないよう個別にキャッチする。
+    try:
+        shutil.copy2(src, dest_dir / dest_name)
+    except OSError:
+        notes.append(f"案 '{variant_id}' のコピーに失敗しました。")
+        return None
     title = str(entry.get("title", "")).strip() or variant_id
     description = str(entry.get("description", "")).strip()
     return {"id": variant_id, "title": title, "description": description, "file": dest_name}

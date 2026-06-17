@@ -397,8 +397,9 @@ class ImplementExecutor(PhaseExecutor):
         return (
             f"\n## 採用された UI プロトタイプ案 (#145)\n"
             f"ユーザーは案 `{selected}` を選択しました。"
-            f"`docs/designs/issue-{issue_number}.prototype.{selected}.html` の UI イメージ "
-            f"(レイアウト・操作感・情報設計) に沿って実装してください。"
+            f"`docs/designs/issue-{issue_number}.prototype.{selected}.html` があれば、その UI イメージ "
+            f"(レイアウト・操作感・情報設計) に沿って実装してください "
+            f"(見つからない場合は設計書の UI 記述に従う)。"
             f"プロトタイプはモックなので、実装はプロジェクトの技術スタックに合わせて作り直して構いません。\n"
         )
 
