@@ -11,6 +11,7 @@ import { ErrorPanel } from "@/components/ErrorPanel";
 import { IssueControls } from "@/components/IssueControls";
 import { ApprovalGate } from "@/components/ApprovalGate";
 import { LogViewer } from "@/components/LogViewer";
+import { HearingThread } from "@/components/review/HearingThread";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { ComingSoon } from "@/components/ComingSoon";
 import { IconArrow, IconCheck, IconDiff, IconExternal, IconGate, IconX } from "@/components/icons";
@@ -30,6 +31,14 @@ export default function IssueDetailPage() {
   );
 
   const { data: issue, error, loading } = usePolling(fetcher, 5000);
+
+  // ヒアリング Q&A のライブ表示 (#140)。回答後に状態が追従するようポーリングする。
+  /* v8 ignore next 3 -- usePolling callback is mocked in tests; api.getHearing は別途テスト */
+  const hearingFetcher = useCallback(
+    (signal: AbortSignal) => api.getHearing(id, repo, signal),
+    [id, repo],
+  );
+  const { data: hearing } = usePolling(hearingFetcher, 5000);
 
   // ヒアリング回答送信 (#88)
   const [replyText, setReplyText] = useState("");
@@ -120,6 +129,14 @@ export default function IssueDetailPage() {
         {/* 承認ゲート: 計画承認 (#146) / 分割承認 (#150) */}
         {isApprovalGate && (
           <ApprovalGate issue={issue.number} repo={repo} kind={issue.phase === "split" ? "split" : "plan"} repoFullName={issue.repo} />
+        )}
+
+        {/* ヒアリング Q&A ライブ表示 (#140)。往復履歴・状態・ラウンド数を可視化 */}
+        {hearing && Array.isArray(hearing.turns) &&
+          (hearing.turns.length > 0 || hearing.state === "waiting" || hearing.state === "in_progress") && (
+          <div className="mt-4">
+            <HearingThread state={hearing.state} rounds={hearing.rounds} turns={hearing.turns} />
+          </div>
         )}
 
         {/* ヒアリング回答ボックス (clarify-wait 時のみ表示) */}
