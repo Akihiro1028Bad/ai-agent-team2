@@ -110,10 +110,19 @@ describe("adaptEvent", () => {
     expect(adaptEvent(ev("ci_failure")).kind).toBe("error");
   });
 
-  it("data.title 優先・無ければ event を人間表記化、cost を拾う", () => {
+  it("data.title 優先・無ければ event を日本語ラベル化、cost を拾う (#143)", () => {
     expect(adaptEvent(ev("phase_completed", { title: "実装完了" })).title).toBe("実装完了");
-    expect(adaptEvent(ev("phase_completed")).title).toBe("phase completed");
+    // 既知イベントは日本語ラベルへ
+    expect(adaptEvent(ev("phase_completed")).title).toBe("フェーズ完了");
+    expect(adaptEvent(ev("phase_start")).title).toBe("フェーズ開始");
+    expect(adaptEvent(ev("phase_transition")).title).toBe("フェーズ遷移");
+    expect(adaptEvent(ev("split_approved")).title).toBe("分割を承認");
+    expect(adaptEvent(ev("new_issue")).title).toBe("新規 Issue を受付");
     expect(adaptEvent(ev("phase_completed", { cost_usd: 0.5 })).cost).toBe(0.5);
+  });
+
+  it("未知イベントは underscore→space で素通しする (#143)", () => {
+    expect(adaptEvent(ev("some_unknown_event")).title).toBe("some unknown event");
   });
 });
 

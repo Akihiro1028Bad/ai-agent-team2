@@ -233,8 +233,37 @@ function eventKind(event: string): EventKind {
   return "phase";
 }
 
+// アクティビティのイベント名 → 日本語ラベル (#143)。
+// backend が track() で発行する既知イベントを網羅。未知は underscore→space で素通し。
+const EVENT_LABELS_JA: Record<string, string> = {
+  // フェーズ進行
+  phase_start: "フェーズ開始",
+  phase_end: "フェーズ終了",
+  phase_completed: "フェーズ完了",
+  phase_transition: "フェーズ遷移",
+  phase_committed: "変更をコミット",
+  phase_error: "フェーズエラー",
+  phase_suspended: "中断",
+  // 承認・差し戻し
+  plan_approved: "計画を承認",
+  plan_rejected: "計画を差し戻し",
+  split_approved: "分割を承認",
+  split_rejected: "分割を差し戻し",
+  // 進捗
+  subtask_complete: "サブタスク完了",
+  fix_complete: "修正完了",
+  impl_continuation: "実装を継続",
+  // ポーリング検知
+  new_issue: "新規 Issue を受付",
+  issue_comment: "コメントを受信",
+  // システム
+  orchestrator_started: "オーケストレーター起動",
+  orchestrator_stopped: "オーケストレーター停止",
+  system_start: "システム起動",
+};
+
 function humanizeEvent(event: string): string {
-  return event.replace(/_/g, " ");
+  return EVENT_LABELS_JA[event] ?? event.replace(/_/g, " ");
 }
 
 function asString(value: unknown): string | undefined {
