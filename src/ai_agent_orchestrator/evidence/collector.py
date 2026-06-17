@@ -297,10 +297,15 @@ class EvidenceCollector:
             logger.exception("UI キャプチャ中に予期しないエラーが発生しました")
             notes.append("UI キャプチャ中に予期しないエラーが発生しました")
         finally:
-            if drain_task is not None:
-                drain_task.cancel()
+            # dev server を止める間も drain を走らせてパイプを空けておく
+            # (止める前に drain を切るとパイプ満杯で SIGTERM に応答できず SIGKILL に倒れる)。
+            # プロセス終了で stdout が EOF になり drain は自然終了するが、
+            # 念のため cancel + await でタスクを確実に回収する。
             if proc is not None:
                 await self._stop_dev_server(proc)
+            if drain_task is not None:
+                drain_task.cancel()
+                await asyncio.gather(drain_task, return_exceptions=True)
 
     @staticmethod
     async def _wait_ready_by_log(
@@ -348,7 +353,8 @@ class EvidenceCollector:
                 chunk = await stream.read(4096)
                 if not chunk:
                     return
-        except Exception:
+        except Exception as exc:
+            logger.debug("dev server stdout のドレイン中にエラー (無視): %s", exc)
             return
 
     @staticmethod
