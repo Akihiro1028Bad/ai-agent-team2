@@ -12,6 +12,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ヒアリング質問コメントを機械的に識別する安定マーカー (#139)。
+# Web の承認/詳細画面が Q&A を分類するために本文末尾へ埋め込む (HTML コメントなので非表示)。
+HEARING_QUESTION_MARKER = "<!-- ai-agent:hearing-question -->"
+
 
 class HearingExecutor(PhaseExecutor):
     """要件ヒアリングフェーズ。
@@ -107,6 +111,8 @@ class HearingExecutor(PhaseExecutor):
                 else ("ヒアリングを実行しましたが、出力が空でした。再実行が必要です。")
             )
             comment_body += next_action_footer("hearing")
+            # Web 承認/詳細画面が Q&A を機械的に識別できるよう安定マーカーを埋め込む (#139)
+            comment_body += f"\n\n{HEARING_QUESTION_MARKER}"
             await client.create_comment(request.repo, request.issue_number, comment_body)
             # hearing-wait へ遷移 (user reply待ち)
             await client.replace_phase_label(request.repo, request.issue_number, "phase:clarify-wait")

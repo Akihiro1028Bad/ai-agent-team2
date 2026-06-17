@@ -829,6 +829,54 @@ export async function getPrototypes(issue: number, signal?: AbortSignal): Promis
   return adaptPrototypes(await apiGet<ApiPrototypeResponse>(`/api/issues/${issue}/prototypes`, signal));
 }
 
+// ── ヒアリング (clarify) Q&A (#139) ──
+
+export type HearingState = "waiting" | "in_progress" | "done" | "none";
+
+interface ApiHearingTurn {
+  role: "question" | "answer";
+  author: string;
+  body: string;
+  created_at: string | null;
+}
+
+interface ApiHearingResponse {
+  state: HearingState;
+  rounds: number;
+  turns: ApiHearingTurn[];
+}
+
+export interface HearingTurn {
+  role: "question" | "answer";
+  author: string;
+  body: string;
+  createdAt?: string;
+}
+
+export interface HearingView {
+  state: HearingState;
+  rounds: number;
+  turns: HearingTurn[];
+}
+
+function adaptHearing(res: ApiHearingResponse): HearingView {
+  return {
+    state: res.state,
+    rounds: res.rounds,
+    turns: (res.turns ?? []).map((t) => ({
+      role: t.role,
+      author: t.author,
+      body: t.body,
+      createdAt: t.created_at ?? undefined,
+    })),
+  };
+}
+
+/** GET /api/issues/{n}/hearing */
+export async function getHearing(issue: number, repo?: string, signal?: AbortSignal): Promise<HearingView> {
+  return adaptHearing(await apiGet<ApiHearingResponse>(withRepo(`/api/issues/${issue}/hearing`, repo), signal));
+}
+
 // ── 監視リポジトリ設定 (#144) ──
 
 interface ApiRepositoryConfigRow {
@@ -961,6 +1009,7 @@ export const api = {
   getEvidence: (issue: number, signal?: AbortSignal) => getEvidence(issue, signal),
   getPrototypes: (issue: number, signal?: AbortSignal) => getPrototypes(issue, signal),
   getRepositories: (signal?: AbortSignal) => getRepositories(signal),
+  getHearing: (issue: number, repo?: string, signal?: AbortSignal) => getHearing(issue, repo, signal),
 
   postReview: (issue: number, comments: ReviewCommentInput[], actor: string, repo?: string, signal?: AbortSignal) =>
     postReview(issue, comments, actor, repo, signal),

@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from ai_agent_orchestrator.agents.claude_runner import PHASE_CONFIG
 from ai_agent_orchestrator.api.design import build_design_response
+from ai_agent_orchestrator.api.hearing import build_hearing
 from ai_agent_orchestrator.api.middleware import AuthMiddleware
 from ai_agent_orchestrator.api.readers import (
     aggregate_costs,
@@ -46,6 +47,7 @@ from ai_agent_orchestrator.api.schemas import (
     EventRecord,
     EvidenceResponse,
     HealthResponse,
+    HearingResponse,
     IssueDetailResponse,
     IssueSummaryResponse,
     PhaseModelRow,
@@ -112,6 +114,12 @@ class _CommentClient(Protocol):
     """Issue コメント投稿に必要な最小インターフェース (GitHubClient 互換)."""
 
     async def create_comment(self, repo: object, issue_number: int, body: str, mark_as_bot: bool = True) -> object: ...
+
+
+class _CommentListClient(Protocol):
+    """Issue コメント取得に必要な最小インターフェース (GitHubClient 互換, #139)."""
+
+    async def list_comments(self, repo: object, issue_number: int) -> list[object]: ...
 
 
 class ControlSystemd(Protocol):
@@ -478,6 +486,50 @@ def create_app(settings: AppSettings) -> FastAPI:
             phases=[PhaseModelRow(**row) for row in rows],
             allowed_models=sorted(ALLOWED_MODELS),
         )
+
+    @app.get("/api/issues/{issue_number}/hearing", response_model=HearingResponse)
+    async def get_issue_hearing(
+        issue_number: int,
+        repo: str | None = Query(default=None),
+    ) -> HearingResponse:
+        """Issue のヒアリング (clarify) Q&A を構造化して返す (#139).
+
+        Q&A は GitHub Issue コメントが出所のため、diff と同様に github_client_factory で
+        コメントを取得して分類する。config 未登録は 404、GitHub 障害は 502 に整形。
+        """
+        states = load_states(workspace)
+        state_repo, state = _resolve_issue(states, issue_number, repo)
+        owner, _, name = state_repo.partition("/")
+        repo_config = next(
+            (r for r in settings.repositories if r.owner == owner and r.repo == name),
+            None,
+        )
+        if repo_config is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository {state_repo} is not configured in config.yaml",
+            )
+
+        from ai_agent_orchestrator.github.client import ConfigError
+
+        factory: Callable[[str, str], Awaitable[_CommentListClient]] = app.state.github_client_factory
+        try:
+            client = await factory(owner, name)
+            comments = await client.list_comments(repo_config, issue_number)
+        except ConfigError as e:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository {state_repo} is not configured in config.yaml",
+            ) from e
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning("ヒアリングコメントの取得に失敗: repo=%s issue=%s", state_repo, issue_number, exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to fetch hearing comments from GitHub",
+            ) from e
+        return build_hearing(list(comments), state.phase.value)
 
     @app.get("/api/config/repositories", response_model=RepositoriesResponse)
     async def get_config_repositories() -> RepositoriesResponse:
