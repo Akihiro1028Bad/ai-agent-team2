@@ -439,6 +439,59 @@ class EvidenceResponse(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class KnowledgeEpisodeResponse(BaseModel):
+    """GET /api/knowledge の 1 エピソード (#93)."""
+
+    id: str
+    issue: int
+    repo: str
+    phase: str
+    outcome: str
+    summary: str
+    lesson: str
+    created_at: str
+
+
+class KnowledgePatternResponse(BaseModel):
+    """GET /api/knowledge の 1 抽出パターン (#93)."""
+
+    id: str
+    title: str
+    description: str
+    confidence: float
+    occurrences: int
+    status: str
+
+
+class KnowledgeSkillResponse(BaseModel):
+    """GET /api/knowledge の 1 昇格 Skill (#93)."""
+
+    id: str
+    name: str
+    from_pattern: str
+    used_count: int
+    success_rate: float
+    updated_at: str
+
+
+class KnowledgeStatsResponse(BaseModel):
+    """GET /api/knowledge の集計 (#93)."""
+
+    episodes: int = 0
+    success_rate: float = 0.0
+    patterns: int = 0
+    skills: int = 0
+
+
+class KnowledgeResponse(BaseModel):
+    """GET /api/knowledge のレスポンス (#93 自己改善ループの可視化)."""
+
+    stats: KnowledgeStatsResponse = Field(default_factory=KnowledgeStatsResponse)
+    episodes: list[KnowledgeEpisodeResponse] = Field(default_factory=list)
+    patterns: list[KnowledgePatternResponse] = Field(default_factory=list)
+    skills: list[KnowledgeSkillResponse] = Field(default_factory=list)
+
+
 class IssueCreateRequest(BaseModel):
     """POST /api/issues のリクエストボディ (#137).
 

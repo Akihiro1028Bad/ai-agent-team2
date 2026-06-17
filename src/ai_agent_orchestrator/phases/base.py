@@ -14,6 +14,7 @@ from ai_agent_orchestrator.models import Phase, WorkflowParams, derive_workflow_
 if TYPE_CHECKING:
     from ai_agent_orchestrator.agents.claude_runner import ClaudeAgentRunner
     from ai_agent_orchestrator.context.engine import ContextEngine
+    from ai_agent_orchestrator.knowledge.episode_store import EpisodeStore
     from ai_agent_orchestrator.models import AgentResult, IssueKey, TaskRequest
 
 logger = logging.getLogger(__name__)
@@ -318,6 +319,7 @@ class PhaseExecutor(ABC):
         workspace: WorkspaceProtocol,
         context_engine: ContextEngine,
         state_machine: StateMachineProtocol,
+        episode_store: EpisodeStore | None = None,
     ) -> None:
         """共通依存オブジェクトを注入する。
 
@@ -331,6 +333,7 @@ class PhaseExecutor(ABC):
             workspace: ワークスペース (worktree) 管理。
             context_engine: コンテキスト構築エンジン。
             state_machine: ステートマシンマネージャ。
+            episode_store: 自己改善ループのエピソード記録先 (#93)。None なら記録しない。
         """
         self._runner = runner
         self._account_manager = account_manager
@@ -339,6 +342,7 @@ class PhaseExecutor(ABC):
         self._workspace = workspace
         self._context = context_engine
         self._sm = state_machine
+        self._episode_store = episode_store
 
     async def _get_client(self, repo: object) -> GitHubClientProtocol:
         """リポジトリに対応する GitHubClient を取得する。
@@ -451,11 +455,90 @@ class PhaseExecutor(ABC):
                     "duration_sec": result.duration_sec,
                 },
             )
+            self._record_episode(
+                request,
+                outcome="success",
+                summary=f"{request.phase} を完了 (コスト ${result.cost_usd:.2f}, {result.duration_sec:.0f}s)",
+                lesson="",
+            )
             logger.debug("phase execute end: issue=#%d phase=%s", request.issue_number, request.phase)
         except TimeoutError:
+            self._record_episode(
+                request,
+                outcome="failure",
+                summary=f"{request.phase} がタイムアウトしました",
+                lesson=f"{request.phase}フェーズはタイムアウトしやすい",
+            )
             await self._handle_timeout(request)
         except Exception as exc:
+            self._record_episode(
+                request,
+                outcome="failure",
+                summary=f"{request.phase} で {type(exc).__name__} が発生して中断",
+                lesson=f"{request.phase}フェーズで {type(exc).__name__} が発生しやすい",
+            )
             await self._handle_error(request, exc)
+
+    def _record_episode(self, request: TaskRequest, outcome: str, summary: str, lesson: str) -> None:
+        """自己改善ループへエピソードを記録する (#93)。
+
+        episode_store 未注入なら何もしない。記録失敗はパイプラインを止めない
+        (best-effort、例外は握り潰す)。
+
+        Args:
+            request: タスクリクエスト。
+            outcome: "success" または "failure"。
+            summary: エピソードの要約。
+            lesson: 教訓 (空文字ならパターン抽出の対象外)。
+        """
+        if self._episode_store is None:
+            return
+        try:
+            from datetime import UTC, datetime
+
+            from ai_agent_orchestrator.knowledge.episode_store import make_episode_id
+            from ai_agent_orchestrator.knowledge.models import Episode
+
+            repo = getattr(request, "repo", None)
+            repo_name = f"{getattr(repo, 'owner', '')}/{getattr(repo, 'repo', '')}".strip("/")
+            created_at = datetime.now(UTC).isoformat()
+            phase = str(request.phase)
+            self._episode_store.record(
+                Episode(
+                    id=make_episode_id(request.issue_number, phase, created_at),
+                    issue=request.issue_number,
+                    repo=repo_name,
+                    phase=phase,
+                    outcome="success" if outcome == "success" else "failure",
+                    summary=summary,
+                    lesson=lesson,
+                    created_at=created_at,
+                )
+            )
+        except Exception:
+            logger.debug("episode recording skipped (best-effort)", exc_info=True)
+            return
+        self._promote_skills_best_effort()
+
+    def _promote_skills_best_effort(self) -> None:
+        """蓄積エピソードからパターンを抽出し Skill へ昇格・永続化する (#93)。
+
+        書き込みイベント (フェーズ完了/失敗) のたびに更新するため、GET は純粋に
+        読み取りだけで済む。best-effort で、失敗してもパイプラインを止めない。
+        """
+        base_dir = getattr(self._workspace, "base_dir", None)
+        if self._episode_store is None or base_dir is None:
+            return
+        try:
+            from datetime import UTC, datetime
+
+            from ai_agent_orchestrator.knowledge.pattern_extractor import extract_patterns
+            from ai_agent_orchestrator.knowledge.skill_manager import SkillManager
+
+            patterns = extract_patterns(self._episode_store.load())
+            SkillManager(base_dir).promote(patterns, datetime.now(UTC).isoformat())
+        except Exception:
+            logger.debug("skill promotion skipped (best-effort)", exc_info=True)
 
     @abstractmethod
     async def build_prompt(self, request: TaskRequest) -> str:
