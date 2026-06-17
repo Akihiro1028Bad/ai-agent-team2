@@ -359,4 +359,27 @@ describe("IssueDetailPage", () => {
     const submitBtn = screen.getByRole("button", { name: /回答を送信/ });
     expect(submitBtn).toHaveAttribute("disabled");
   });
+
+  it("ヒアリング Q&A をライブ表示する (#140)", async () => {
+    // usePolling は issue→hearing の順で呼ばれる。交互に返す。
+    const issueData = makeIssue({ phase: "clarify", status: "waiting" });
+    const hearingData = {
+      state: "waiting" as const,
+      rounds: 1,
+      turns: [
+        { role: "question" as const, author: "bot", body: "仕様を教えて" },
+        { role: "answer" as const, author: "alice", body: "これです" },
+      ],
+    };
+    let call = 0;
+    vi.mocked(usePolling).mockImplementation(() => {
+      const isIssue = call % 2 === 0;
+      call += 1;
+      return { data: isIssue ? issueData : hearingData, error: undefined, loading: false } as never;
+    });
+    render(<IssueDetailPage />);
+    await waitFor(() => expect(screen.getByText("仕様を教えて")).toBeDefined());
+    expect(screen.getByText("これです")).toBeDefined();
+    expect(screen.getByText("1 ラウンド")).toBeDefined();
+  });
 });
