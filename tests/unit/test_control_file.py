@@ -32,6 +32,18 @@ class TestParseControlLine:
         assert cmd.action == "reject"
         assert cmd.feedback == "直して"
 
+    def test_parses_prototype_revise_command(self) -> None:
+        """#145 Phase2: prototype_revise を feedback 付きでパースできる."""
+        from ai_agent_orchestrator.orchestrator.control_file import parse_control_line
+
+        cmd = parse_control_line(
+            '{"issue": 8, "action": "prototype_revise", "approver": "carol", "feedback": "色を変えて"}'
+        )
+        assert cmd is not None
+        assert cmd.issue_number == 8
+        assert cmd.action == "prototype_revise"
+        assert cmd.feedback == "色を変えて"
+
     def test_returns_none_on_invalid_json(self) -> None:
         from ai_agent_orchestrator.orchestrator.control_file import parse_control_line
 

@@ -24,8 +24,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ControlAction = Literal["approve", "reject"]
-_VALID_ACTIONS: frozenset[str] = frozenset({"approve", "reject"})
+ControlAction = Literal["approve", "reject", "prototype_revise"]
+# prototype_revise (#145 Phase2): 設計承認段階で UI プロトタイプの修正を依頼する。
+# 承認ではなく差し戻し系 (指摘) なので、reject と同じ feedback 経路に載せる。
+_VALID_ACTIONS: frozenset[str] = frozenset({"approve", "reject", "prototype_revise"})
 # DoS 対策: control.jsonl の最大サイズ (10 MiB)
 _MAX_CONTROL_FILE_BYTES = 10 * 1024 * 1024
 

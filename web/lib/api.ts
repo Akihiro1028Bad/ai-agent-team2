@@ -794,6 +794,7 @@ interface ApiPrototypeItem {
 
 interface ApiPrototypeResponse {
   generated_at: string | null;
+  iteration?: number;
   items: ApiPrototypeItem[];
   notes: string[];
 }
@@ -807,6 +808,8 @@ export interface Prototype {
 
 export interface PrototypeView {
   generatedAt: string | null;
+  /** 反復回数（#145 Phase2）。修正依頼→再生成のたびに増える。0 は未生成。 */
+  iteration: number;
   items: Prototype[];
   notes: string[];
 }
@@ -819,6 +822,7 @@ function adaptPrototypes(res: ApiPrototypeResponse): PrototypeView {
   }
   return {
     generatedAt: res.generated_at ?? null,
+    iteration: typeof res.iteration === "number" && res.iteration > 0 ? res.iteration : 0,
     items,
     notes: (res.notes ?? []).filter((n): n is string => typeof n === "string"),
   };
@@ -827,6 +831,25 @@ function adaptPrototypes(res: ApiPrototypeResponse): PrototypeView {
 /** GET /api/issues/{n}/prototypes */
 export async function getPrototypes(issue: number, signal?: AbortSignal): Promise<PrototypeView> {
   return adaptPrototypes(await apiGet<ApiPrototypeResponse>(`/api/issues/${issue}/prototypes`, signal));
+}
+
+/**
+ * POST /api/issues/{n}/prototypes/feedback — UI プロトタイプへの修正依頼 (#145 Phase2)。
+ * 設計承認段階で「ここ直して」を送り、PLAN を再実行してプロトタイプを更新させる。
+ */
+export async function sendPrototypeFeedback(
+  issue: number,
+  feedback: string,
+  actor: string,
+  repo?: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const res = await apiPost<{ accepted: boolean }>(
+    withRepo(`/api/issues/${issue}/prototypes/feedback`, repo),
+    { feedback, actor },
+    signal,
+  );
+  return res.accepted;
 }
 
 // ── ヒアリング (clarify) Q&A (#139) ──
@@ -1062,6 +1085,8 @@ export const api = {
 
   getEvidence: (issue: number, signal?: AbortSignal) => getEvidence(issue, signal),
   getPrototypes: (issue: number, signal?: AbortSignal) => getPrototypes(issue, signal),
+  sendPrototypeFeedback: (issue: number, feedback: string, actor: string, repo?: string, signal?: AbortSignal) =>
+    sendPrototypeFeedback(issue, feedback, actor, repo, signal),
   getRepositories: (signal?: AbortSignal) => getRepositories(signal),
   getHearing: (issue: number, repo?: string, signal?: AbortSignal) => getHearing(issue, repo, signal),
   createIssue: (input: { repo?: string; title: string; body?: string }, signal?: AbortSignal) =>

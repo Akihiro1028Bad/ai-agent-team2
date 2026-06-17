@@ -41,6 +41,8 @@ def collect_prototype(workspace_root: Path, issue_number: int, worktree_path: Pa
     src = worktree_prototype_file(worktree_path, issue_number)
     notes: list[str] = []
     collected = False
+    # 反復回数 (#145 Phase2): 既存 manifest の iteration を引き継ぎ、収集成功でインクリメント。
+    prev_iteration = _read_prev_iteration(dest_dir)
 
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -55,11 +57,35 @@ def collect_prototype(workspace_root: Path, issue_number: int, worktree_path: Pa
         logger.warning("Issue #%d: プロトタイプ収集に失敗: %s", issue_number, exc)
         notes.append("プロトタイプの収集に失敗しました。")
 
-    _write_manifest(dest_dir, issue_number, collected, notes)
+    # 収集成功時のみ反復をインクリメント。失敗時は前回値を維持する。
+    iteration = prev_iteration + 1 if collected else prev_iteration
+    _write_manifest(dest_dir, issue_number, collected, notes, iteration)
     return collected
 
 
-def _write_manifest(dest_dir: Path, issue_number: int, collected: bool, notes: list[str]) -> None:
+def _read_prev_iteration(dest_dir: Path) -> int:
+    """既存 manifest.json の iteration を読む (不在/不正は 0)."""
+    manifest_path = dest_dir / "manifest.json"
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return 0
+    if not isinstance(raw, dict):
+        return 0
+    value = raw.get("iteration")
+    # bool は int のサブクラスなので除外する。
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return 0
+
+
+def _write_manifest(
+    dest_dir: Path,
+    issue_number: int,
+    collected: bool,
+    notes: list[str],
+    iteration: int,
+) -> None:
     """prototype/manifest.json を書き出す (失敗は握り潰す)."""
     items = (
         [
@@ -74,6 +100,7 @@ def _write_manifest(dest_dir: Path, issue_number: int, collected: bool, notes: l
     )
     manifest = {
         "generated_at": datetime.now(UTC).isoformat(),
+        "iteration": iteration,
         "items": items,
         "notes": notes,
     }

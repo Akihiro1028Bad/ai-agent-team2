@@ -77,6 +77,34 @@ def test_collect_prototype_too_large_is_skipped(workspace: Path, tmp_path: Path)
     assert not (prototype_dir(workspace, 145) / "index.html").exists()
 
 
+def test_collect_prototype_iteration_increments(workspace: Path, tmp_path: Path) -> None:
+    """#145 Phase2: 収集成功のたびに manifest の iteration が増える."""
+    worktree = tmp_path / "wt"
+    _write_worktree_prototype(worktree, 145, "<h1>v1</h1>")
+    collect_prototype(workspace, 145, worktree)
+    manifest1 = json.loads((prototype_dir(workspace, 145) / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest1["iteration"] == 1
+
+    # 再生成 (修正依頼後の PLAN 再実行相当)
+    _write_worktree_prototype(worktree, 145, "<h1>v2</h1>")
+    collect_prototype(workspace, 145, worktree)
+    manifest2 = json.loads((prototype_dir(workspace, 145) / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest2["iteration"] == 2
+
+
+def test_collect_prototype_iteration_kept_on_failure(workspace: Path, tmp_path: Path) -> None:
+    """#145 Phase2: 収集失敗時は iteration を据え置く (前回値を維持)."""
+    worktree = tmp_path / "wt"
+    _write_worktree_prototype(worktree, 145, "<h1>v1</h1>")
+    collect_prototype(workspace, 145, worktree)
+
+    # 2 回目はプロトタイプ未生成 (収集失敗)
+    (worktree_prototype_file(worktree, 145)).unlink()
+    assert collect_prototype(workspace, 145, worktree) is False
+    manifest = json.loads((prototype_dir(workspace, 145) / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["iteration"] == 1
+
+
 # ──────────────────────────────────────
 # read_prototypes
 # ──────────────────────────────────────
@@ -94,6 +122,15 @@ def test_read_prototypes_builds_url(workspace: Path, tmp_path: Path) -> None:
     res = read_prototypes(workspace, 145)
     assert len(res.items) == 1
     assert res.items[0].url == "/api/issues/145/prototypes/index.html"
+
+
+def test_read_prototypes_exposes_iteration(workspace: Path, tmp_path: Path) -> None:
+    """#145 Phase2: manifest の iteration がレスポンスに反映される."""
+    worktree = tmp_path / "wt"
+    _write_worktree_prototype(worktree, 145, "<h1>p</h1>")
+    collect_prototype(workspace, 145, worktree)
+
+    assert read_prototypes(workspace, 145).iteration == 1
 
 
 # ──────────────────────────────────────
@@ -133,3 +170,55 @@ def test_serve_prototype_path_traversal_blocked(client: TestClient, workspace: P
 def test_serve_prototype_missing_file_404(client: TestClient, workspace: Path) -> None:
     r = client.get("/api/issues/145/prototypes/index.html")
     assert r.status_code == 404
+
+
+# ──────────────────────────────────────
+# POST /api/issues/{n}/prototypes/feedback (#145 Phase2)
+# ──────────────────────────────────────
+def _write_state(workspace: Path, key: str, number: int, repo: str, phase: str) -> None:
+    entry = {
+        "issue_number": number,
+        "phase": phase,
+        "issue_type": "feature-m",
+        "repo": repo,
+        "pr_number": None,
+        "design_pr_number": None,
+        "retry_count": 0,
+        "branch_head_sha": None,
+        "impl_iteration": 0,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    }
+    (workspace / "state.json").write_text(json.dumps({key: entry}, ensure_ascii=False), encoding="utf-8")
+
+
+def test_prototype_feedback_writes_prototype_revise(client: TestClient, workspace: Path) -> None:
+    """修正依頼 → control.jsonl に prototype_revise + feedback 行を書く."""
+    _write_state(workspace, "o/r:145", 145, "o/r", "approve")
+    r = client.post("/api/issues/145/prototypes/feedback", json={"feedback": "色を変えて", "actor": "o"})
+    assert r.status_code == 200
+    assert r.json() == {"accepted": True}
+    record = json.loads((workspace / "control.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert record == {"issue": 145, "action": "prototype_revise", "approver": "o", "feedback": "色を変えて"}
+
+
+def test_prototype_feedback_unknown_issue_404(client: TestClient) -> None:
+    r = client.post("/api/issues/999/prototypes/feedback", json={"feedback": "x", "actor": "o"})
+    assert r.status_code == 404
+
+
+def test_prototype_feedback_empty_feedback_422(client: TestClient, workspace: Path) -> None:
+    """空フィードバックは 422 (min_length=1)."""
+    _write_state(workspace, "o/r:145", 145, "o/r", "approve")
+    r = client.post("/api/issues/145/prototypes/feedback", json={"feedback": "", "actor": "o"})
+    assert r.status_code == 422
+
+
+def test_prototype_feedback_rejects_unknown_field_422(client: TestClient, workspace: Path) -> None:
+    """秘密情報の混入を防ぐ: 未知フィールドは 422 (extra=forbid)."""
+    _write_state(workspace, "o/r:145", 145, "o/r", "approve")
+    r = client.post(
+        "/api/issues/145/prototypes/feedback",
+        json={"feedback": "x", "actor": "o", "token": "ghp_secret"},
+    )
+    assert r.status_code == 422

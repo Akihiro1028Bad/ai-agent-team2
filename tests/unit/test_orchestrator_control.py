@@ -334,6 +334,24 @@ class TestReviewConsume:
         assert req.phase == "plan"
         assert req.extra["feedback"] == "再設計して"
 
+    async def test_prototype_revise_returns_to_plan_with_feedback(self, tmp_path: Path) -> None:
+        """#145 Phase2: prototype_revise は APPROVE→PLAN へ戻し prototype_feedback を渡す."""
+        orch, _ = self._orch_with_mocks(tmp_path)
+        orch._state_machine.register_issue(5, REPO, initial_phase=Phase.APPROVE)
+        _write_control(
+            orch,
+            {"issue": 5, "action": "prototype_revise", "approver": "test-owner", "feedback": "ボタンを大きく"},
+        )
+
+        await orch._consume_review_commands()
+
+        assert orch._state_machine.get_phase(make_issue_key(REPO, 5)) is Phase.PLAN
+        req = await orch._task_queue.dequeue()
+        assert req.phase == "plan"
+        assert req.extra["prototype_feedback"] == "ボタンを大きく"
+        # 設計差し戻しの feedback とは別キーで渡す (設計書は維持する意図)。
+        assert "feedback" not in req.extra
+
     async def test_ignored_when_not_approve_phase(self, tmp_path: Path) -> None:
         orch, _ = self._orch_with_mocks(tmp_path)
         orch._state_machine.register_issue(5, REPO, initial_phase=Phase.IMPLEMENT)

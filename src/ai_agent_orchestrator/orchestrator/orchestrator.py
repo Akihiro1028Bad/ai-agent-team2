@@ -908,8 +908,10 @@ class Orchestrator:
     async def _apply_review_command(self, cmd: ControlCommand) -> None:
         """承認/差し戻しを APPROVE ゲートとして適用する (#89).
 
-        - approve → APPROVE→IMPLEMENT 遷移 + IMPLEMENT 再エンキュー
-        - reject  → APPROVE→PLAN 遷移 + feedback 付き PLAN 再エンキュー
+        - approve          → APPROVE→IMPLEMENT 遷移 + IMPLEMENT 再エンキュー
+        - reject           → APPROVE→PLAN 遷移 + feedback 付き PLAN 再エンキュー
+        - prototype_revise → APPROVE→PLAN 遷移 + prototype_feedback 付き PLAN 再エンキュー
+          (#145 Phase2: 設計書は維持し UI プロトタイプのみ更新する反復ループ)
 
         APPROVE 相にない Issue は誤遷移防止のため無視する (poller 経由の承認と同方針)。
         """
@@ -950,6 +952,9 @@ class Orchestrator:
         extra: dict[str, Any] = {}
         if cmd.action == "reject" and cmd.feedback:
             extra["feedback"] = cmd.feedback
+        elif cmd.action == "prototype_revise" and cmd.feedback:
+            # 設計書を維持しつつ UI プロトタイプのみ更新する反復 (#145 Phase2)。
+            extra["prototype_feedback"] = cmd.feedback
         await self._task_queue.enqueue(
             TaskRequest(
                 issue_number=cmd.issue_number,
@@ -966,8 +971,13 @@ class Orchestrator:
         except Exception as exc:
             logger.warning("review: ラベル更新に失敗 (#%d): %s", cmd.issue_number, exc)
 
+        event_name = {
+            "approve": "plan_approved",
+            "reject": "plan_rejected",
+            "prototype_revise": "prototype_revise_requested",
+        }.get(cmd.action, "plan_rejected")
         await self._event_logger.track(
-            "plan_approved" if cmd.action == "approve" else "plan_rejected",
+            event_name,
             issue_number=cmd.issue_number,
             phase="system",
             data={"action": cmd.action, "approver": cmd.approver},

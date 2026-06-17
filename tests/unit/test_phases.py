@@ -476,6 +476,31 @@ class TestDesignExecutor:
         assert "prototype.html" in prompt
         assert "プロトタイプ" in prompt
 
+    async def test_full_prompt_includes_prototype_feedback_section(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+    ) -> None:
+        """prototype_feedback があると「設計書維持・プロトタイプのみ更新」節が入る (#145 Phase2)."""
+        mock_sm.get_issue_type.return_value = "feature-m"
+        from ai_agent_orchestrator.phases.plan import PlanExecutor
+
+        executor = PlanExecutor(
+            mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+        )
+        prompt = await executor.build_prompt(
+            _make_request(phase="plan", extra={"prototype_feedback": "ボタンを大きく"})
+        )
+
+        assert "UI プロトタイプへの修正依頼" in prompt
+        assert "ボタンを大きく" in prompt
+        assert "原則そのまま維持" in prompt
+
     async def test_process_result_posts_claude_review_comment(
         self,
         mock_runner: AsyncMock,
