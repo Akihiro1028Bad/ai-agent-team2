@@ -41,7 +41,10 @@ class RepositoryConfig(BaseModel):
     # UI スクショ・録画を取得する
     dev_command: str | None = None  # 例: "npm run dev" (worktree 内で実行)
     dev_url: str | None = None  # 例: "http://localhost:3000"
-    dev_ready_timeout_sec: int = 60  # dev_url が応答するまでの待機上限
+    dev_ready_timeout_sec: int = 60  # 起動完了までの待機上限
+    # 起動確認方法 (#91): 既定は dev_url への HTTP プローブ。dev_ready_log を設定すると
+    # dev server の標準出力に該当部分文字列が現れるまで待つ (HTTP を公開しないアプリ向け)。
+    dev_ready_log: str | None = None  # 例: "Ready in" / "Local:"
     test_command: str | None = None  # 例: "uv run pytest"。設定時はログをエビデンス保存
 
 

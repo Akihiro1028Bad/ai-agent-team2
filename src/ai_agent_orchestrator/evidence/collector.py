@@ -49,6 +49,7 @@ class RepoLike(Protocol):
     dev_command: str | None
     dev_url: str | None
     dev_ready_timeout_sec: int
+    dev_ready_log: str | None
     test_command: str | None
 
 
@@ -263,19 +264,29 @@ class EvidenceCollector:
             return
 
         ready_timeout = int(getattr(repo, "dev_ready_timeout_sec", 60))
+        ready_log = getattr(repo, "dev_ready_log", None)
         proc: asyncio.subprocess.Process | None = None
+        drain_task: asyncio.Task[None] | None = None
         try:
+            # ログパターン待機を使う場合のみ stdout を PIPE で取得する。
+            use_log = bool(ready_log)
             proc = await asyncio.create_subprocess_shell(
                 dev_command,
                 cwd=worktree_path,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE if use_log else asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.STDOUT if use_log else asyncio.subprocess.DEVNULL,
                 start_new_session=True,
             )
             self._dev_proc = proc
-            ready = await self._ready_probe.wait_ready(dev_url, ready_timeout)
+            if use_log:
+                ready = await self._wait_ready_by_log(proc, str(ready_log), ready_timeout)
+                # 準備完了後は stdout を読み続けないとパイプ満杯でプロセスが停止し得る。
+                if ready and proc.stdout is not None:
+                    drain_task = asyncio.create_task(self._drain_stream(proc.stdout))
+            else:
+                ready = await self._ready_probe.wait_ready(dev_url, ready_timeout)
             if not ready:
-                notes.append(f"dev server が {ready_timeout}s 以内に応答しなかったためキャプチャを中止しました")
+                notes.append(f"dev server が {ready_timeout}s 以内に準備完了しなかったためキャプチャを中止しました")
                 return
             captured = await self._capture.capture(dev_url, ev_dir)
             items.extend(captured)
@@ -286,8 +297,65 @@ class EvidenceCollector:
             logger.exception("UI キャプチャ中に予期しないエラーが発生しました")
             notes.append("UI キャプチャ中に予期しないエラーが発生しました")
         finally:
+            # dev server を止める間も drain を走らせてパイプを空けておく
+            # (止める前に drain を切るとパイプ満杯で SIGTERM に応答できず SIGKILL に倒れる)。
+            # プロセス終了で stdout が EOF になり drain は自然終了するが、
+            # 念のため cancel + await でタスクを確実に回収する。
             if proc is not None:
                 await self._stop_dev_server(proc)
+            if drain_task is not None:
+                drain_task.cancel()
+                await asyncio.gather(drain_task, return_exceptions=True)
+
+    @staticmethod
+    async def _wait_ready_by_log(
+        proc: asyncio.subprocess.Process,
+        pattern: str,
+        timeout_sec: int,
+    ) -> bool:
+        """dev server の標準出力に pattern が現れるまで待つ (#91).
+
+        プロセスが先に終了 (EOF) した場合やタイムアウト時は False を返す。
+
+        Args:
+            proc: 監視対象の dev server プロセス (stdout=PIPE 必須)。
+            pattern: 起動完了を示す部分文字列。
+            timeout_sec: 待機上限 (秒)。
+
+        Returns:
+            pattern を検出できたら True、そうでなければ False。
+        """
+        if proc.stdout is None:
+            return False
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_sec
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return False
+            try:
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=remaining)
+            except TimeoutError:
+                return False
+            if not line:  # EOF: プロセスが起動に失敗して終了した
+                return False
+            if pattern in line.decode(errors="replace"):
+                return True
+
+    @staticmethod
+    async def _drain_stream(stream: asyncio.StreamReader) -> None:
+        """stdout を EOF まで読み捨て、パイプ満杯によるブロックを防ぐ (#91).
+
+        cancel() で停止されるため CancelledError は握らず素通しする。
+        """
+        try:
+            while True:
+                chunk = await stream.read(4096)
+                if not chunk:
+                    return
+        except Exception as exc:
+            logger.debug("dev server stdout のドレイン中にエラー (無視): %s", exc)
+            return
 
     @staticmethod
     async def _stop_dev_server(proc: asyncio.subprocess.Process) -> None:

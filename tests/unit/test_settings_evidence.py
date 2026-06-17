@@ -13,6 +13,7 @@ def test_evidence_fields_defaults() -> None:
     assert repo.dev_command is None
     assert repo.dev_url is None
     assert repo.dev_ready_timeout_sec == 60
+    assert repo.dev_ready_log is None
     assert repo.test_command is None
 
 
@@ -26,6 +27,7 @@ def test_evidence_fields_from_yaml(tmp_path: Path) -> None:
         "    dev_command: npm run dev\n"
         "    dev_url: http://localhost:3000\n"
         "    dev_ready_timeout_sec: 30\n"
+        "    dev_ready_log: Ready in\n"
         "    test_command: uv run pytest\n",
         encoding="utf-8",
     )
@@ -34,4 +36,5 @@ def test_evidence_fields_from_yaml(tmp_path: Path) -> None:
     assert repo.dev_command == "npm run dev"
     assert repo.dev_url == "http://localhost:3000"
     assert repo.dev_ready_timeout_sec == 30
+    assert repo.dev_ready_log == "Ready in"
     assert repo.test_command == "uv run pytest"
