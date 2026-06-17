@@ -34,3 +34,20 @@ def worktree_prototype_file(worktree_path: Path, issue_number: int) -> Path:
         ``{worktree}/docs/designs/issue-{n}.prototype.html`` のパス。
     """
     return worktree_path / "docs" / "designs" / f"issue-{issue_number}.prototype.html"
+
+
+def worktree_prototypes_manifest(worktree_path: Path, issue_number: int) -> Path:
+    """複数プロトタイプ案のサイドカー JSON のパスを返す (#145 Phase3).
+
+    エージェントが 2〜3 案を生成するとき、各案の id/title/description/file を記述する
+    ``docs/designs/issue-{n}.prototypes.json`` の場所。存在しなければ単一 HTML へ
+    フォールバックする (Phase1/2 後方互換)。
+
+    Args:
+        worktree_path: worktree のルートパス。
+        issue_number: Issue 番号。
+
+    Returns:
+        ``{worktree}/docs/designs/issue-{n}.prototypes.json`` のパス。
+    """
+    return worktree_path / "docs" / "designs" / f"issue-{issue_number}.prototypes.json"

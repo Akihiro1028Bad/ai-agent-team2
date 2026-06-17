@@ -11,7 +11,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
-    api: { ...actual.api, sendPrototypeFeedback: vi.fn().mockResolvedValue(true) },
+    api: {
+      ...actual.api,
+      sendPrototypeFeedback: vi.fn().mockResolvedValue(true),
+      selectPrototype: vi.fn().mockResolvedValue("simple"),
+    },
   };
 });
 
@@ -21,13 +25,20 @@ import { PrototypeGallery } from "@/components/review/PrototypeGallery";
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(api.sendPrototypeFeedback).mockResolvedValue(true);
+  vi.mocked(api.selectPrototype).mockResolvedValue("simple");
 });
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 function proto(overrides: Partial<Prototype> = {}): Prototype {
-  return { id: "prototype", title: "UI プロトタイプ", url: "/api/issues/145/prototypes/index.html", ...overrides };
+  return {
+    id: "prototype",
+    title: "UI プロトタイプ",
+    url: "/api/issues/145/prototypes/index.html",
+    description: "",
+    ...overrides,
+  };
 }
 
 describe("PrototypeGallery", () => {
@@ -104,5 +115,42 @@ describe("PrototypeGallery", () => {
     await userEvent.type(screen.getByPlaceholderText(/直してほしい点/), "x");
     await userEvent.click(screen.getByRole("button", { name: "修正を依頼" }));
     await waitFor(() => expect(screen.getByText(/送信に失敗しました/)).toBeDefined());
+  });
+
+  // ── #145 Phase3: 2〜3案の提示と選択 ──
+  const A = proto({ id: "simple", title: "シンプル案", description: "最小操作", url: "/u/a" });
+  const B = proto({ id: "rich", title: "リッチ案", description: "情報量多め", url: "/u/b" });
+
+  it("複数案では説明と選択ボタンを表示する (#145 Phase3)", () => {
+    render(<PrototypeGallery items={[A, B]} notes={[]} issue={145} repo="o/r" />);
+    expect(screen.getByText("最小操作")).toBeDefined();
+    expect(screen.getByText("情報量多め")).toBeDefined();
+    expect(screen.getAllByRole("button", { name: "この案を選ぶ" }).length).toBe(2);
+  });
+
+  it("単一案では選択ボタンを出さない", () => {
+    render(<PrototypeGallery items={[A]} notes={[]} issue={145} repo="o/r" />);
+    expect(screen.queryByRole("button", { name: "この案を選ぶ" })).toBeNull();
+  });
+
+  it("案を選ぶと selectPrototype を呼び選択中表示になる (#145 Phase3)", async () => {
+    vi.mocked(api.selectPrototype).mockResolvedValue("rich");
+    render(<PrototypeGallery items={[A, B]} notes={[]} issue={145} repo="o/r" />);
+    const buttons = screen.getAllByRole("button", { name: "この案を選ぶ" });
+    await userEvent.click(buttons[1]); // rich
+    await waitFor(() => expect(api.selectPrototype).toHaveBeenCalledWith(145, "rich"));
+    expect(await screen.findByText("選択中")).toBeDefined();
+  });
+
+  it("初期 selected が選択中として反映される", () => {
+    render(<PrototypeGallery items={[A, B]} notes={[]} issue={145} repo="o/r" selected="rich" />);
+    expect(screen.getByText("選択中")).toBeDefined();
+  });
+
+  it("選択失敗でエラーメッセージを出す", async () => {
+    vi.mocked(api.selectPrototype).mockRejectedValue(new Error("fail"));
+    render(<PrototypeGallery items={[A, B]} notes={[]} issue={145} repo="o/r" />);
+    await userEvent.click(screen.getAllByRole("button", { name: "この案を選ぶ" })[0]);
+    await waitFor(() => expect(screen.getByText(/案の選択に失敗しました/)).toBeDefined());
   });
 });

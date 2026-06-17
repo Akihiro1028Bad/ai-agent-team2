@@ -41,6 +41,7 @@ from ai_agent_orchestrator.io_safety import (
 )
 from ai_agent_orchestrator.models import Phase
 from ai_agent_orchestrator.prototype.paths import prototype_dir
+from ai_agent_orchestrator.prototype.selection import read_selection
 from ai_agent_orchestrator.state_persistence import StatePersistence
 
 if TYPE_CHECKING:
@@ -249,6 +250,7 @@ def read_prototypes(workspace: Path, issue_number: int) -> PrototypeResponse:
                 id=str(entry.get("id", "")),
                 title=str(entry.get("title", "")),
                 url=f"/api/issues/{issue_number}/prototypes/{file}",
+                description=str(entry.get("description", "")),
             )
         )
     notes = [str(n) for n in raw.get("notes", []) if isinstance(n, str)]
@@ -260,9 +262,14 @@ def read_prototypes(workspace: Path, issue_number: int) -> PrototypeResponse:
         if isinstance(raw_iteration, int) and not isinstance(raw_iteration, bool) and raw_iteration > 0
         else 0
     )
+    # 選択された案 (#145 Phase3)。存在しない案を指していたら無視する。
+    selected = read_selection(workspace, issue_number)
+    if selected is not None and not any(it.id == selected for it in items):
+        selected = None
     return PrototypeResponse(
         generated_at=generated_at if isinstance(generated_at, str) else None,
         iteration=iteration,
+        selected=selected,
         items=items,
         notes=notes,
     )

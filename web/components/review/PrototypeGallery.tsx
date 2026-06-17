@@ -14,6 +14,8 @@ interface PrototypeGalleryProps {
   repo?: string;
   /** 反復回数（#145 Phase2）。1 以上で「更新済み」バッジを表示。 */
   iteration?: number;
+  /** 選択中の案 id（#145 Phase3）。複数案のとき選択 UI を出す。 */
+  selected?: string | null;
 }
 
 /** sandbox iframe でプロトタイプを描画する。allow-same-origin は付けない（不透明オリジン隔離, #145）。 */
@@ -36,8 +38,27 @@ function Frame({ url, title, large }: { url: string; title: string; large?: bool
  * PLAN が生成した自己完結 HTML を承認前に「動くプレビュー」として表示する。
  * iframe は sandbox="allow-scripts"（allow-same-origin 無し）で隔離し、拡大表示も可能。
  */
-export function PrototypeGallery({ items, notes, issue, repo, iteration = 0 }: PrototypeGalleryProps) {
+export function PrototypeGallery({ items, notes, issue, repo, iteration = 0, selected = null }: PrototypeGalleryProps) {
   const [expanded, setExpanded] = useState<Prototype | null>(null);
+  // 楽観的に選択状態を保持（API 成功で確定）。複数案かつ issue 指定時のみ選択 UI を出す。
+  const [selectedId, setSelectedId] = useState<string | null>(selected);
+  const [selecting, setSelecting] = useState<string | null>(null);
+  const [selectError, setSelectError] = useState<string | null>(null);
+  const canSelect = issue !== undefined && items.length > 1;
+
+  const choose = async (variantId: string) => {
+    if (issue === undefined) return;
+    setSelecting(variantId);
+    setSelectError(null);
+    try {
+      await api.selectPrototype(issue, variantId);
+      setSelectedId(variantId);
+    } catch {
+      setSelectError("案の選択に失敗しました。少し待ってから再試行してください。");
+    } finally {
+      setSelecting(null);
+    }
+  };
 
   if (items.length === 0) {
     return (
@@ -57,33 +78,80 @@ export function PrototypeGallery({ items, notes, issue, repo, iteration = 0 }: P
           更新済み（{iteration} 回目）
         </span>
       )}
-      {items.map((p) => (
-        <div key={p.id} className="panel p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-[13px] font-medium">{p.title}</span>
-            <div className="flex items-center gap-3">
-              <a
-                href={p.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-[12px]"
-                style={{ color: "var(--color-ink-dim)" }}
-              >
-                新しいタブで開く <IconArrow width={12} height={12} />
-              </a>
+      {canSelect && (
+        <p className="text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+          見比べて 1 案を選んでください。選んだ案は承認後に実装の土台になります。
+        </p>
+      )}
+      {selectError && (
+        <p className="text-[12px]" style={{ color: "var(--color-rose)" }}>
+          {selectError}
+        </p>
+      )}
+      {items.map((p) => {
+        const isSelected = selectedId === p.id;
+        return (
+          <div
+            key={p.id}
+            className="panel p-3"
+            style={isSelected ? { borderColor: "var(--color-signal)", borderWidth: 1.5 } : undefined}
+          >
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] font-medium">{p.title}</span>
+                {isSelected && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold"
+                    style={{ background: "var(--color-signal)", color: "#0b0d10" }}
+                  >
+                    <IconCheck width={11} height={11} /> 選択中
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <a
+                  href={p.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[12px]"
+                  style={{ color: "var(--color-ink-dim)" }}
+                >
+                  新しいタブで開く <IconArrow width={12} height={12} />
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setExpanded(p)}
+                  className="text-[12px]"
+                  style={{ color: "var(--color-signal)" }}
+                >
+                  拡大
+                </button>
+              </div>
+            </div>
+            {p.description && (
+              <p className="mb-2 text-[12px]" style={{ color: "var(--color-ink-dim)" }}>
+                {p.description}
+              </p>
+            )}
+            <Frame url={p.url} title={p.title} />
+            {canSelect && (
               <button
                 type="button"
-                onClick={() => setExpanded(p)}
-                className="text-[12px]"
-                style={{ color: "var(--color-signal)" }}
+                onClick={() => void choose(p.id)}
+                disabled={isSelected || selecting !== null}
+                className="mt-2 w-fit rounded-lg px-3.5 py-1.5 text-[12.5px] font-semibold disabled:opacity-40"
+                style={
+                  isSelected
+                    ? { color: "var(--color-ink-dim)", background: "var(--color-line)" }
+                    : { color: "#0b0d10", background: "var(--color-signal)" }
+                }
               >
-                拡大
+                {isSelected ? "選択済み" : selecting === p.id ? "選択中…" : "この案を選ぶ"}
               </button>
-            </div>
+            )}
           </div>
-          <Frame url={p.url} title={p.title} />
-        </div>
-      ))}
+        );
+      })}
 
       {issue !== undefined && <PrototypeFeedbackForm issue={issue} repo={repo} iteration={iteration} />}
 

@@ -55,7 +55,9 @@ def test_collect_prototype_copies_and_writes_manifest(workspace: Path, tmp_path:
     pdir = prototype_dir(workspace, 145)
     assert (pdir / "index.html").read_text(encoding="utf-8") == "<!doctype html><h1>proto</h1>"
     manifest = json.loads((pdir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["items"] == [{"id": "prototype", "title": "UI プロトタイプ", "file": "index.html"}]
+    assert manifest["items"] == [
+        {"id": "prototype", "title": "UI プロトタイプ", "description": "", "file": "index.html"}
+    ]
 
 
 def test_collect_prototype_absent_writes_empty_manifest(workspace: Path, tmp_path: Path) -> None:
@@ -131,6 +133,173 @@ def test_read_prototypes_exposes_iteration(workspace: Path, tmp_path: Path) -> N
     collect_prototype(workspace, 145, worktree)
 
     assert read_prototypes(workspace, 145).iteration == 1
+
+
+# ──────────────────────────────────────
+# collector 多案 (#145 Phase3)
+# ──────────────────────────────────────
+def _write_variants(worktree: Path, issue_number: int, variants: list[dict[str, str]]) -> None:
+    """サイドカー JSON と各 variant HTML を worktree に書く."""
+    from ai_agent_orchestrator.prototype.paths import worktree_prototypes_manifest
+
+    designs = worktree / "docs" / "designs"
+    designs.mkdir(parents=True, exist_ok=True)
+    for v in variants:
+        (designs / v["file"]).write_text(f"<h1>{v['id']}</h1>", encoding="utf-8")
+    worktree_prototypes_manifest(worktree, issue_number).write_text(
+        json.dumps(variants, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def test_collect_multi_variants(workspace: Path, tmp_path: Path) -> None:
+    """サイドカーがあれば複数案を id/title/description 付きで収集する."""
+    worktree = tmp_path / "wt"
+    _write_variants(
+        worktree,
+        145,
+        [
+            {
+                "id": "simple",
+                "title": "シンプル案",
+                "description": "最小操作",
+                "file": "issue-145.prototype.simple.html",
+            },
+            {"id": "rich", "title": "リッチ案", "description": "情報量多め", "file": "issue-145.prototype.rich.html"},
+        ],
+    )
+
+    assert collect_prototype(workspace, 145, worktree) is True
+    res = read_prototypes(workspace, 145)
+    assert [it.id for it in res.items] == ["simple", "rich"]
+    assert res.items[0].title == "シンプル案"
+    assert res.items[0].description == "最小操作"
+    assert res.items[0].url == "/api/issues/145/prototypes/simple.html"
+    # 各案の HTML が <id>.html として配信ディレクトリへコピーされる
+    assert (prototype_dir(workspace, 145) / "simple.html").is_file()
+    assert (prototype_dir(workspace, 145) / "rich.html").is_file()
+
+
+def test_collect_multi_variants_skips_invalid_id(workspace: Path, tmp_path: Path) -> None:
+    """不正な id / パストラバーサルの file はスキップされる."""
+    worktree = tmp_path / "wt"
+    _write_variants(
+        worktree,
+        145,
+        [
+            {"id": "ok", "title": "OK", "description": "", "file": "issue-145.prototype.ok.html"},
+            {"id": "../evil", "title": "X", "description": "", "file": "issue-145.prototype.ok.html"},
+        ],
+    )
+    assert collect_prototype(workspace, 145, worktree) is True
+    res = read_prototypes(workspace, 145)
+    assert [it.id for it in res.items] == ["ok"]
+
+
+def test_collect_caps_variants_to_three(workspace: Path, tmp_path: Path) -> None:
+    """案数は 3 を上限に収集する."""
+    worktree = tmp_path / "wt"
+    _write_variants(
+        worktree,
+        145,
+        [
+            {"id": f"v{i}", "title": f"案{i}", "description": "", "file": f"issue-145.prototype.v{i}.html"}
+            for i in range(5)
+        ],
+    )
+    collect_prototype(workspace, 145, worktree)
+    assert len(read_prototypes(workspace, 145).items) == 3
+
+
+# ──────────────────────────────────────
+# selection (#145 Phase3)
+# ──────────────────────────────────────
+def test_selection_round_trip(workspace: Path) -> None:
+    from ai_agent_orchestrator.prototype.selection import read_selection, write_selection
+
+    assert read_selection(workspace, 145) is None
+    assert write_selection(workspace, 145, "simple") is True
+    assert read_selection(workspace, 145) == "simple"
+
+
+def test_selection_rejects_invalid_id(workspace: Path) -> None:
+    from ai_agent_orchestrator.prototype.selection import write_selection
+
+    assert write_selection(workspace, 145, "../evil") is False
+
+
+def test_read_prototypes_exposes_selected(workspace: Path, tmp_path: Path) -> None:
+    from ai_agent_orchestrator.prototype.selection import write_selection
+
+    worktree = tmp_path / "wt"
+    _write_variants(
+        worktree,
+        145,
+        [{"id": "simple", "title": "S", "description": "", "file": "issue-145.prototype.simple.html"}],
+    )
+    collect_prototype(workspace, 145, worktree)
+    write_selection(workspace, 145, "simple")
+
+    assert read_prototypes(workspace, 145).selected == "simple"
+
+
+def test_read_prototypes_ignores_stale_selection(workspace: Path, tmp_path: Path) -> None:
+    """存在しない案を指す selection は無視される."""
+    from ai_agent_orchestrator.prototype.selection import write_selection
+
+    worktree = tmp_path / "wt"
+    _write_variants(
+        worktree,
+        145,
+        [{"id": "simple", "title": "S", "description": "", "file": "issue-145.prototype.simple.html"}],
+    )
+    collect_prototype(workspace, 145, worktree)
+    write_selection(workspace, 145, "ghost")
+
+    assert read_prototypes(workspace, 145).selected is None
+
+
+# ──────────────────────────────────────
+# POST /api/issues/{n}/prototypes/select (#145 Phase3)
+# ──────────────────────────────────────
+def test_select_endpoint_persists_choice(client: TestClient, workspace: Path, tmp_path: Path) -> None:
+    worktree = tmp_path / "wt"
+    _write_variants(
+        worktree,
+        145,
+        [
+            {"id": "simple", "title": "S", "description": "", "file": "issue-145.prototype.simple.html"},
+            {"id": "rich", "title": "R", "description": "", "file": "issue-145.prototype.rich.html"},
+        ],
+    )
+    collect_prototype(workspace, 145, worktree)
+
+    r = client.post("/api/issues/145/prototypes/select", json={"variant_id": "rich"})
+    assert r.status_code == 200
+    assert r.json() == {"accepted": True, "selected": "rich"}
+    assert read_prototypes(workspace, 145).selected == "rich"
+
+
+def test_select_endpoint_unknown_variant_404(client: TestClient, workspace: Path, tmp_path: Path) -> None:
+    worktree = tmp_path / "wt"
+    _write_variants(
+        worktree,
+        145,
+        [{"id": "simple", "title": "S", "description": "", "file": "issue-145.prototype.simple.html"}],
+    )
+    collect_prototype(workspace, 145, worktree)
+
+    r = client.post("/api/issues/145/prototypes/select", json={"variant_id": "ghost"})
+    assert r.status_code == 404
+
+
+def test_select_endpoint_invalid_id_422(client: TestClient) -> None:
+    r = client.post("/api/issues/145/prototypes/select", json={"variant_id": "../evil"})
+    assert r.status_code == 422
+
+
+def test_select_endpoint_rejects_unknown_field_422(client: TestClient) -> None:
+    r = client.post("/api/issues/145/prototypes/select", json={"variant_id": "simple", "token": "x"})
+    assert r.status_code == 422
 
 
 # ──────────────────────────────────────

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -473,7 +474,10 @@ class TestDesignExecutor:
         )
         prompt = await executor.build_prompt(_make_request(phase="plan"))
 
-        assert "prototype.html" in prompt
+        # Phase3: 2〜3 案 + サイドカー JSON 生成の指示が含まれる
+        assert "prototype.<id>.html" in prompt
+        assert "prototypes.json" in prompt
+        assert "2〜3 案" in prompt
         assert "プロトタイプ" in prompt
 
     async def test_full_prompt_includes_prototype_feedback_section(
@@ -833,6 +837,35 @@ class TestImplementExecutor:
         mock_sm.transition.assert_called_with(("org/app", 1), "review")
         state = mock_sm.get_state(1)
         assert state.pr_number == 42
+
+    def test_selected_prototype_hint(
+        self,
+        mock_runner: AsyncMock,
+        mock_github: AsyncMock,
+        mock_notifier: AsyncMock,
+        mock_tracker: AsyncMock,
+        mock_workspace: AsyncMock,
+        mock_context: AsyncMock,
+        mock_sm: AsyncMock,
+        tmp_path: Path,
+    ) -> None:
+        """選択済みなら採用案を実装プロンプトへ引き継ぐ節を返す (#145 Phase3)。"""
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
+        from ai_agent_orchestrator.prototype.selection import write_selection
+
+        executor = ImplementExecutor(
+            mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+        )
+        mock_workspace.base_dir = tmp_path
+
+        # 未選択なら空文字
+        assert executor._selected_prototype_hint(1) == ""
+
+        # 選択済みなら採用案 id とファイルを示す
+        write_selection(tmp_path, 1, "simple")
+        hint = executor._selected_prototype_hint(1)
+        assert "simple" in hint
+        assert "issue-1.prototype.simple.html" in hint
 
     async def test_collect_evidence_called_in_finalize(
         self,
