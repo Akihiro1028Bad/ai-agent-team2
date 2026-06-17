@@ -253,8 +253,16 @@ def read_prototypes(workspace: Path, issue_number: int) -> PrototypeResponse:
         )
     notes = [str(n) for n in raw.get("notes", []) if isinstance(n, str)]
     generated_at = raw.get("generated_at")
+    # iteration (#145 Phase2): bool は int のサブクラスなので除外。
+    raw_iteration = raw.get("iteration")
+    iteration = (
+        raw_iteration
+        if isinstance(raw_iteration, int) and not isinstance(raw_iteration, bool) and raw_iteration > 0
+        else 0
+    )
     return PrototypeResponse(
         generated_at=generated_at if isinstance(generated_at, str) else None,
+        iteration=iteration,
         items=items,
         notes=notes,
     )

@@ -206,10 +206,27 @@ class PlanExecutor(PhaseExecutor):
         feedback = extra.get("feedback", "")
         feedback_section = f"## 前回の設計に対する指摘\n{feedback}\n\n" if feedback else ""
 
+        # UI プロトタイプの修正依頼 (#145 Phase2): 設計書は維持し、プロトタイプのみ更新する反復。
+        prototype_feedback = extra.get("prototype_feedback", "")
+        prototype_feedback_section = (
+            (
+                f"## UI プロトタイプへの修正依頼 (最優先)\n"
+                f"前回提示した UI プロトタイプ "
+                f"(`docs/designs/issue-{request.issue_number}.prototype.html`) に対し、"
+                f"次の修正依頼が届いています:\n{prototype_feedback}\n\n"
+                f"**設計書 (`docs/designs/issue-{request.issue_number}.md`) の方針・サブタスクは原則そのまま維持**し、"
+                f"上記フィードバックに沿って UI プロトタイプ HTML を更新することに集中してください "
+                f"(設計の方向性が変わる指摘の場合のみ、設計書も併せて最小限修正してよい)。\n\n"
+            )
+            if prototype_feedback
+            else ""
+        )
+
         raw = (
             f"以下のIssueの設計書を作成してください。\n\n"
             f"## Issue #{request.issue_number}: {issue.title}\n"
             f"{getattr(issue, 'body', '') or ''}\n\n"
+            f"{prototype_feedback_section}"
             f"{feedback_section}"
             f"## ヒアリング記録\n{hearing_log}\n\n"
             f"## コンテキスト\n{context}\n\n"

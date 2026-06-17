@@ -546,5 +546,27 @@ class PrototypeResponse(BaseModel):
     """GET /api/issues/{n}/prototypes のレスポンス (#145)."""
 
     generated_at: str | None = None
+    # 反復回数 (#145 Phase2): 修正依頼→再生成のたびに増える。0 は未生成。
+    iteration: int = 0
     items: list[PrototypeItemResponse] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+
+
+class PrototypeFeedbackRequest(BaseModel):
+    """POST /api/issues/{n}/prototypes/feedback のリクエスト (#145 Phase2).
+
+    UI プロトタイプへの修正依頼。control.jsonl の prototype_revise 行に変換され、
+    PLAN を再実行してプロトタイプを更新する反復ループのトリガーになる。
+    秘密情報の混入を防ぐため未知フィールドは拒否する (extra=forbid)。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    feedback: str = Field(min_length=1, max_length=10000)
+    actor: str = Field(default="", max_length=200)
+
+
+class PrototypeFeedbackResponse(BaseModel):
+    """POST /api/issues/{n}/prototypes/feedback のレスポンス (#145 Phase2)."""
+
+    accepted: bool

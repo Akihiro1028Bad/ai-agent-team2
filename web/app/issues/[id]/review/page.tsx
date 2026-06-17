@@ -134,7 +134,13 @@ export default function DesignReviewPage() {
           <p className="mb-3 text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
             提案 UI を実際に操作して確認できます（モックデータの使い捨てプレビュー）。
           </p>
-          <PrototypeGallery items={prototypes.items} notes={prototypes.notes} />
+          <PrototypeGallery
+            items={prototypes.items}
+            notes={prototypes.notes}
+            issue={id}
+            repo={repo}
+            iteration={prototypes.iteration}
+          />
         </section>
       )}
 

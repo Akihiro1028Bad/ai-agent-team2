@@ -56,6 +56,8 @@ from ai_agent_orchestrator.api.schemas import (
     PhaseModelRow,
     PhaseModelsRequest,
     PhaseModelsResponse,
+    PrototypeFeedbackRequest,
+    PrototypeFeedbackResponse,
     PrototypeResponse,
     QueueResponse,
     ReplyRequest,
@@ -473,6 +475,33 @@ def create_app(settings: AppSettings) -> FastAPI:
             "X-Content-Type-Options": "nosniff",
         }
         return FileResponse(path=str(target), media_type=media_type, headers=headers)
+
+    @app.post(
+        "/api/issues/{issue_number}/prototypes/feedback",
+        response_model=PrototypeFeedbackResponse,
+    )
+    async def post_issue_prototype_feedback(
+        issue_number: int,
+        body: PrototypeFeedbackRequest,
+        repo: str | None = Query(default=None),
+    ) -> PrototypeFeedbackResponse:
+        """UI プロトタイプへの修正依頼を control.jsonl へ書く (#145 Phase2).
+
+        prototype_revise 行として既存の差し戻し経路 (APPROVE→PLAN 再実行) に載せる。
+        actor の権限検証は orchestrator 側 (control_file の approver 検証) で行う。
+        不在 404・複数一致 400。秘密情報の混入は extra=forbid で拒否済み。
+        """
+        states = load_states(workspace)
+        _resolve_issue(states, issue_number, repo)
+        record: dict[str, object] = {
+            "issue": issue_number,
+            "action": "prototype_revise",
+            "approver": body.actor,
+            "feedback": body.feedback,
+        }
+        control_path: Path = app.state.workspace / "control.jsonl"
+        await asyncio.to_thread(_append_control_line, control_path, record)
+        return PrototypeFeedbackResponse(accepted=True)
 
     @app.post("/api/issues/{issue_number}/review", response_model=ReviewResponse)
     async def post_issue_review(
