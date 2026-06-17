@@ -485,6 +485,31 @@ class RepositoriesResponse(BaseModel):
     repositories: list[RepositoryConfigRow] = Field(default_factory=list)
 
 
+class RepositoryRegisterRequest(BaseModel):
+    """POST /api/config/repositories のリクエストボディ (#138).
+
+    **非機密のみ**を受け取る。token 等の機密は受け付けない。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    owner: str = Field(min_length=1, max_length=100)
+    repo: str = Field(min_length=1, max_length=100)
+    account: str | None = Field(default=None, max_length=100)
+    label: str = Field(default="ai-agent", min_length=1, max_length=100)
+    base_branch: str = Field(default="main", min_length=1, max_length=200)
+
+
+class ConfigMutationResponse(BaseModel):
+    """config 書き込み系のレスポンス (#138).
+
+    restart_required: 反映にオーケストレーター再起動が必要か (現状は常に True)。
+    """
+
+    ok: bool = True
+    restart_required: bool = True
+
+
 class PrototypeItemResponse(BaseModel):
     """GET /api/issues/{n}/prototypes の 1 アイテム (#145).
 
