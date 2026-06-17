@@ -996,7 +996,18 @@ class Orchestrator:
 
         poller 経由の 👍 承認 (_handle_split_approved) / コメント修正
         (_handle_split_modified) と同じ振る舞いに合わせる。
+
+        approve/reject 以外 (例: prototype_revise) は SPLIT 承認待ちに無関係なため、
+        承認待ちフラグを触らずに無視する (誤って CLARIFY へ巻き戻さない)。
         """
+        if cmd.action not in ("approve", "reject"):
+            logger.info(
+                "split-review: 未対応アクション %s を無視 (#%d)",
+                cmd.action,
+                cmd.issue_number,
+            )
+            return
+
         # 承認待ちを解除してから処理する (二重適用防止)。
         self._state_machine.set_awaiting_split_approval(issue_key, False)
 

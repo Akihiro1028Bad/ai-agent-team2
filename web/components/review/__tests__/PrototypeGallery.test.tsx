@@ -82,6 +82,17 @@ describe("PrototypeGallery", () => {
     expect(await screen.findByText(/修正依頼を送信しました/)).toBeDefined();
   });
 
+  it("再生成 (iteration 増) で送信済み表示を解除し次の反復を受け付ける (#145 Phase2)", async () => {
+    const { rerender } = render(<PrototypeGallery items={[proto()]} notes={[]} issue={145} repo="o/r" iteration={1} />);
+    await userEvent.type(screen.getByPlaceholderText(/直してほしい点/), "x");
+    await userEvent.click(screen.getByRole("button", { name: "修正を依頼" }));
+    expect(await screen.findByText(/修正依頼を送信しました/)).toBeDefined();
+
+    // プロトタイプ再生成完了 → iteration が増えるとフォームが復帰する
+    rerender(<PrototypeGallery items={[proto()]} notes={[]} issue={145} repo="o/r" iteration={2} />);
+    await waitFor(() => expect(screen.getByPlaceholderText(/直してほしい点/)).toBeDefined());
+  });
+
   it("空入力では送信ボタンが無効", () => {
     render(<PrototypeGallery items={[proto()]} notes={[]} issue={145} repo="o/r" />);
     expect(screen.getByRole("button", { name: "修正を依頼" })).toHaveProperty("disabled", true);

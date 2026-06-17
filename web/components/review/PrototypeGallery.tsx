@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, actorForRepo, type Prototype } from "@/lib/api";
 import { Portal } from "@/components/Portal";
 import { IconArrow, IconCheck, IconX } from "@/components/icons";
@@ -85,7 +85,7 @@ export function PrototypeGallery({ items, notes, issue, repo, iteration = 0 }: P
         </div>
       ))}
 
-      {issue !== undefined && <PrototypeFeedbackForm issue={issue} repo={repo} />}
+      {issue !== undefined && <PrototypeFeedbackForm issue={issue} repo={repo} iteration={iteration} />}
 
       {expanded && (
         <Portal>
@@ -121,11 +121,16 @@ export function PrototypeGallery({ items, notes, issue, repo, iteration = 0 }: P
  * 「ここ直して」を送ると prototype_revise として control.jsonl に載り、PLAN が
  * 再実行されてプロトタイプが更新される。送信後は再生成を待つ旨を表示する。
  */
-function PrototypeFeedbackForm({ issue, repo }: { issue: number; repo?: string }) {
+function PrototypeFeedbackForm({ issue, repo, iteration }: { issue: number; repo?: string; iteration: number }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // 再生成が完了する (iteration が増える) と送信済み表示を解除し、次の反復を受け付ける (#145 Phase2)。
+  useEffect(() => {
+    setDone(false);
+  }, [iteration]);
 
   const submit = async () => {
     const feedback = text.trim();
