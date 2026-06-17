@@ -514,3 +514,22 @@ class TestDailyCostLimit:
         await orch._track_cost_and_maybe_stop(6.0)  # 2 度目は再発行しない
         assert orch._shutdown_task is first_task
         first_task.cancel()
+
+    async def test_no_double_shutdown_when_already_in_flight(self, tmp_path: Path) -> None:
+        """既に shutdown が in-flight なら新たな停止タスクを作らない (#92)。"""
+        import asyncio
+
+        orch = _make_orchestrator(tmp_path)
+        orch._settings.cost_limits.daily_usd = 5.0
+
+        async def _noop() -> None:
+            await asyncio.sleep(60)
+
+        existing = asyncio.create_task(_noop())
+        orch._shutdown_task = existing
+
+        await orch._track_cost_and_maybe_stop(6.0)
+
+        assert orch._cost_limit_triggered is True
+        assert orch._shutdown_task is existing  # 上書きしない
+        existing.cancel()

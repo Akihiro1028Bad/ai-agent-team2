@@ -1386,6 +1386,9 @@ class Orchestrator:
             return
         from datetime import UTC, datetime
 
+        # 以下の累積・判定・トリガーフラグ設定は await を挟まないため、複数ワーカーが
+        # 同時にフェーズ完了しても asyncio のシングルスレッド協調スケジューリング下で
+        # atomic に進む (最初の await は track() 以降)。
         today = datetime.now(UTC).date().isoformat()
         if today != self._cost_today_date:
             self._cost_today_date = today
@@ -1394,6 +1397,11 @@ class Orchestrator:
         self._cost_today_usd += max(0.0, cost_usd)
 
         if self._cost_limit_triggered or self._cost_today_usd < limit:
+            return
+        # 既に shutdown が in-flight (control.jsonl 経由等) なら二重発行しない
+        # (既存タスクを上書きして孤立させない)。
+        if self._shutdown_task is not None and not self._shutdown_task.done():
+            self._cost_limit_triggered = True
             return
         self._cost_limit_triggered = True
         logger.warning(
