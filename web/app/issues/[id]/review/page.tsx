@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { api, ApiError, type DesignView, type PrototypeView } from "@/lib/api";
+import { api, ApiError, type DesignView, type HearingView, type PrototypeView } from "@/lib/api";
 import type { EvidenceView } from "@/lib/evidence";
 import { DesignReviewClient } from "@/components/review/DesignReviewClient";
 import { EvidenceGallery } from "@/components/review/EvidenceGallery";
+import { HearingThread } from "@/components/review/HearingThread";
 import { PrototypeGallery } from "@/components/review/PrototypeGallery";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { IconArrow } from "@/components/icons";
@@ -32,6 +33,8 @@ export default function DesignReviewPage() {
   const [evidence, setEvidence] = useState<EvidenceView | null>(null);
   // UI プロトタイプ (#145)。承認前のプレビュー。取得失敗してもレビュー本体は妨げない。
   const [prototypes, setPrototypes] = useState<PrototypeView | null>(null);
+  // ヒアリング Q&A (#139)。承認前の文脈。取得失敗してもレビュー本体は妨げない。
+  const [hearing, setHearing] = useState<HearingView | null>(null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -78,6 +81,19 @@ export default function DesignReviewPage() {
     return () => ac.abort();
   }, [id]);
 
+  useEffect(() => {
+    const ac = new AbortController();
+    api
+      .getHearing(id, repo, ac.signal)
+      .then((v) => {
+        if (!ac.signal.aborted) setHearing(v);
+      })
+      .catch(() => {
+        // ヒアリング取得失敗はレビュー画面を妨げない（非表示にとどめる）。
+      });
+    return () => ac.abort();
+  }, [id, repo]);
+
   return (
     <div className="mx-auto max-w-[920px] pb-4">
       <Link href={`/issues/${id}${repoQuery}`} className="inline-flex items-center gap-1.5 text-[12.5px]" style={{ color: "var(--color-ink-dim)" }}>
@@ -100,6 +116,16 @@ export default function DesignReviewPage() {
         <div className="panel mt-4 p-8 text-center" style={{ color: "var(--color-ink-dim)" }}>
           {view?.reason ?? "この Issue にはまだ設計が生成されていません（PLAN フェーズ未完了）。"}
         </div>
+      )}
+
+      {hearing && (hearing.turns.length > 0 || hearing.state !== "none") && (
+        <section className="mt-8">
+          <h2 className="mb-1 text-[14px] font-semibold">ヒアリング</h2>
+          <p className="mb-3 text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+            承認前の文脈。エージェントの質問と回答の往復です。
+          </p>
+          <HearingThread state={hearing.state} rounds={hearing.rounds} turns={hearing.turns} />
+        </section>
       )}
 
       {prototypes && prototypes.items.length > 0 && (

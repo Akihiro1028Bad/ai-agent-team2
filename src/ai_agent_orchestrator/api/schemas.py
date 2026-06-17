@@ -439,6 +439,31 @@ class EvidenceResponse(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class HearingTurnResponse(BaseModel):
+    """ヒアリング Q&A の 1 ターン (#139)."""
+
+    role: Literal["question", "answer"]
+    author: str = ""
+    body: str
+    created_at: str | None = None
+
+
+class HearingResponse(BaseModel):
+    """GET /api/issues/{n}/hearing のレスポンス (#139).
+
+    state: ヒアリングの現在状態。
+      - waiting: 回答待ち (clarify-wait)
+      - in_progress: エージェント検討中 (clarify)
+      - done: ヒアリング済みで次フェーズへ進行済み
+      - none: ヒアリング無し/未開始
+    rounds: エージェントの質問ラウンド数。
+    """
+
+    state: Literal["waiting", "in_progress", "done", "none"]
+    rounds: int = 0
+    turns: list[HearingTurnResponse] = Field(default_factory=list)
+
+
 class RepositoryConfigRow(BaseModel):
     """GET /api/config/repositories の 1 行 (#144).
 
