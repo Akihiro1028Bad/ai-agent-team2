@@ -16,8 +16,12 @@ def _settings(tmp_path) -> AppSettings:
         workspace_dir=str(tmp_path),
         repositories=[
             RepositoryConfig(
-                owner="o1", repo="r1", account="acc1", label="ai-agent",
-                base_branch="main", slack_channel="#a",
+                owner="o1",
+                repo="r1",
+                account="acc1",
+                label="ai-agent",
+                base_branch="main",
+                slack_channel="#a",
             ),
             RepositoryConfig(owner="o2", repo="r2", base_branch="develop"),
         ],
