@@ -38,6 +38,7 @@ from ai_agent_orchestrator.api.review import build_review_control_record, classi
 from ai_agent_orchestrator.api.schemas import (
     AgentLogPage,
     ApprovalEntry,
+    ConfigMutationResponse,
     ControlAcceptedResponse,
     ControlRequest,
     CostsResponse,
@@ -59,6 +60,7 @@ from ai_agent_orchestrator.api.schemas import (
     ReplyResponse,
     RepositoriesResponse,
     RepositoryConfigRow,
+    RepositoryRegisterRequest,
     ReviewRequest,
     ReviewResponse,
 )
@@ -253,6 +255,8 @@ def create_app(settings: AppSettings) -> FastAPI:
     app.add_middleware(AuthMiddleware)
 
     app.state.workspace = workspace
+    # config.yaml のパス (#138 の書き込み系で使用)。api_command が上書きする。
+    app.state.config_path = Path(getattr(settings, "config_path", "") or "config.yaml").expanduser()
     # UI 可変設定 (フェーズ別モデル等) のオーバーレイファイル (#90)。config.yaml とは分離。
     app.state.ui_settings_path = Path(settings.ui_settings_file).expanduser()
     app.state.github_client_factory = _build_default_factory(settings)
@@ -531,26 +535,77 @@ def create_app(settings: AppSettings) -> FastAPI:
             ) from e
         return build_hearing(list(comments), state.phase.value)
 
+    def _repositories_payload() -> RepositoriesResponse:
+        """config.yaml から監視リポジトリ (非機密のみ) を読み出す (#138/#144).
+
+        書き込み (#138) を即座に UI へ反映するため、in-memory ではなくファイルを
+        都度読む。ファイル不在/不正は in-memory settings へフォールバック。
+        """
+        from ai_agent_orchestrator.config.repo_registry import list_repositories
+
+        config_path: Path = app.state.config_path
+        rows_raw = list_repositories(config_path)
+        if not rows_raw and not config_path.exists():
+            rows_raw = [
+                {
+                    "owner": r.owner,
+                    "repo": r.repo,
+                    "account": r.account,
+                    "label": r.label,
+                    "base_branch": r.base_branch,
+                    "slack_channel": r.slack_channel,
+                }
+                for r in settings.repositories
+            ]
+        return RepositoriesResponse(repositories=[RepositoryConfigRow(**row) for row in rows_raw])
+
     @app.get("/api/config/repositories", response_model=RepositoriesResponse)
     async def get_config_repositories() -> RepositoriesResponse:
-        """監視対象リポジトリ (config.yaml) を返す (#144).
+        """監視対象リポジトリ (config.yaml) を返す (#144/#138).
 
-        Web 設定画面がモックではなく実 config を表示できるようにするための
-        read 専用エンドポイント。**非機密のみ** (owner/repo/account/label/base_branch/
-        slack_channel) を返し、token 等は一切含めない。
+        **非機密のみ** (owner/repo/account/label/base_branch/slack_channel) を返し、
+        token 等は一切含めない。
         """
-        rows = [
-            RepositoryConfigRow(
-                owner=r.owner,
-                repo=r.repo,
-                account=r.account,
-                label=r.label,
-                base_branch=r.base_branch,
-                slack_channel=r.slack_channel,
+        return _repositories_payload()
+
+    @app.post(
+        "/api/config/repositories",
+        response_model=ConfigMutationResponse,
+        status_code=201,
+    )
+    async def add_config_repository(body: RepositoryRegisterRequest) -> ConfigMutationResponse:
+        """監視リポジトリを config.yaml に追加する (#138).
+
+        書き込み系。loopback 限定 (AuthMiddleware) 配下。**非機密のみ**を受け取り、
+        accounts/機密は温存する。入力不正/未登録 account は 400、重複は 409。
+        反映にはオーケストレーター再起動が必要 (restart_required=True)。
+        """
+        from ai_agent_orchestrator.config.repo_registry import RepoRegistryError, add_repository
+
+        try:
+            await asyncio.to_thread(
+                add_repository,
+                app.state.config_path,
+                owner=body.owner,
+                repo=body.repo,
+                account=body.account,
+                label=body.label,
+                base_branch=body.base_branch,
             )
-            for r in settings.repositories
-        ]
-        return RepositoriesResponse(repositories=rows)
+        except RepoRegistryError as exc:
+            status = 409 if "既に登録" in str(exc) else 400
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        return ConfigMutationResponse()
+
+    @app.delete("/api/config/repositories/{owner}/{repo}", response_model=ConfigMutationResponse)
+    async def delete_config_repository(owner: str, repo: str) -> ConfigMutationResponse:
+        """監視リポジトリを config.yaml から削除する (#138). 不在は 404。"""
+        from ai_agent_orchestrator.config.repo_registry import remove_repository
+
+        removed = await asyncio.to_thread(remove_repository, app.state.config_path, owner, repo)
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"{owner}/{repo} は登録されていません")
+        return ConfigMutationResponse()
 
     @app.get("/api/config/phase-models", response_model=PhaseModelsResponse)
     async def get_phase_models() -> PhaseModelsResponse:

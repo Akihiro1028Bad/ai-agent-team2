@@ -5,7 +5,7 @@ import { orchestrator } from "@/lib/mock";
 import { api } from "@/lib/api";
 import { usePolling } from "@/lib/hooks";
 import { PhaseModelConfig } from "@/components/PhaseModelConfig";
-import { IconCpu, IconExternal, IconPause, IconPlay } from "@/components/icons";
+import { IconCpu, IconExternal, IconPause, IconPlay, IconX } from "@/components/icons";
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -23,12 +23,54 @@ export default function SettingsPage() {
   const [running, setRunning] = useState(orchestrator.running);
   const [interval, setIntervalSec] = useState(orchestrator.pollingIntervalSec);
   // 監視リポジトリは実 config を表示する (#144)。設定は頻繁に変わらないため緩めの間隔。
+  // reloadToken を変えると fetcher 同一性が変わり即時再取得される (#138 の追加/削除後の反映)。
+  const [reloadToken, setReloadToken] = useState(0);
   /* v8 ignore next 3 -- usePolling callback is mocked in tests; api.getRepositories is tested separately */
   const { data: repos, error: reposError, loading: reposLoading } = usePolling(
-    useCallback((signal: AbortSignal) => api.getRepositories(signal), []),
+    useCallback((signal: AbortSignal) => api.getRepositories(signal), [reloadToken]),
     30000,
   );
   const repoRows = repos ?? [];
+
+  // リポジトリ登録フォーム (#138)
+  const [form, setForm] = useState({ owner: "", repo: "", account: "", label: "ai-agent", baseBranch: "main" });
+  const [submitting, setSubmitting] = useState(false);
+  const [repoMessage, setRepoMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const addRepository = async () => {
+    const owner = form.owner.trim();
+    const repo = form.repo.trim();
+    if (!owner || !repo) return;
+    setSubmitting(true);
+    setRepoMessage(null);
+    try {
+      await api.createRepository({
+        owner,
+        repo,
+        account: form.account.trim() || undefined,
+        label: form.label.trim() || undefined,
+        baseBranch: form.baseBranch.trim() || undefined,
+      });
+      setForm({ owner: "", repo: "", account: "", label: "ai-agent", baseBranch: "main" });
+      setRepoMessage({ ok: true, text: `${owner}/${repo} を追加しました。反映にはオーケストレーターの再起動が必要です。` });
+      setReloadToken((v) => v + 1);
+    } catch {
+      setRepoMessage({ ok: false, text: "追加に失敗しました。入力内容（account の登録有無・重複）を確認してください。" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const removeRepository = async (owner: string, repo: string) => {
+    setRepoMessage(null);
+    try {
+      await api.deleteRepository(owner, repo);
+      setRepoMessage({ ok: true, text: `${owner}/${repo} を削除しました。反映には再起動が必要です。` });
+      setReloadToken((v) => v + 1);
+    } catch {
+      setRepoMessage({ ok: false, text: "削除に失敗しました。" });
+    }
+  };
 
   return (
     <div className="mx-auto max-w-[820px]">
@@ -89,7 +131,7 @@ export default function SettingsPage() {
         <PhaseModelConfig />
       </section>
 
-      {/* repos — 実 config.yaml を表示 (#144) */}
+      {/* repos — 実 config.yaml を表示・編集 (#144 / #138) */}
       <section className="rise mt-6" style={{ animationDelay: "120ms" }}>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-[13px] font-semibold">監視リポジトリ</h2>
@@ -101,7 +143,7 @@ export default function SettingsPage() {
           ) : reposError ? (
             <div className="px-4 py-3 text-[12.5px]" style={{ color: "var(--color-rose)" }}>設定の取得に失敗しました。</div>
           ) : repoRows.length === 0 ? (
-            <div className="px-4 py-3 text-[12.5px]" style={{ color: "var(--color-ink-faint)" }}>監視リポジトリは未設定です。`ai-agent setup` で追加してください。</div>
+            <div className="px-4 py-3 text-[12.5px]" style={{ color: "var(--color-ink-faint)" }}>監視リポジトリは未設定です。下のフォームから追加できます。</div>
           ) : (
             repoRows.map((r) => (
               <div key={`${r.owner}/${r.repo}`} className="flex items-center gap-3 px-4 py-3" style={{ borderColor: "var(--color-line)" }}>
@@ -116,9 +158,60 @@ export default function SettingsPage() {
                     {r.account && (<><span>·</span><span>account:{r.account}</span></>)}
                   </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => void removeRepository(r.owner, r.repo)}
+                  className="text-[var(--color-ink-faint)] hover:text-[var(--color-rose)]"
+                  aria-label={`${r.owner}/${r.repo} を削除`}
+                >
+                  <IconX width={15} height={15} />
+                </button>
               </div>
             ))
           )}
+        </div>
+
+        {/* 登録フォーム (#138) */}
+        <div className="panel mt-3 p-4">
+          <div className="mb-2 text-[12.5px] font-medium">リポジトリを追加</div>
+          <div className="flex flex-wrap gap-2">
+            {([
+              ["owner", "owner"],
+              ["repo", "repo"],
+              ["account", "account (任意)"],
+              ["label", "label"],
+              ["baseBranch", "base branch"],
+            ] as const).map(([key, ph]) => (
+              <input
+                key={key}
+                value={form[key]}
+                onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                placeholder={ph}
+                disabled={submitting}
+                className="min-w-[120px] flex-1 rounded-lg border bg-transparent px-3 py-1.5 text-[12.5px] outline-none placeholder:text-[var(--color-ink-faint)] disabled:opacity-50"
+                style={{ borderColor: "var(--color-line)" }}
+              />
+            ))}
+          </div>
+          <div className="mt-3 flex items-center gap-3">
+            <button
+              type="button"
+              disabled={submitting || form.owner.trim() === "" || form.repo.trim() === ""}
+              onClick={() => void addRepository()}
+              className="rounded-lg px-4 py-1.5 text-[12.5px] font-medium disabled:opacity-40"
+              style={{ color: "#0b0d10", background: "var(--color-signal)" }}
+            >
+              {submitting ? "追加中…" : "+ 追加"}
+            </button>
+            {repoMessage && (
+              <span className="text-[12px]" style={{ color: repoMessage.ok ? "var(--color-cyan)" : "var(--color-rose)" }}>
+                {repoMessage.text}
+              </span>
+            )}
+          </div>
+          <p className="mt-2 text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
+            ※ account は登録済みのものを指定。追加/削除の反映にはオーケストレーターの再起動が必要です。
+          </p>
         </div>
       </section>
 

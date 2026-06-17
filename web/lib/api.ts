@@ -919,6 +919,34 @@ export async function getRepositories(signal?: AbortSignal): Promise<RepoConfig[
   return (res.repositories ?? []).map(adaptRepository);
 }
 
+/** 監視リポジトリ登録の入力（非機密のみ, #138）。 */
+export interface RepoRegisterInput {
+  owner: string;
+  repo: string;
+  account?: string;
+  label?: string;
+  baseBranch?: string;
+}
+
+/** POST /api/config/repositories — リポジトリを追加（要オーケストレーター再起動）。 */
+export async function createRepository(input: RepoRegisterInput, signal?: AbortSignal): Promise<void> {
+  const body: Record<string, string> = { owner: input.owner, repo: input.repo };
+  if (input.account) body.account = input.account;
+  if (input.label) body.label = input.label;
+  if (input.baseBranch) body.base_branch = input.baseBranch;
+  await apiPost<{ ok: boolean }>("/api/config/repositories", body, signal);
+}
+
+/** DELETE /api/config/repositories/{owner}/{repo} — リポジトリを削除。 */
+export async function deleteRepository(owner: string, repo: string, signal?: AbortSignal): Promise<void> {
+  await apiSend<{ ok: boolean }>(
+    "DELETE",
+    `/api/config/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+    {},
+    signal,
+  );
+}
+
 /** レビュー提出コメント (UI の DraftComment を API 形へ写したもの)。 */
 export interface ReviewCommentInput {
   anchor: string;
@@ -1010,6 +1038,8 @@ export const api = {
   getPrototypes: (issue: number, signal?: AbortSignal) => getPrototypes(issue, signal),
   getRepositories: (signal?: AbortSignal) => getRepositories(signal),
   getHearing: (issue: number, repo?: string, signal?: AbortSignal) => getHearing(issue, repo, signal),
+  createRepository: (input: RepoRegisterInput, signal?: AbortSignal) => createRepository(input, signal),
+  deleteRepository: (owner: string, repo: string, signal?: AbortSignal) => deleteRepository(owner, repo, signal),
 
   postReview: (issue: number, comments: ReviewCommentInput[], actor: string, repo?: string, signal?: AbortSignal) =>
     postReview(issue, comments, actor, repo, signal),

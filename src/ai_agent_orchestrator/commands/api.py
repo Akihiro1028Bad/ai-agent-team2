@@ -37,5 +37,9 @@ def api_command(
         raise typer.Exit(code=1) from None
 
     app = create_app(settings)
-    console.print(f"[green]読み取り API を起動します:[/green] http://{_API_HOST}:{port}")
+    # config 書き込み系 (#138) が実ファイルを編集できるよう、起動時の config パスを渡す。
+    from pathlib import Path
+
+    app.state.config_path = Path(config).expanduser()
+    console.print(f"[green]API を起動します:[/green] http://{_API_HOST}:{port}")
     uvicorn.run(app, host=_API_HOST, port=port)

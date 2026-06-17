@@ -30,7 +30,10 @@ def _settings(tmp_path) -> AppSettings:
 
 @pytest.fixture
 def client(tmp_path) -> Iterator[TestClient]:
-    with TestClient(create_app(_settings(tmp_path))) as c:
+    app = create_app(_settings(tmp_path))
+    # config ファイルを置かず in-memory settings へフォールバックさせる (#144 の検証対象)。
+    app.state.config_path = tmp_path / "nonexistent.yaml"
+    with TestClient(app) as c:
         yield c
 
 
@@ -56,5 +59,7 @@ def test_response_contains_no_secret_fields(client: TestClient) -> None:
 
 def test_empty_when_no_repositories(tmp_path) -> None:
     settings = AppSettings(workspace_dir=str(tmp_path), repositories=[])
-    with TestClient(create_app(settings)) as c:
+    app = create_app(settings)
+    app.state.config_path = tmp_path / "nonexistent.yaml"
+    with TestClient(app) as c:
         assert c.get("/api/config/repositories").json()["repositories"] == []
