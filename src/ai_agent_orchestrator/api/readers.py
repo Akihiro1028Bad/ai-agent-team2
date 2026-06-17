@@ -27,6 +27,11 @@ from ai_agent_orchestrator.api.schemas import (
     IssueCost,
     IssueDetailResponse,
     IssueSummaryResponse,
+    KnowledgeEpisodeResponse,
+    KnowledgePatternResponse,
+    KnowledgeResponse,
+    KnowledgeSkillResponse,
+    KnowledgeStatsResponse,
     PrototypeItemResponse,
     PrototypeResponse,
     QueueResponse,
@@ -272,6 +277,81 @@ def read_prototypes(workspace: Path, issue_number: int) -> PrototypeResponse:
         selected=selected,
         items=items,
         notes=notes,
+    )
+
+
+# GET /api/knowledge で返すエピソードの最大件数 (新しい順)。
+_KNOWLEDGE_EPISODE_LIMIT = 100
+
+
+def read_knowledge(workspace: Path) -> KnowledgeResponse:
+    """自己改善ループ (#93) のエピソード/パターン/Skill/集計を読む。
+
+    純粋な読み取り専用 (副作用なし)。Skill の昇格・永続化はフェーズ完了時
+    (書き込みイベント) に行われるため、ここでは load_skills のみを行う。
+    エピソード未蓄積時は空の KnowledgeResponse を返す。
+
+    Args:
+        workspace: ワークスペースのルートパス。
+
+    Returns:
+        KnowledgeResponse。
+    """
+    from ai_agent_orchestrator.knowledge.episode_store import EpisodeStore
+    from ai_agent_orchestrator.knowledge.pattern_extractor import extract_patterns
+    from ai_agent_orchestrator.knowledge.skill_manager import SkillManager
+
+    episodes = EpisodeStore(workspace).load()
+    patterns = extract_patterns(episodes)
+    skills = SkillManager(workspace).load_skills()
+
+    success = sum(1 for e in episodes if e.outcome == "success")
+    success_rate = round(success / len(episodes), 4) if episodes else 0.0
+
+    # 新しい順 (created_at 降順) に上限件数まで返す。
+    recent = sorted(episodes, key=lambda e: e.created_at, reverse=True)[:_KNOWLEDGE_EPISODE_LIMIT]
+    return KnowledgeResponse(
+        stats=KnowledgeStatsResponse(
+            episodes=len(episodes),
+            success_rate=success_rate,
+            patterns=len(patterns),
+            skills=len(skills),
+        ),
+        episodes=[
+            KnowledgeEpisodeResponse(
+                id=e.id,
+                issue=e.issue,
+                repo=e.repo,
+                phase=e.phase,
+                outcome=e.outcome,
+                summary=e.summary,
+                lesson=e.lesson,
+                created_at=e.created_at,
+            )
+            for e in recent
+        ],
+        patterns=[
+            KnowledgePatternResponse(
+                id=p.id,
+                title=p.title,
+                description=p.description,
+                confidence=p.confidence,
+                occurrences=p.occurrences,
+                status=p.status,
+            )
+            for p in patterns
+        ],
+        skills=[
+            KnowledgeSkillResponse(
+                id=s.id,
+                name=s.name,
+                from_pattern=s.from_pattern,
+                used_count=s.used_count,
+                success_rate=s.success_rate,
+                updated_at=s.updated_at,
+            )
+            for s in skills
+        ],
     )
 
 

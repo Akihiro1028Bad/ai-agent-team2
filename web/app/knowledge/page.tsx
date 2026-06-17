@@ -1,4 +1,4 @@
-import { ComingSoon } from "@/components/ComingSoon";
+import { KnowledgeClient } from "@/components/knowledge/KnowledgeClient";
 
 export default function KnowledgePage() {
   return (
@@ -11,10 +11,7 @@ export default function KnowledgePage() {
       </div>
 
       <div className="rise mt-6" style={{ animationDelay: "60ms" }}>
-        <ComingSoon
-          title="ナレッジ"
-          note="自己改善ループは実装準備中（episode_store 等）"
-        />
+        <KnowledgeClient />
       </div>
     </div>
   );

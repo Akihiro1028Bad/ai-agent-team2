@@ -840,6 +840,116 @@ export async function getPrototypes(issue: number, signal?: AbortSignal): Promis
   return adaptPrototypes(await apiGet<ApiPrototypeResponse>(`/api/issues/${issue}/prototypes`, signal));
 }
 
+// ── ナレッジ自己改善ループ (#93) ──
+
+interface ApiKnowledgeResponse {
+  stats: { episodes: number; success_rate: number; patterns: number; skills: number };
+  episodes: {
+    id: string;
+    issue: number;
+    repo: string;
+    phase: string;
+    outcome: "success" | "failure";
+    summary: string;
+    lesson: string;
+    created_at: string;
+  }[];
+  patterns: {
+    id: string;
+    title: string;
+    description: string;
+    confidence: number;
+    occurrences: number;
+    status: "candidate" | "promoted";
+  }[];
+  skills: {
+    id: string;
+    name: string;
+    from_pattern: string;
+    used_count: number;
+    success_rate: number;
+    updated_at: string;
+  }[];
+}
+
+export interface KnowledgeEpisode {
+  id: string;
+  issue: number;
+  repo: string;
+  phase: string;
+  outcome: "success" | "failure";
+  summary: string;
+  lesson: string;
+  at: string;
+}
+
+export interface KnowledgePattern {
+  id: string;
+  title: string;
+  description: string;
+  confidence: number;
+  occurrences: number;
+  status: "candidate" | "promoted";
+}
+
+export interface KnowledgeSkill {
+  id: string;
+  name: string;
+  fromPattern: string;
+  usedCount: number;
+  successRate: number;
+  updated: string;
+}
+
+export interface KnowledgeView {
+  stats: { episodes: number; successRate: number; patterns: number; skills: number };
+  episodes: KnowledgeEpisode[];
+  patterns: KnowledgePattern[];
+  skills: KnowledgeSkill[];
+}
+
+function adaptKnowledge(res: ApiKnowledgeResponse): KnowledgeView {
+  return {
+    stats: {
+      episodes: res.stats?.episodes ?? 0,
+      successRate: res.stats?.success_rate ?? 0,
+      patterns: res.stats?.patterns ?? 0,
+      skills: res.stats?.skills ?? 0,
+    },
+    episodes: (res.episodes ?? []).map((e) => ({
+      id: e.id,
+      issue: e.issue,
+      repo: e.repo,
+      phase: e.phase,
+      outcome: e.outcome,
+      summary: e.summary,
+      lesson: e.lesson,
+      at: formatRelative(e.created_at),
+    })),
+    patterns: (res.patterns ?? []).map((p) => ({
+      id: p.id,
+      title: p.title,
+      description: p.description,
+      confidence: p.confidence,
+      occurrences: p.occurrences,
+      status: p.status,
+    })),
+    skills: (res.skills ?? []).map((s) => ({
+      id: s.id,
+      name: s.name,
+      fromPattern: s.from_pattern,
+      usedCount: s.used_count,
+      successRate: s.success_rate,
+      updated: formatRelative(s.updated_at),
+    })),
+  };
+}
+
+/** GET /api/knowledge — 自己改善ループの可視化 (#93) */
+export async function getKnowledge(signal?: AbortSignal): Promise<KnowledgeView> {
+  return adaptKnowledge(await apiGet<ApiKnowledgeResponse>("/api/knowledge", signal));
+}
+
 /**
  * POST /api/issues/{n}/prototypes/select — 提示された案から 1 案を選択する (#145 Phase3)。
  * 選択は selection.json に保存され、承認後に実装フェーズへ引き継がれる。
@@ -1109,6 +1219,7 @@ export const api = {
 
   getEvidence: (issue: number, signal?: AbortSignal) => getEvidence(issue, signal),
   getPrototypes: (issue: number, signal?: AbortSignal) => getPrototypes(issue, signal),
+  getKnowledge: (signal?: AbortSignal) => getKnowledge(signal),
   selectPrototype: (issue: number, variantId: string, signal?: AbortSignal) =>
     selectPrototype(issue, variantId, signal),
   sendPrototypeFeedback: (issue: number, feedback: string, actor: string, repo?: string, signal?: AbortSignal) =>

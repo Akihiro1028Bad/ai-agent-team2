@@ -10,10 +10,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ai_agent_orchestrator.models import Phase, WorkflowParams, derive_workflow_params
+from ai_agent_orchestrator.sanitize import sanitize_text
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.agents.claude_runner import ClaudeAgentRunner
     from ai_agent_orchestrator.context.engine import ContextEngine
+    from ai_agent_orchestrator.knowledge.episode_store import EpisodeStore
     from ai_agent_orchestrator.models import AgentResult, IssueKey, TaskRequest
 
 logger = logging.getLogger(__name__)
@@ -318,6 +320,7 @@ class PhaseExecutor(ABC):
         workspace: WorkspaceProtocol,
         context_engine: ContextEngine,
         state_machine: StateMachineProtocol,
+        episode_store: EpisodeStore | None = None,
     ) -> None:
         """共通依存オブジェクトを注入する。
 
@@ -331,6 +334,7 @@ class PhaseExecutor(ABC):
             workspace: ワークスペース (worktree) 管理。
             context_engine: コンテキスト構築エンジン。
             state_machine: ステートマシンマネージャ。
+            episode_store: 自己改善ループのエピソード記録先 (#93)。None なら記録しない。
         """
         self._runner = runner
         self._account_manager = account_manager
@@ -339,6 +343,7 @@ class PhaseExecutor(ABC):
         self._workspace = workspace
         self._context = context_engine
         self._sm = state_machine
+        self._episode_store = episode_store
 
     async def _get_client(self, repo: object) -> GitHubClientProtocol:
         """リポジトリに対応する GitHubClient を取得する。
@@ -451,11 +456,93 @@ class PhaseExecutor(ABC):
                     "duration_sec": result.duration_sec,
                 },
             )
+            self._record_episode(
+                request,
+                outcome="success",
+                summary=f"{request.phase} を完了 (コスト ${result.cost_usd:.2f}, {result.duration_sec:.0f}s)",
+                lesson="",
+            )
             logger.debug("phase execute end: issue=#%d phase=%s", request.issue_number, request.phase)
         except TimeoutError:
+            self._record_episode(
+                request,
+                outcome="failure",
+                summary=f"{request.phase} がタイムアウトしました",
+                lesson=f"{request.phase}フェーズはタイムアウトしやすい",
+            )
             await self._handle_timeout(request)
         except Exception as exc:
+            self._record_episode(
+                request,
+                outcome="failure",
+                summary=f"{request.phase} で {type(exc).__name__} が発生して中断",
+                lesson=f"{request.phase}フェーズで {type(exc).__name__} が発生しやすい",
+            )
             await self._handle_error(request, exc)
+
+    def _record_episode(self, request: TaskRequest, outcome: str, summary: str, lesson: str) -> None:
+        """自己改善ループへエピソードを記録する (#93)。
+
+        episode_store 未注入なら何もしない。記録失敗はパイプラインを止めない
+        (best-effort、例外は握り潰す)。
+
+        Args:
+            request: タスクリクエスト。
+            outcome: "success" または "failure"。
+            summary: エピソードの要約。
+            lesson: 教訓 (空文字ならパターン抽出の対象外)。
+        """
+        if self._episode_store is None:
+            return
+        try:
+            from datetime import UTC, datetime
+
+            from ai_agent_orchestrator.knowledge.episode_store import make_episode_id
+            from ai_agent_orchestrator.knowledge.models import Episode
+
+            repo = getattr(request, "repo", None)
+            repo_name = f"{getattr(repo, 'owner', '')}/{getattr(repo, 'repo', '')}".strip("/")
+            created_at = datetime.now(UTC).isoformat()
+            phase = str(request.phase)
+            self._episode_store.record(
+                Episode(
+                    id=make_episode_id(request.issue_number, phase, created_at),
+                    issue=request.issue_number,
+                    repo=repo_name,
+                    phase=phase,
+                    outcome="success" if outcome == "success" else "failure",
+                    summary=summary,
+                    lesson=lesson,
+                    created_at=created_at,
+                )
+            )
+            # lesson があるエピソード (=失敗系) のみがパターンを生み得るため、
+            # その時だけ昇格を走らせる。成功フェーズ (lesson 空) のホットパスでは
+            # 全エピソード読み込み + Skill 書き換えを行わない。
+            if lesson.strip():
+                self._promote_skills_best_effort()
+        except Exception:
+            logger.debug("episode recording skipped (best-effort)", exc_info=True)
+
+    def _promote_skills_best_effort(self) -> None:
+        """蓄積エピソードからパターンを抽出し Skill へ昇格・永続化する (#93)。
+
+        lesson 付きエピソードの記録時にのみ呼ばれる。best-effort で、失敗しても
+        パイプラインを止めない (GET は純粋に読み取りだけで済む)。
+        """
+        base_dir = getattr(self._workspace, "base_dir", None)
+        if self._episode_store is None or base_dir is None:
+            return
+        try:
+            from datetime import UTC, datetime
+
+            from ai_agent_orchestrator.knowledge.pattern_extractor import extract_patterns
+            from ai_agent_orchestrator.knowledge.skill_manager import SkillManager
+
+            patterns = extract_patterns(self._episode_store.load())
+            SkillManager(base_dir).promote(patterns, datetime.now(UTC).isoformat())
+        except Exception:
+            logger.debug("skill promotion skipped (best-effort)", exc_info=True)
 
     @abstractmethod
     async def build_prompt(self, request: TaskRequest) -> str:
@@ -598,7 +685,8 @@ class PhaseExecutor(ABC):
                 data={
                     "suspend_reason": "exception",
                     "error_type": type(error).__name__,
-                    "error_message": str(error)[:500],
+                    # 例外メッセージにトークンを含む URL 等が混じり得るためサニタイズして格納する。
+                    "error_message": sanitize_text(str(error)[:500]),
                 },
             )
         except Exception:
@@ -611,11 +699,13 @@ class PhaseExecutor(ABC):
             except Exception:
                 logger.warning("Failed to update phase label to suspended for issue #%d", request.issue_number)
             try:
-                await client.create_comment(
-                    request.repo,
-                    request.issue_number,
-                    f"エラーが発生しました: {error}",
+                # 例外メッセージにトークン入り URL 等が混じり得るため、外部公開する
+                # コメントには例外の型名のみを載せる (詳細はサーバログで確認)。
+                error_comment = (
+                    f"エラーが発生しました: {type(error).__name__} (phase: {request.phase})。"
+                    f"詳細はログを確認してください。"
                 )
+                await client.create_comment(request.repo, request.issue_number, error_comment)
             except Exception:
                 logger.error(
                     "Failed to post error comment for issue #%d (original error: %s)",
@@ -632,7 +722,7 @@ class PhaseExecutor(ABC):
         repo_full_name = self._get_repo_full_name(request)
         try:
             await self._notifier.notify(
-                f"Issue #{request.issue_number} でエラー: {error} (phase: {request.phase})",
+                f"Issue #{request.issue_number} でエラー: {type(error).__name__} (phase: {request.phase})",
                 level="error",
                 metadata={
                     "notification_type": "error",

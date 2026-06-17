@@ -31,6 +31,7 @@ from ai_agent_orchestrator.api.readers import (
     read_health,
     read_issue_events,
     read_issue_summaries,
+    read_knowledge,
     read_prototypes,
     read_queue,
 )
@@ -53,6 +54,7 @@ from ai_agent_orchestrator.api.schemas import (
     IssueCreateResponse,
     IssueDetailResponse,
     IssueSummaryResponse,
+    KnowledgeResponse,
     PhaseModelRow,
     PhaseModelsRequest,
     PhaseModelsResponse,
@@ -414,6 +416,14 @@ def create_app(settings: AppSettings) -> FastAPI:
         url はファイル配信エンドポイントへの相対 URL。
         """
         return read_evidence(workspace, issue_number)
+
+    @app.get("/api/knowledge", response_model=KnowledgeResponse)
+    async def get_knowledge() -> KnowledgeResponse:
+        """自己改善ループ (#93) のエピソード/パターン/Skill/集計を返す.
+
+        エピソード未蓄積でも 200 で空の KnowledgeResponse を返す (読み取り専用)。
+        """
+        return await asyncio.to_thread(read_knowledge, workspace)
 
     @app.get("/api/issues/{issue_number}/evidence/{filename}")
     async def get_issue_evidence_file(issue_number: int, filename: str) -> Response:

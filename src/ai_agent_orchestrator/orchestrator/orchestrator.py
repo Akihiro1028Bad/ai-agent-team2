@@ -339,6 +339,7 @@ def _build_phase_executors(
     Returns:
         Mapping of phase key (underscored) to executor instance.
     """
+    from ai_agent_orchestrator.knowledge.episode_store import EpisodeStore
     from ai_agent_orchestrator.phases import (
         CiFixExecutor,
         DoneExecutor,
@@ -353,6 +354,10 @@ def _build_phase_executors(
         TypeDetectionExecutor,
     )
 
+    # 自己改善ループ (#93): フェーズ完了/失敗をエピソードとして記録する。
+    base_dir = getattr(workspace, "base_dir", None)
+    episode_store = EpisodeStore(base_dir) if base_dir is not None else None
+
     common_kwargs: dict[str, object] = {
         "runner": runner,
         "account_manager": github,
@@ -361,6 +366,7 @@ def _build_phase_executors(
         "workspace": workspace,
         "context_engine": context_engine,
         "state_machine": state_machine,
+        "episode_store": episode_store,
     }
 
     # U5 (#83): 統一パイプラインの 9 フェーズ。APPROVE / REVIEW / CLARIFY_WAIT は
