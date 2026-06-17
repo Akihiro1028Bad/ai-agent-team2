@@ -133,6 +133,12 @@ class SkillManager:
                 updated_at=now_iso,
             )
 
+        # promoted パターンが無い場合は既存スキルを保持する (空ファイルで上書きしない)。
+        # エピソードは追記のみで occurrences は減らないため、一度昇格した Skill は
+        # 消えないのが期待挙動。
+        if not new_skills:
+            return self.load_skills()
+
         result = sorted(new_skills.values(), key=lambda s: s.name)
 
         # skills.jsonl を上書き

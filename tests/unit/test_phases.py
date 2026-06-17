@@ -2111,6 +2111,34 @@ class TestHandleErrorObservability:
                 assert "error_message" in data
                 break
 
+    async def test_handle_error_comment_does_not_leak_exception_message(
+        self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
+    ):
+        """_handle_error の Issue コメントは例外メッセージ (秘密混入し得る) を載せない (#93 sec)。"""
+        from ai_agent_orchestrator.phases.implement import ImplementExecutor
+
+        mock_sm.get_phase.return_value = None
+        mock_sm.get_state.return_value = MagicMock(session_id=None, branch_head_sha=None)
+        mock_sm.get_issue_type.return_value = "bug"
+        secret_msg = "auth failed at https://api.github.com?access_token=ghp_SECRET123"
+        mock_runner.run.side_effect = RuntimeError(secret_msg)
+
+        executor = ImplementExecutor(
+            runner=mock_runner,
+            account_manager=mock_github,
+            notifier=mock_notifier,
+            tracker=mock_tracker,
+            workspace=mock_workspace,
+            context_engine=mock_context,
+            state_machine=mock_sm,
+        )
+        await executor.execute(_make_request(phase="implement"))
+
+        body = str(mock_github.create_comment.call_args)
+        assert "ghp_SECRET123" not in body
+        assert "access_token" not in body
+        assert "RuntimeError" in body  # 型名のみ載せる
+
     async def test_handle_error_survives_create_comment_failure(
         self, mock_runner, mock_github, mock_notifier, mock_tracker, mock_workspace, mock_context, mock_sm
     ):

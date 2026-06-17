@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ai_agent_orchestrator.models import Phase, WorkflowParams, derive_workflow_params
+from ai_agent_orchestrator.sanitize import sanitize_text
 
 if TYPE_CHECKING:
     from ai_agent_orchestrator.agents.claude_runner import ClaudeAgentRunner
@@ -515,16 +516,19 @@ class PhaseExecutor(ABC):
                     created_at=created_at,
                 )
             )
+            # lesson があるエピソード (=失敗系) のみがパターンを生み得るため、
+            # その時だけ昇格を走らせる。成功フェーズ (lesson 空) のホットパスでは
+            # 全エピソード読み込み + Skill 書き換えを行わない。
+            if lesson.strip():
+                self._promote_skills_best_effort()
         except Exception:
             logger.debug("episode recording skipped (best-effort)", exc_info=True)
-            return
-        self._promote_skills_best_effort()
 
     def _promote_skills_best_effort(self) -> None:
         """蓄積エピソードからパターンを抽出し Skill へ昇格・永続化する (#93)。
 
-        書き込みイベント (フェーズ完了/失敗) のたびに更新するため、GET は純粋に
-        読み取りだけで済む。best-effort で、失敗してもパイプラインを止めない。
+        lesson 付きエピソードの記録時にのみ呼ばれる。best-effort で、失敗しても
+        パイプラインを止めない (GET は純粋に読み取りだけで済む)。
         """
         base_dir = getattr(self._workspace, "base_dir", None)
         if self._episode_store is None or base_dir is None:
@@ -681,7 +685,8 @@ class PhaseExecutor(ABC):
                 data={
                     "suspend_reason": "exception",
                     "error_type": type(error).__name__,
-                    "error_message": str(error)[:500],
+                    # 例外メッセージにトークンを含む URL 等が混じり得るためサニタイズして格納する。
+                    "error_message": sanitize_text(str(error)[:500]),
                 },
             )
         except Exception:
@@ -694,11 +699,13 @@ class PhaseExecutor(ABC):
             except Exception:
                 logger.warning("Failed to update phase label to suspended for issue #%d", request.issue_number)
             try:
-                await client.create_comment(
-                    request.repo,
-                    request.issue_number,
-                    f"エラーが発生しました: {error}",
+                # 例外メッセージにトークン入り URL 等が混じり得るため、外部公開する
+                # コメントには例外の型名のみを載せる (詳細はサーバログで確認)。
+                error_comment = (
+                    f"エラーが発生しました: {type(error).__name__} (phase: {request.phase})。"
+                    f"詳細はログを確認してください。"
                 )
+                await client.create_comment(request.repo, request.issue_number, error_comment)
             except Exception:
                 logger.error(
                     "Failed to post error comment for issue #%d (original error: %s)",
@@ -715,7 +722,7 @@ class PhaseExecutor(ABC):
         repo_full_name = self._get_repo_full_name(request)
         try:
             await self._notifier.notify(
-                f"Issue #{request.issue_number} でエラー: {error} (phase: {request.phase})",
+                f"Issue #{request.issue_number} でエラー: {type(error).__name__} (phase: {request.phase})",
                 level="error",
                 metadata={
                     "notification_type": "error",
