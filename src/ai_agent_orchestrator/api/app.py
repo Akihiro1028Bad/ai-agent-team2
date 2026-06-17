@@ -49,6 +49,8 @@ from ai_agent_orchestrator.api.schemas import (
     EvidenceResponse,
     HealthResponse,
     HearingResponse,
+    IssueCreateRequest,
+    IssueCreateResponse,
     IssueDetailResponse,
     IssueSummaryResponse,
     PhaseModelRow,
@@ -122,6 +124,14 @@ class _CommentListClient(Protocol):
     """Issue コメント取得に必要な最小インターフェース (GitHubClient 互換, #139)."""
 
     async def list_comments(self, repo: object, issue_number: int) -> list[object]: ...
+
+
+class _CreateIssueClient(Protocol):
+    """Issue 作成に必要な最小インターフェース (GitHubClient 互換, #137)."""
+
+    async def create_issue(
+        self, repo: object, title: str, body: str = "", labels: list[str] | None = None
+    ) -> object: ...
 
 
 class ControlSystemd(Protocol):
@@ -490,6 +500,61 @@ def create_app(settings: AppSettings) -> FastAPI:
             phases=[PhaseModelRow(**row) for row in rows],
             allowed_models=sorted(ALLOWED_MODELS),
         )
+
+    @app.post("/api/issues", response_model=IssueCreateResponse, status_code=201)
+    async def create_issue(body: IssueCreateRequest) -> IssueCreateResponse:
+        """Web から GitHub Issue を起票する (#137).
+
+        ポーラーの検知条件を満たすよう ``ai-agent`` ラベルを自動付与する (phase
+        ラベルは付けない)。repo 未指定は単一リポ構成なら自動採用、複数リポ構成では
+        400。書き込み系のため loopback ガード (AuthMiddleware) 配下。
+        """
+        repos = settings.repositories
+        if body.repo is not None:
+            repo_config = next(
+                (r for r in repos if f"{r.owner}/{r.repo}" == body.repo),
+                None,
+            )
+            if repo_config is None:
+                raise HTTPException(status_code=404, detail=f"Repository {body.repo} is not configured")
+        elif len(repos) == 1:
+            repo_config = repos[0]
+        elif len(repos) == 0:
+            raise HTTPException(status_code=400, detail="No repository is configured")
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Multiple repositories configured; specify 'repo' as owner/repo",
+            )
+
+        from ai_agent_orchestrator.github.client import ConfigError
+
+        factory: Callable[[str, str], Awaitable[_CreateIssueClient]] = app.state.github_client_factory
+        try:
+            client = await factory(repo_config.owner, repo_config.repo)
+            issue = await client.create_issue(
+                repo_config,
+                title=body.title,
+                body=body.body,
+                labels=[repo_config.label],
+            )
+        except ConfigError as e:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository {repo_config.owner}/{repo_config.repo} is not configured",
+            ) from e
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning("Issue 起票に失敗: repo=%s/%s", repo_config.owner, repo_config.repo, exc_info=True)
+            raise HTTPException(status_code=502, detail="Failed to create issue on GitHub") from e
+
+        number = int(getattr(issue, "number", 0))
+        url = str(
+            getattr(issue, "html_url", "")
+            or f"https://github.com/{repo_config.owner}/{repo_config.repo}/issues/{number}"
+        )
+        return IssueCreateResponse(number=number, repo=f"{repo_config.owner}/{repo_config.repo}", url=url)
 
     @app.get("/api/issues/{issue_number}/hearing", response_model=HearingResponse)
     async def get_issue_hearing(

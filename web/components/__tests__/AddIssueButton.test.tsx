@@ -12,6 +12,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       ...actual.api,
       postControl: vi.fn().mockResolvedValue(undefined),
+      getRepositories: vi.fn().mockResolvedValue([]),
+      createIssue: vi.fn().mockResolvedValue({ number: 7, repo: "o/r", url: "https://github.com/o/r/issues/7" }),
     },
     actorForRepo: actual.actorForRepo,
   };
@@ -19,8 +21,13 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 import { api } from "@/lib/api";
 
+const REPO = (owner: string, repo: string) => ({ owner, repo, label: "ai-agent", baseBranch: "main" });
+
 beforeEach(() => {
+  vi.clearAllMocks(); // factory の vi.fn は restoreAllMocks で履歴クリアされないため明示的に
   vi.mocked(api.postControl).mockResolvedValue(undefined);
+  vi.mocked(api.getRepositories).mockResolvedValue([REPO("o", "r")]);
+  vi.mocked(api.createIssue).mockResolvedValue({ number: 7, repo: "o/r", url: "https://github.com/o/r/issues/7" });
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -142,7 +149,7 @@ describe("AddIssueButton", () => {
     expect(submitBtn).not.toHaveAttribute("disabled");
   });
 
-  it("新規モード: 送信すると API 未対応のエラーメッセージが出る", async () => {
+  it("新規モード: 送信すると createIssue を呼び成功メッセージが出る (#137)", async () => {
     render(<AddIssueButton />);
     await userEvent.click(screen.getByRole("button", { name: /Issue を投入/ }));
     await userEvent.click(screen.getByRole("button", { name: "新規に起票" }));
@@ -151,24 +158,37 @@ describe("AddIssueButton", () => {
     await userEvent.type(titleInput, "テストタイトル");
     await userEvent.click(screen.getByRole("button", { name: "受付キューに追加" }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/新規起票は現在 API 未対応/)).toBeDefined();
-    });
+    await waitFor(() => expect(api.createIssue).toHaveBeenCalled());
+    expect(api.createIssue).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "テストタイトル" }),
+    );
+    expect(await screen.findByText(/o\/r#7 を起票しました/)).toBeDefined();
   });
 
-  it("新規モード: repo ボタンで repo を選択できる", async () => {
+  it("新規モード: 単一リポ構成では repo セレクタを出さない (#137)", async () => {
     render(<AddIssueButton />);
     await userEvent.click(screen.getByRole("button", { name: /Issue を投入/ }));
     await userEvent.click(screen.getByRole("button", { name: "新規に起票" }));
+    // 単一リポなのでリポジトリ選択ボタンは出ない
+    expect(screen.queryByText("リポジトリ")).toBeNull();
+    const titleInput = screen.getByPlaceholderText(/検索結果にページネーション/);
+    await userEvent.type(titleInput, "t");
+    await userEvent.click(screen.getByRole("button", { name: "受付キューに追加" }));
+    await waitFor(() => expect(api.createIssue).toHaveBeenCalled());
+    expect(vi.mocked(api.createIssue).mock.calls[0][0].title).toBe("t");
+  });
 
-    // repos[1] を選択
-    const repoButtons = screen.getAllByRole("button");
-    // 2 番目の repo ボタンを探す
-    const repoBtn = repoButtons.find((b) => b.textContent?.includes("bigban"));
-    if (repoBtn) {
-      await userEvent.click(repoBtn);
-    }
-    // クラッシュしないことを確認
+  it("新規モード: 複数リポ構成では owner/repo を選んで送る (#137)", async () => {
+    vi.mocked(api.getRepositories).mockResolvedValue([REPO("o", "r1"), REPO("o", "r2")]);
+    render(<AddIssueButton />);
+    await userEvent.click(screen.getByRole("button", { name: /Issue を投入/ }));
+    await userEvent.click(screen.getByRole("button", { name: "新規に起票" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "o/r2" })).toBeDefined());
+    await userEvent.click(screen.getByRole("button", { name: "o/r2" }));
+    await userEvent.type(screen.getByPlaceholderText(/検索結果にページネーション/), "t");
+    await userEvent.click(screen.getByRole("button", { name: "受付キューに追加" }));
+    await waitFor(() => expect(api.createIssue).toHaveBeenCalled());
+    expect(vi.mocked(api.createIssue).mock.calls[0][0].repo).toBe("o/r2");
   });
 
   it("新規モード: 本文 textarea に入力できる", async () => {

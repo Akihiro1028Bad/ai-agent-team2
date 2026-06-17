@@ -439,6 +439,27 @@ class EvidenceResponse(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class IssueCreateRequest(BaseModel):
+    """POST /api/issues のリクエストボディ (#137).
+
+    repo 未指定時は config が単一リポなら自動採用、複数なら 400。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    repo: str | None = Field(default=None, max_length=200)
+    title: str = Field(min_length=1, max_length=256)
+    body: str = Field(default="", max_length=65536)
+
+
+class IssueCreateResponse(BaseModel):
+    """POST /api/issues のレスポンス (#137)."""
+
+    number: int
+    repo: str
+    url: str
+
+
 class HearingTurnResponse(BaseModel):
     """ヒアリング Q&A の 1 ターン (#139)."""
 
