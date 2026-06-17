@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, actorForRepo, type Prototype } from "@/lib/api";
 import { Portal } from "@/components/Portal";
 import { IconArrow, IconCheck, IconX } from "@/components/icons";
@@ -124,13 +124,12 @@ export function PrototypeGallery({ items, notes, issue, repo, iteration = 0 }: P
 function PrototypeFeedbackForm({ issue, repo, iteration }: { issue: number; repo?: string; iteration: number }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-  const [done, setDone] = useState(false);
+  // 送信時点の iteration を覚えておき、再生成 (iteration 増) が来たら送信済み表示を解除する。
+  // 派生状態として算出し、effect 内 setState を避ける (#145 Phase2)。
+  const [submittedAt, setSubmittedAt] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // 再生成が完了する (iteration が増える) と送信済み表示を解除し、次の反復を受け付ける (#145 Phase2)。
-  useEffect(() => {
-    setDone(false);
-  }, [iteration]);
+  const done = submittedAt !== null && submittedAt === iteration;
 
   const submit = async () => {
     const feedback = text.trim();
@@ -139,7 +138,7 @@ function PrototypeFeedbackForm({ issue, repo, iteration }: { issue: number; repo
     setErrorMsg(null);
     try {
       await api.sendPrototypeFeedback(issue, feedback, actorForRepo(repo ?? ""), repo);
-      setDone(true);
+      setSubmittedAt(iteration);
       setText("");
     } catch {
       setErrorMsg("修正依頼の送信に失敗しました。少し待ってから再試行してください。");
