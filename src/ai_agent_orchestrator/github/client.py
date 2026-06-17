@@ -120,6 +120,39 @@ class GitHubClient:
         )
         return response.parsed_data
 
+    async def create_issue(
+        self,
+        repo: RepositoryConfig,
+        title: str,
+        body: str = "",
+        labels: list[str] | None = None,
+    ) -> Issue:
+        """Issue を作成する (#137).
+
+        Web ダッシュボードからの起票で使う。ポーラーの検知条件を満たすため、
+        呼び出し側で ``ai-agent`` ラベルを labels に含めること。
+
+        Args:
+            repo: リポジトリ設定.
+            title: Issue タイトル (必須).
+            body: Issue 本文 (Markdown).
+            labels: 付与するラベル名のリスト.
+
+        Returns:
+            作成された Issue オブジェクト.
+
+        Raises:
+            githubkit.exception.RequestFailed: API リクエスト失敗時.
+        """
+        response = await self._github.rest.issues.async_create(
+            owner=repo.owner,
+            repo=repo.repo,
+            title=title,
+            body=body,
+            labels=labels or [],
+        )
+        return response.parsed_data
+
     async def create_comment(
         self,
         repo: RepositoryConfig,

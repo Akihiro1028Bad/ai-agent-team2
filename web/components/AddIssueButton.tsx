@@ -1,26 +1,41 @@
 "use client";
 
-import { useState } from "react";
-import { repos } from "@/lib/mock";
-import { api, actorForRepo } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { api, actorForRepo, type RepoConfig } from "@/lib/api";
 import { Portal } from "./Portal";
 import { IconCheck, IconX } from "./icons";
 
-// TODO #118: 複数 repo 環境では repo 指定 UI を追加予定。現状は表示中 repos の先頭を使う。
-
 type Mode = "url" | "new";
 
-/** Issue を手動で監視対象に投入する（URL 取り込み or 新規起票） */
+/** Issue を手動で監視対象に投入する（URL 取り込み or Web から新規起票, #137） */
 export function AddIssueButton() {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("url");
   const [url, setUrl] = useState("");
-  const [repo, setRepo] = useState(repos[0].repo);
+  // 実 config の監視リポジトリ。新規起票の repo 選択に使う (#137/#138)。
+  const [repos, setRepos] = useState<RepoConfig[]>([]);
+  const [repo, setRepo] = useState("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [done, setDone] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const ac = new AbortController();
+    api
+      .getRepositories(ac.signal)
+      .then((rs) => {
+        if (ac.signal.aborted) return;
+        setRepos(rs);
+        if (rs.length > 0) setRepo((cur) => cur || `${rs[0].owner}/${rs[0].repo}`);
+      })
+      .catch(() => {
+        // 取得失敗時は repo 選択なしでも単一リポ構成なら backend 側で解決される。
+      });
+    return () => ac.abort();
+  }, [open]);
 
   const valid = mode === "url" ? /github\.com\/.+\/issues\/\d+/.test(url) : title.trim().length > 0;
 
@@ -46,14 +61,19 @@ export function AddIssueButton() {
         }
         // URL から repo を導出する (例: github.com/owner/repo/issues/123)
         /* v8 ignore next -- validation requires github.com + path, so regex always matches; ?? fallback is unreachable */
-        const repoFromUrl = url.match(/github\.com\/([^/]+\/[^/]+)\/issues/)?.[1] ?? repos[0].repo;
+        const repoFromUrl = url.match(/github\.com\/([^/]+\/[^/]+)\/issues/)?.[1] ?? "";
         const actor = actorForRepo(repoFromUrl);
         await api.postControl({ action: "enqueue_issue", issue: issueNum, actor });
         setDone(`#${issueNum} に ai-agent ラベルを付与し、受付キューに追加しました。次回ポーリングで intake から処理開始します。`);
       } else {
-        // 新規起票は GitHub API 経由 (現 API スコープ外)。Issue 番号が不明なため
-        // enqueue_issue は送れない。#118 で新規起票 API 追加時に実装予定。
-        setErrorMsg("新規起票は現在 API 未対応です。GitHub で起票後、URL を入力してください。");
+        // Web から新規起票 (#137)。選択済み repo を送る (未選択/取得失敗時は
+        // undefined を送り、単一リポ構成なら backend が解決する)。
+        const created = await api.createIssue({
+          repo: repo || undefined,
+          title: title.trim(),
+          body: body.trim() || undefined,
+        });
+        setDone(`${created.repo}#${created.number} を起票しました（ai-agent ラベル付与）。次回ポーリングで受付されます。`);
       }
     } catch {
       setErrorMsg("送信に失敗しました。少し待ってから再試行してください。");
@@ -127,24 +147,29 @@ export function AddIssueButton() {
                     </label>
                   ) : (
                     <div className="flex flex-col gap-3">
-                      <label className="flex flex-col gap-1.5">
-                        <span className="eyebrow">リポジトリ</span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {repos.map((r) => (
-                            <button
-                              key={r.repo}
-                              onClick={() => setRepo(r.repo)}
-                              className="rounded-md border px-2.5 py-1.5 font-mono text-[11px]"
-                              style={{
-                                borderColor: repo === r.repo ? "var(--color-cyan)" : "var(--color-line)",
-                                color: repo === r.repo ? "var(--color-cyan)" : "var(--color-ink-dim)",
-                              }}
-                            >
-                              {r.repo}
-                            </button>
-                          ))}
-                        </div>
-                      </label>
+                      {repos.length > 1 && (
+                        <label className="flex flex-col gap-1.5">
+                          <span className="eyebrow">リポジトリ</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {repos.map((r) => {
+                              const id = `${r.owner}/${r.repo}`;
+                              return (
+                                <button
+                                  key={id}
+                                  onClick={() => setRepo(id)}
+                                  className="rounded-md border px-2.5 py-1.5 font-mono text-[11px]"
+                                  style={{
+                                    borderColor: repo === id ? "var(--color-cyan)" : "var(--color-line)",
+                                    color: repo === id ? "var(--color-cyan)" : "var(--color-ink-dim)",
+                                  }}
+                                >
+                                  {id}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </label>
+                      )}
                       <label className="flex flex-col gap-1.5">
                         <span className="eyebrow">タイトル</span>
                         <input

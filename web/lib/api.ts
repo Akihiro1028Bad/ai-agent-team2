@@ -919,6 +919,32 @@ export async function getRepositories(signal?: AbortSignal): Promise<RepoConfig[
   return (res.repositories ?? []).map(adaptRepository);
 }
 
+// ── Web からの Issue 起票 (#137) ──
+
+interface ApiIssueCreateResponse {
+  number: number;
+  repo: string;
+  url: string;
+}
+
+export interface CreatedIssue {
+  number: number;
+  repo: string;
+  url: string;
+}
+
+/** POST /api/issues — Web から GitHub Issue を起票（ai-agent ラベル自動付与）。 */
+export async function createIssue(
+  input: { repo?: string; title: string; body?: string },
+  signal?: AbortSignal,
+): Promise<CreatedIssue> {
+  const body: Record<string, string> = { title: input.title };
+  if (input.repo) body.repo = input.repo;
+  if (input.body) body.body = input.body;
+  const res = await apiPost<ApiIssueCreateResponse>("/api/issues", body, signal);
+  return { number: res.number, repo: res.repo, url: res.url };
+}
+
 /** 監視リポジトリ登録の入力（非機密のみ, #138）。 */
 export interface RepoRegisterInput {
   owner: string;
@@ -1038,6 +1064,8 @@ export const api = {
   getPrototypes: (issue: number, signal?: AbortSignal) => getPrototypes(issue, signal),
   getRepositories: (signal?: AbortSignal) => getRepositories(signal),
   getHearing: (issue: number, repo?: string, signal?: AbortSignal) => getHearing(issue, repo, signal),
+  createIssue: (input: { repo?: string; title: string; body?: string }, signal?: AbortSignal) =>
+    createIssue(input, signal),
   createRepository: (input: RepoRegisterInput, signal?: AbortSignal) => createRepository(input, signal),
   deleteRepository: (owner: string, repo: string, signal?: AbortSignal) => deleteRepository(owner, repo, signal),
 
