@@ -790,11 +790,13 @@ interface ApiPrototypeItem {
   id: string;
   title: string;
   url: string;
+  description?: string;
 }
 
 interface ApiPrototypeResponse {
   generated_at: string | null;
   iteration?: number;
+  selected?: string | null;
   items: ApiPrototypeItem[];
   notes: string[];
 }
@@ -804,12 +806,16 @@ export interface Prototype {
   title: string;
   /** HTML 配信 URL（相対パス）。sandbox iframe の src に使う。 */
   url: string;
+  /** 案の狙いの短い説明（#145 Phase3）。単一案では空。 */
+  description: string;
 }
 
 export interface PrototypeView {
   generatedAt: string | null;
   /** 反復回数（#145 Phase2）。修正依頼→再生成のたびに増える。0 は未生成。 */
   iteration: number;
+  /** 選択された案 id（#145 Phase3）。未選択は null。 */
+  selected: string | null;
   items: Prototype[];
   notes: string[];
 }
@@ -818,11 +824,12 @@ function adaptPrototypes(res: ApiPrototypeResponse): PrototypeView {
   const items: Prototype[] = [];
   for (const it of res.items ?? []) {
     if (!it.url) continue;
-    items.push({ id: it.id, title: it.title, url: it.url });
+    items.push({ id: it.id, title: it.title, url: it.url, description: it.description ?? "" });
   }
   return {
     generatedAt: res.generated_at ?? null,
     iteration: typeof res.iteration === "number" && res.iteration > 0 ? res.iteration : 0,
+    selected: typeof res.selected === "string" ? res.selected : null,
     items,
     notes: (res.notes ?? []).filter((n): n is string => typeof n === "string"),
   };
@@ -831,6 +838,23 @@ function adaptPrototypes(res: ApiPrototypeResponse): PrototypeView {
 /** GET /api/issues/{n}/prototypes */
 export async function getPrototypes(issue: number, signal?: AbortSignal): Promise<PrototypeView> {
   return adaptPrototypes(await apiGet<ApiPrototypeResponse>(`/api/issues/${issue}/prototypes`, signal));
+}
+
+/**
+ * POST /api/issues/{n}/prototypes/select — 提示された案から 1 案を選択する (#145 Phase3)。
+ * 選択は selection.json に保存され、承認後に実装フェーズへ引き継がれる。
+ */
+export async function selectPrototype(
+  issue: number,
+  variantId: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const res = await apiPost<{ accepted: boolean; selected: string }>(
+    `/api/issues/${issue}/prototypes/select`,
+    { variant_id: variantId },
+    signal,
+  );
+  return res.selected;
 }
 
 /**
@@ -1085,6 +1109,8 @@ export const api = {
 
   getEvidence: (issue: number, signal?: AbortSignal) => getEvidence(issue, signal),
   getPrototypes: (issue: number, signal?: AbortSignal) => getPrototypes(issue, signal),
+  selectPrototype: (issue: number, variantId: string, signal?: AbortSignal) =>
+    selectPrototype(issue, variantId, signal),
   sendPrototypeFeedback: (issue: number, feedback: string, actor: string, repo?: string, signal?: AbortSignal) =>
     sendPrototypeFeedback(issue, feedback, actor, repo, signal),
   getRepositories: (signal?: AbortSignal) => getRepositories(signal),

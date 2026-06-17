@@ -140,6 +140,7 @@ export default function DesignReviewPage() {
             issue={id}
             repo={repo}
             iteration={prototypes.iteration}
+            selected={prototypes.selected}
           />
         </section>
       )}

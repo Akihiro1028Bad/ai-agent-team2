@@ -59,6 +59,8 @@ from ai_agent_orchestrator.api.schemas import (
     PrototypeFeedbackRequest,
     PrototypeFeedbackResponse,
     PrototypeResponse,
+    PrototypeSelectRequest,
+    PrototypeSelectResponse,
     QueueResponse,
     ReplyRequest,
     ReplyResponse,
@@ -475,6 +477,29 @@ def create_app(settings: AppSettings) -> FastAPI:
             "X-Content-Type-Options": "nosniff",
         }
         return FileResponse(path=str(target), media_type=media_type, headers=headers)
+
+    @app.post(
+        "/api/issues/{issue_number}/prototypes/select",
+        response_model=PrototypeSelectResponse,
+    )
+    async def post_issue_prototype_select(
+        issue_number: int,
+        body: PrototypeSelectRequest,
+    ) -> PrototypeSelectResponse:
+        """提示された案から 1 案を選択し selection.json に保存する (#145 Phase3).
+
+        variant_id が現在の manifest に存在する案か検証し、不在なら 404。承認後に
+        IMPLEMENT が selection.json を読んで実装の土台にする。秘密混入は extra=forbid で拒否。
+        """
+        from ai_agent_orchestrator.prototype.selection import write_selection
+
+        prototypes = read_prototypes(workspace, issue_number)
+        if not any(it.id == body.variant_id for it in prototypes.items):
+            raise HTTPException(status_code=404, detail="Prototype variant not found")
+        ok = await asyncio.to_thread(write_selection, workspace, issue_number, body.variant_id)
+        if not ok:
+            raise HTTPException(status_code=502, detail="Failed to persist prototype selection")
+        return PrototypeSelectResponse(accepted=True, selected=body.variant_id)
 
     @app.post(
         "/api/issues/{issue_number}/prototypes/feedback",

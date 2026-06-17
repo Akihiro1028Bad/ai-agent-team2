@@ -208,19 +208,25 @@ class PlanExecutor(PhaseExecutor):
 
         # UI プロトタイプの修正依頼 (#145 Phase2): 設計書は維持し、プロトタイプのみ更新する反復。
         prototype_feedback = extra.get("prototype_feedback", "")
-        prototype_feedback_section = (
-            (
+        prototype_feedback_section = ""
+        if prototype_feedback:
+            from ai_agent_orchestrator.prototype.selection import read_selection
+
+            selected = read_selection(self._workspace.base_dir, request.issue_number)
+            # 選択済みなら、その案を中心に更新するよう明示する (#145 Phase3)。
+            selected_line = (
+                f"ユーザーは案 `{selected}` を選択しています。この案を中心に更新してください。\n" if selected else ""
+            )
+            prototype_feedback_section = (
                 f"## UI プロトタイプへの修正依頼 (最優先)\n"
-                f"前回提示した UI プロトタイプ "
-                f"(`docs/designs/issue-{request.issue_number}.prototype.html`) に対し、"
-                f"次の修正依頼が届いています:\n{prototype_feedback}\n\n"
+                f"前回提示した UI プロトタイプに対し、次の修正依頼が届いています:\n"
+                f"{prototype_feedback}\n"
+                f"{selected_line}\n"
                 f"**設計書 (`docs/designs/issue-{request.issue_number}.md`) の方針・サブタスクは原則そのまま維持**し、"
-                f"上記フィードバックに沿って UI プロトタイプ HTML を更新することに集中してください "
+                f"上記フィードバックに沿って UI プロトタイプを更新することに集中してください。"
+                f"案の id・ファイル名は前回と揃え、`prototypes.json` も最新化すること "
                 f"(設計の方向性が変わる指摘の場合のみ、設計書も併せて最小限修正してよい)。\n\n"
             )
-            if prototype_feedback
-            else ""
-        )
 
         raw = (
             f"以下のIssueの設計書を作成してください。\n\n"
@@ -235,12 +241,18 @@ class PlanExecutor(PhaseExecutor):
             f"   設計書には設計内容に加え、**末尾に `## サブタスク` セクション** "
             f"(実装計画) を必ず含めること\n"
             f"2. **UI に影響がある場合**、プロのデザイナーとして "
-            f"`docs/designs/issue-{request.issue_number}.prototype.html` に "
-            f"**動く UI プロトタイプ**を 1 案作成すること (#145)。\n"
-            f"   - **単一の自己完結 HTML**: CSS/JS をインライン化し、外部ネットワーク依存なし\n"
+            f"**方向性の異なる 2〜3 案の動く UI プロトタイプ**を作成すること (#145)。\n"
+            f"   - 各案を `docs/designs/issue-{request.issue_number}.prototype.<id>.html` "
+            f"として作成する (`<id>` は英数字/ハイフン。例: `simple`, `rich`)\n"
+            f"   - 各案は **単一の自己完結 HTML**: CSS/JS をインライン化し、外部ネットワーク依存なし\n"
             f"   - **モックデータで主要画面と軽い操作が動く**こと (本番 API 連携・"
             f"ピクセルパーフェクトは不要、使い捨て前提)\n"
-            f"   - 目的は「どんな UI でどう動くか」をユーザーが承認前に体感できること\n"
+            f"   - 案ごとに**方向性を変える** (例: シンプル/最小操作 案、リッチ/情報量多め 案)\n"
+            f"   - 一覧を `docs/designs/issue-{request.issue_number}.prototypes.json` に "
+            f"JSON 配列で書くこと: "
+            f'`[{{"id": "simple", "title": "シンプル案", "description": "狙いの一言", '
+            f'"file": "issue-{request.issue_number}.prototype.simple.html"}}, ...]`\n'
+            f"   - 目的は「どんな UI でどう動くか」をユーザーが見比べて承認前に選べること\n"
             f"   - UI に影響がない変更 (内部ロジック等) ならプロトタイプは作成不要\n"
             f"3. **git commit / push / PR 作成は不要です** (システムが行います)"
             f"\n\n## 設計書末尾の `## サブタスク` セクション (必ず守ること)\n\n"
@@ -267,9 +279,10 @@ class PlanExecutor(PhaseExecutor):
             f"- `depends_on` には依存するサブタスクの番号 (整数) を列挙する\n"
             f"\n## 重要な制約\n"
             f"- 作成してよいのは **設計書 (`docs/designs/` 配下の `.md`)** と "
-            f"**UI プロトタイプ (`docs/designs/issue-{request.issue_number}.prototype.html`)** のみです\n"
+            f"**UI プロトタイプ (`docs/designs/issue-{request.issue_number}.prototype.<id>.html`)** "
+            f"および案一覧 (`docs/designs/issue-{request.issue_number}.prototypes.json`) のみです\n"
             f"- ソースコード (`.ts`, `.tsx`, `.js`, `.py` 等) の作成・変更は**禁止**です "
-            f"(プロトタイプは上記の単一 HTML に限る)\n"
+            f"(プロトタイプは上記の自己完結 HTML に限る)\n"
             f"- テストコードの作成も禁止です (`## サブタスク` での計画記述のみ)\n"
             f"- ソースコードの実装は後続の `implement` フェーズで行います\n"
         ) + plan_json_prompt_section("full")

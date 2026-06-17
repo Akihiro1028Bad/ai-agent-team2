@@ -540,6 +540,8 @@ class PrototypeItemResponse(BaseModel):
     id: str
     title: str
     url: str
+    # 案の狙いの短い説明 (#145 Phase3)。単一案では空文字。
+    description: str = ""
 
 
 class PrototypeResponse(BaseModel):
@@ -548,8 +550,28 @@ class PrototypeResponse(BaseModel):
     generated_at: str | None = None
     # 反復回数 (#145 Phase2): 修正依頼→再生成のたびに増える。0 は未生成。
     iteration: int = 0
+    # 選択された案 id (#145 Phase3)。未選択は None。
+    selected: str | None = None
     items: list[PrototypeItemResponse] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+
+
+class PrototypeSelectRequest(BaseModel):
+    """POST /api/issues/{n}/prototypes/select のリクエスト (#145 Phase3).
+
+    提示された 2〜3 案から 1 案を選ぶ。秘密情報の混入を防ぐため未知フィールドは拒否する。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    variant_id: str = Field(min_length=1, max_length=40, pattern=r"^[a-zA-Z0-9_-]+$")
+
+
+class PrototypeSelectResponse(BaseModel):
+    """POST /api/issues/{n}/prototypes/select のレスポンス (#145 Phase3)."""
+
+    accepted: bool
+    selected: str
 
 
 class PrototypeFeedbackRequest(BaseModel):

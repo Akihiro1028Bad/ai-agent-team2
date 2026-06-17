@@ -383,6 +383,26 @@ class ImplementExecutor(PhaseExecutor):
 
         return total_cost, total_duration, last_result
 
+    def _selected_prototype_hint(self, issue_number: int) -> str:
+        """選択された UI プロトタイプ案を実装の土台として示すプロンプト節を返す (#145 Phase3).
+
+        未選択なら空文字。選択済みなら worktree 内の該当 HTML を参照させる。
+        プロトタイプはモックのため、実装はプロジェクトのスタックに合わせて作り直してよい。
+        """
+        from ai_agent_orchestrator.prototype.selection import read_selection
+
+        selected = read_selection(self._workspace.base_dir, issue_number)
+        if not selected:
+            return ""
+        return (
+            f"\n## 採用された UI プロトタイプ案 (#145)\n"
+            f"ユーザーは案 `{selected}` を選択しました。"
+            f"`docs/designs/issue-{issue_number}.prototype.{selected}.html` があれば、その UI イメージ "
+            f"(レイアウト・操作感・情報設計) に沿って実装してください "
+            f"(見つからない場合は設計書の UI 記述に従う)。"
+            f"プロトタイプはモックなので、実装はプロジェクトの技術スタックに合わせて作り直して構いません。\n"
+        )
+
     async def _build_subtask_prompt(
         self,
         request: TaskRequest,
@@ -431,6 +451,7 @@ class ImplementExecutor(PhaseExecutor):
             f"{files_list}\n\n"
             f"## サブタスクの説明\n"
             f"{subtask.description}\n\n"
+            f"{self._selected_prototype_hint(request.issue_number)}"
             f"## これまでの変更サマリー\n"
             f"```\n{prior_diff}\n```\n\n"
             f"## 実装指示\n"
@@ -605,6 +626,7 @@ class ImplementExecutor(PhaseExecutor):
             f"以下の設計書と実装計画に基づいてコードを実装してください。\n\n"
             f"## Issue #{request.issue_number}: {issue.title}\n\n"
             f"{context}\n\n"
+            f"{self._selected_prototype_hint(request.issue_number)}"
             f"## 実装指示\n"
             f"1. 実装計画の順序に従ってコードを実装\n"
             f"2. テストコードも作成\n"
@@ -668,6 +690,7 @@ class ImplementExecutor(PhaseExecutor):
         return (
             f"## Issue #{request.issue_number}: {issue.title} (実装継続パス {iteration + 1})\n\n"
             f"{context}\n\n"
+            f"{self._selected_prototype_hint(request.issue_number)}"
             f"{continuation}\n\n"
             f"## 実装指示\n"
             f"1. 上記の未実装ファイルを実装計画の順序に従って実装\n"
