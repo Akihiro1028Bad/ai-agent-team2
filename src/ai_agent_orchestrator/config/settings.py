@@ -87,6 +87,9 @@ class CostLimitsConfig(BaseModel):
     implement_usd: float = 10.0
     ci_fix_usd: float = 3.0
     revise_usd: float = 5.0
+    # 日次コスト上限 (#92)。0 以下なら無効。超過すると orchestrator を自動停止する
+    # (drain → graceful stop)。systemd では unit を Restart=on-failure にして再起動を防ぐ。
+    daily_usd: float = 0.0
 
 
 class SlackConfig(BaseModel):

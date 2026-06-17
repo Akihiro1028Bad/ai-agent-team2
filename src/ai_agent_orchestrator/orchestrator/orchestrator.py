@@ -469,6 +469,10 @@ class Orchestrator:
         self._control_task: asyncio.Task[None] | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
         self._control_offset = 0
+        # 日次コスト上限 (#92): UTC 日付ごとに累積し、超過で 1 度だけ自動停止する。
+        self._cost_today_usd = 0.0
+        self._cost_today_date = ""
+        self._cost_limit_triggered = False
         # 承認/差し戻し (control_file の approve/reject) は別系統・別 offset で消費する (#89)。
         self._review_offset = 0
 
@@ -1366,6 +1370,56 @@ class Orchestrator:
             return None
         return None
 
+    async def _track_cost_and_maybe_stop(self, cost_usd: float) -> None:
+        """フェーズ完了コストを日次累積し、上限超過なら自動停止する (#92).
+
+        日次上限 (cost_limits.daily_usd) が 0 以下なら無効。UTC 日付が変わると
+        累積をリセットする。超過時は 1 度だけ (重複停止防止) drain → graceful stop を
+        発行し、Slack 通知する。停止後に systemd が再起動しないよう、運用では
+        orchestrator unit を Restart=on-failure にする (docs/deploy 参照)。
+
+        Args:
+            cost_usd: 直近フェーズのコスト (USD)。
+        """
+        limit = self._settings.cost_limits.daily_usd
+        if limit <= 0:
+            return
+        from datetime import UTC, datetime
+
+        today = datetime.now(UTC).date().isoformat()
+        if today != self._cost_today_date:
+            self._cost_today_date = today
+            self._cost_today_usd = 0.0
+            self._cost_limit_triggered = False
+        self._cost_today_usd += max(0.0, cost_usd)
+
+        if self._cost_limit_triggered or self._cost_today_usd < limit:
+            return
+        self._cost_limit_triggered = True
+        logger.warning(
+            "日次コスト上限 $%.2f を超過 ($%.2f)。自動停止します。",
+            limit,
+            self._cost_today_usd,
+        )
+        await self._event_logger.track(
+            "cost_limit_exceeded",
+            issue_number=0,
+            phase="system",
+            data={"daily_usd": limit, "spent_usd": round(self._cost_today_usd, 4)},
+        )
+        try:
+            await self._notifier.notify(
+                f"日次コスト上限 ${limit:.2f} を超過しました (本日 ${self._cost_today_usd:.2f})。"
+                f"オーケストレーターを自動停止します。",
+                level="error",
+                metadata={"notification_type": "cost_limit_exceeded"},
+            )
+        except Exception:
+            logger.warning("コスト上限超過通知に失敗", exc_info=True)
+        # in-flight を drain してから graceful stop (control.jsonl shutdown と同経路)。
+        self._task_queue.request_drain()
+        self._shutdown_task = asyncio.create_task(self._drain_then_stop(), name="cost-limit-shutdown")
+
     async def _handle_shutdown(self, cmd: OperationalCommand) -> None:
         """shutdown: drain を要求し、in-flight 完了後に graceful stop する."""
         await self._audit_control("orchestrator_shutdown_requested", cmd)
@@ -1548,6 +1602,9 @@ class Orchestrator:
                     "next_phase": result.next_phase,
                 },
             )
+
+            # 日次コスト上限の監視 (#92): 超過したら drain → 自動停止する。
+            await self._track_cost_and_maybe_stop(result.cost_usd)
 
             # Transition to next phase if specified (for NullPhaseDispatcher)
             if result.next_phase is not None:

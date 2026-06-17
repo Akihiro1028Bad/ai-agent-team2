@@ -466,3 +466,51 @@ class TestQueueJson:
         assert len(written["queued"]) == 1
         assert written["queued"][0]["issue_number"] == 5
         assert "ts" in written
+
+
+class TestDailyCostLimit:
+    """#92: 日次コスト上限による自動停止."""
+
+    async def test_disabled_when_limit_zero(self, tmp_path: Path) -> None:
+        orch = _make_orchestrator(tmp_path)
+        orch._settings.cost_limits.daily_usd = 0.0  # 無効
+
+        await orch._track_cost_and_maybe_stop(999.0)
+
+        assert orch._cost_limit_triggered is False
+        assert orch._shutdown_task is None
+        assert not orch._task_queue.is_draining
+
+    async def test_no_stop_under_limit(self, tmp_path: Path) -> None:
+        orch = _make_orchestrator(tmp_path)
+        orch._settings.cost_limits.daily_usd = 5.0
+
+        await orch._track_cost_and_maybe_stop(2.0)
+        await orch._track_cost_and_maybe_stop(2.0)
+
+        assert orch._cost_limit_triggered is False
+        assert orch._shutdown_task is None
+
+    async def test_stop_when_exceeded(self, tmp_path: Path) -> None:
+        orch = _make_orchestrator(tmp_path)
+        orch._settings.cost_limits.daily_usd = 5.0
+
+        await orch._track_cost_and_maybe_stop(3.0)
+        await orch._track_cost_and_maybe_stop(3.0)  # 累積 6.0 > 5.0
+
+        assert orch._cost_limit_triggered is True
+        assert orch._task_queue.is_draining
+        assert orch._shutdown_task is not None
+        # 副作用 (stop) を走らせないよう停止タスクをキャンセルする
+        orch._shutdown_task.cancel()
+
+    async def test_trigger_is_idempotent(self, tmp_path: Path) -> None:
+        orch = _make_orchestrator(tmp_path)
+        orch._settings.cost_limits.daily_usd = 5.0
+
+        await orch._track_cost_and_maybe_stop(6.0)
+        first_task = orch._shutdown_task
+        assert first_task is not None
+        await orch._track_cost_and_maybe_stop(6.0)  # 2 度目は再発行しない
+        assert orch._shutdown_task is first_task
+        first_task.cancel()

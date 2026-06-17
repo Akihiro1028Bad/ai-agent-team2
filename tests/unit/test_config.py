@@ -44,6 +44,8 @@ class TestTCC01Defaults:
         assert config.implement_usd == 10.0
         assert config.ci_fix_usd == 3.0
         assert config.revise_usd == 5.0
+        # 日次上限は既定で無効 (#92)
+        assert config.daily_usd == 0.0
 
     def test_retry_config_defaults(self):
         config = RetryConfig()
