@@ -439,6 +439,27 @@ class EvidenceResponse(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class RepositoryConfigRow(BaseModel):
+    """GET /api/config/repositories の 1 行 (#144).
+
+    config.yaml の監視リポジトリを Web 設定画面へ出すための**非機密のみ**の DTO。
+    token 等の機密は一切含めない (account は識別子名であってトークンではない)。
+    """
+
+    owner: str
+    repo: str
+    account: str | None = None
+    label: str = "ai-agent"
+    base_branch: str = "main"
+    slack_channel: str | None = None
+
+
+class RepositoriesResponse(BaseModel):
+    """GET /api/config/repositories のレスポンス (#144)."""
+
+    repositories: list[RepositoryConfigRow] = Field(default_factory=list)
+
+
 class PrototypeItemResponse(BaseModel):
     """GET /api/issues/{n}/prototypes の 1 アイテム (#145).
 

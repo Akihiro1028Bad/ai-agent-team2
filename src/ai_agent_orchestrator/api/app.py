@@ -55,6 +55,8 @@ from ai_agent_orchestrator.api.schemas import (
     QueueResponse,
     ReplyRequest,
     ReplyResponse,
+    RepositoriesResponse,
+    RepositoryConfigRow,
     ReviewRequest,
     ReviewResponse,
 )
@@ -476,6 +478,27 @@ def create_app(settings: AppSettings) -> FastAPI:
             phases=[PhaseModelRow(**row) for row in rows],
             allowed_models=sorted(ALLOWED_MODELS),
         )
+
+    @app.get("/api/config/repositories", response_model=RepositoriesResponse)
+    async def get_config_repositories() -> RepositoriesResponse:
+        """監視対象リポジトリ (config.yaml) を返す (#144).
+
+        Web 設定画面がモックではなく実 config を表示できるようにするための
+        read 専用エンドポイント。**非機密のみ** (owner/repo/account/label/base_branch/
+        slack_channel) を返し、token 等は一切含めない。
+        """
+        rows = [
+            RepositoryConfigRow(
+                owner=r.owner,
+                repo=r.repo,
+                account=r.account,
+                label=r.label,
+                base_branch=r.base_branch,
+                slack_channel=r.slack_channel,
+            )
+            for r in settings.repositories
+        ]
+        return RepositoriesResponse(repositories=rows)
 
     @app.get("/api/config/phase-models", response_model=PhaseModelsResponse)
     async def get_phase_models() -> PhaseModelsResponse:

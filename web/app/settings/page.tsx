@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { orchestrator, repos } from "@/lib/mock";
+import { useCallback, useState } from "react";
+import { orchestrator } from "@/lib/mock";
+import { api } from "@/lib/api";
+import { usePolling } from "@/lib/hooks";
 import { PhaseModelConfig } from "@/components/PhaseModelConfig";
-import { IconCpu, IconExternal, IconPause, IconPlay, IconX } from "@/components/icons";
+import { IconCpu, IconExternal, IconPause, IconPlay } from "@/components/icons";
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -20,6 +22,13 @@ function Field({ label, children, hint }: { label: string; children: React.React
 export default function SettingsPage() {
   const [running, setRunning] = useState(orchestrator.running);
   const [interval, setIntervalSec] = useState(orchestrator.pollingIntervalSec);
+  // 監視リポジトリは実 config を表示する (#144)。設定は頻繁に変わらないため緩めの間隔。
+  /* v8 ignore next 3 -- usePolling callback is mocked in tests; api.getRepositories is tested separately */
+  const { data: repos, error: reposError, loading: reposLoading } = usePolling(
+    useCallback((signal: AbortSignal) => api.getRepositories(signal), []),
+    30000,
+  );
+  const repoRows = repos ?? [];
 
   return (
     <div className="mx-auto max-w-[820px]">
@@ -80,28 +89,36 @@ export default function SettingsPage() {
         <PhaseModelConfig />
       </section>
 
-      {/* repos */}
+      {/* repos — 実 config.yaml を表示 (#144) */}
       <section className="rise mt-6" style={{ animationDelay: "120ms" }}>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-[13px] font-semibold">監視リポジトリ</h2>
-          <button className="rounded-lg border px-3 py-1.5 text-[12.5px]" style={{ borderColor: "var(--color-line-2)", color: "var(--color-ink-dim)" }}>+ 追加</button>
+          <span className="font-mono text-[11px]" style={{ color: "var(--color-ink-faint)" }}>config.yaml</span>
         </div>
         <div className="panel divide-y" style={{ borderColor: "var(--color-line)" }}>
-          {repos.map((r) => (
-            <div key={r.repo} className="flex items-center gap-3 px-4 py-3" style={{ borderColor: "var(--color-line)" }}>
-              <IconCpu width={15} height={15} style={{ color: "var(--color-ink-faint)" }} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 font-mono text-[13px]">
-                  {r.owner}/<span className="text-ink" style={{ color: "var(--color-ink)" }}>{r.repo}</span>
-                  <IconExternal width={11} height={11} style={{ color: "var(--color-ink-faint)" }} />
-                </div>
-                <div className="mt-0.5 flex gap-2 font-mono text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
-                  <span>label:{r.label}</span><span>·</span><span>base:{r.baseBranch}</span>
+          {reposLoading && repos === undefined ? (
+            <div className="px-4 py-3 text-[12.5px]" style={{ color: "var(--color-ink-faint)" }}>読み込み中…</div>
+          ) : reposError ? (
+            <div className="px-4 py-3 text-[12.5px]" style={{ color: "var(--color-rose)" }}>設定の取得に失敗しました。</div>
+          ) : repoRows.length === 0 ? (
+            <div className="px-4 py-3 text-[12.5px]" style={{ color: "var(--color-ink-faint)" }}>監視リポジトリは未設定です。`ai-agent setup` で追加してください。</div>
+          ) : (
+            repoRows.map((r) => (
+              <div key={`${r.owner}/${r.repo}`} className="flex items-center gap-3 px-4 py-3" style={{ borderColor: "var(--color-line)" }}>
+                <IconCpu width={15} height={15} style={{ color: "var(--color-ink-faint)" }} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 font-mono text-[13px]">
+                    {r.owner}/<span style={{ color: "var(--color-ink)" }}>{r.repo}</span>
+                    <IconExternal width={11} height={11} style={{ color: "var(--color-ink-faint)" }} />
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap gap-2 font-mono text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
+                    <span>label:{r.label}</span><span>·</span><span>base:{r.baseBranch}</span>
+                    {r.account && (<><span>·</span><span>account:{r.account}</span></>)}
+                  </div>
                 </div>
               </div>
-              <button className="text-[var(--color-ink-faint)] hover:text-[var(--color-rose)]" aria-label="削除"><IconX width={15} height={15} /></button>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </section>
 

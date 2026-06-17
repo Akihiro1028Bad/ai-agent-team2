@@ -829,6 +829,48 @@ export async function getPrototypes(issue: number, signal?: AbortSignal): Promis
   return adaptPrototypes(await apiGet<ApiPrototypeResponse>(`/api/issues/${issue}/prototypes`, signal));
 }
 
+// ── 監視リポジトリ設定 (#144) ──
+
+interface ApiRepositoryConfigRow {
+  owner: string;
+  repo: string;
+  account: string | null;
+  label: string;
+  base_branch: string;
+  slack_channel: string | null;
+}
+
+interface ApiRepositoriesResponse {
+  repositories: ApiRepositoryConfigRow[];
+}
+
+/** 監視リポジトリ 1 件（非機密のみ）。 */
+export interface RepoConfig {
+  owner: string;
+  repo: string;
+  account?: string;
+  label: string;
+  baseBranch: string;
+  slackChannel?: string;
+}
+
+function adaptRepository(r: ApiRepositoryConfigRow): RepoConfig {
+  return {
+    owner: r.owner,
+    repo: r.repo,
+    account: r.account ?? undefined,
+    label: r.label,
+    baseBranch: r.base_branch,
+    slackChannel: r.slack_channel ?? undefined,
+  };
+}
+
+/** GET /api/config/repositories — 実 config.yaml の監視リポジトリ（非機密のみ）。 */
+export async function getRepositories(signal?: AbortSignal): Promise<RepoConfig[]> {
+  const res = await apiGet<ApiRepositoriesResponse>("/api/config/repositories", signal);
+  return (res.repositories ?? []).map(adaptRepository);
+}
+
 /** レビュー提出コメント (UI の DraftComment を API 形へ写したもの)。 */
 export interface ReviewCommentInput {
   anchor: string;
@@ -918,6 +960,7 @@ export const api = {
 
   getEvidence: (issue: number, signal?: AbortSignal) => getEvidence(issue, signal),
   getPrototypes: (issue: number, signal?: AbortSignal) => getPrototypes(issue, signal),
+  getRepositories: (signal?: AbortSignal) => getRepositories(signal),
 
   postReview: (issue: number, comments: ReviewCommentInput[], actor: string, repo?: string, signal?: AbortSignal) =>
     postReview(issue, comments, actor, repo, signal),
