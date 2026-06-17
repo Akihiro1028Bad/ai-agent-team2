@@ -22,6 +22,7 @@ class _FakeRepo:
     dev_command: str | None = None
     dev_url: str | None = None
     dev_ready_timeout_sec: int = 5
+    dev_ready_log: str | None = None
     test_command: str | None = None
 
 
@@ -139,6 +140,44 @@ async def test_ready_probe_false_skips_capture(tmp_path: Path) -> None:
     assert capture.called_with is None
     assert not manifest["items"]
     assert manifest["notes"]
+
+
+async def test_log_pattern_ready_triggers_capture(tmp_path: Path) -> None:
+    """dev_ready_log のパターンが標準出力に現れたら UI キャプチャを実施する (#91)。"""
+    (tmp_path / "wt").mkdir()
+    capture = _FakeCapture()
+    # ready_probe は使われない (ログパターン経路)。HTTP プローブを ready=False にしても通る。
+    collector = EvidenceCollector(tmp_path, capture=capture, ready_probe=_FakeReadyProbe(ready=False))
+    repo = _FakeRepo(
+        dev_command="printf 'Ready in 300ms\\n'; sleep 5",
+        dev_url="http://localhost:3000",
+        dev_ready_log="Ready in",
+    )
+
+    manifest = await collector.collect(repo, 91, str(tmp_path / "wt"), ui_impact=True)
+
+    assert capture.called_with == "http://localhost:3000"
+    kinds = {item["kind"] for item in manifest["items"]}
+    assert "screenshot" in kinds
+
+
+async def test_log_pattern_not_found_skips_capture(tmp_path: Path) -> None:
+    """dev server が終了してもパターンが出なければキャプチャを中止する (#91)。"""
+    (tmp_path / "wt").mkdir()
+    capture = _FakeCapture()
+    collector = EvidenceCollector(tmp_path, capture=capture, ready_probe=_FakeReadyProbe())
+    repo = _FakeRepo(
+        dev_command="echo starting",  # 即終了し、パターンは現れない
+        dev_url="http://localhost:3000",
+        dev_ready_log="LISTENING-ON-PORT",
+        dev_ready_timeout_sec=5,
+    )
+
+    manifest = await collector.collect(repo, 91, str(tmp_path / "wt"), ui_impact=True)
+
+    assert capture.called_with is None
+    assert not manifest["items"]
+    assert any("準備完了しなかった" in note for note in manifest["notes"])
 
 
 async def test_manifest_regeneration_clears_stale_files(tmp_path: Path) -> None:
